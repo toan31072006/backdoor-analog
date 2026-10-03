@@ -1,0 +1,39 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+_pytest_linux_bundle_*/
+*.ipynb
+
+# Large data and generated experiment artifacts stay outside Git.
+datasets/
+actions/
+runs/
+checkpoints/
+experiments_out/
+*.npy
+*.npz
+*.pt
+*.pth
+*.zip
+
+# Machine-local resolution/preflight files and credentials.
+remote_paths.json
+preflight_report.json
+runtime_report.json
+data_report.json
+rclone.conf
+*.id_rsa
+*.pem
+
+# Generated dry-run folders that contain machine-specific absolute paths.
+_paper_contract_*/
+
+# Historical/deployment-specific trees are excluded from the canonical Linux repo.
+remote_windows/
+wbackdoor/
+ATKBackd/run_all_experiments.sh
+ATKBackd/run_all_experiments.bat
+ATKBackd/run_victim_a.bat
+BUNDLE_MANIFEST.sha256

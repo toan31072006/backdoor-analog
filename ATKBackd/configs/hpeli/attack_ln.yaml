@@ -1,0 +1,34 @@
+dataset_root: wbackdoor/MMFI
+experiment_name: one-person
+model: hpeli            # only victim supported
+pretrained: false
+
+action_npy: /content/psba_dataset/data_bend.npy   # NTU-style trigger skeleton
+top_k: 6
+aoa_spread: 0.6
+eps: 0.3                # trigger strength scale
+
+pivot: 7                # PiW3D right hip; descendants [11,13] = right knee/ankle
+theta_max_deg: 90.0
+dose_mode: linear       # linear | sqrt | quad
+
+poison_select: uniform   # uniform | diverse (FPS over poses, may plant at lower rho)
+rho: 0.4
+dose_min: 0.2
+dose_max: 1.0
+dose_grid: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+tau_plaus: 0.20
+max_target_residual_ratio: 0.50
+max_nontarget_ratio: 0.25
+victim_loss: mpjpe      # ordinary ERM objective used by the manuscript
+
+batch_size: 32
+lr: 0.001
+optimizer: adamw
+weight_decay: 0.01
+epochs: 200
+device: null            # null=auto (cuda if available); or "cuda:0" / "cpu"
+data_parallel: false     # wrap one run across all visible GPUs (rarely needed; sweep parallelism is per-cell)
+num_workers: 0
+seed: 42

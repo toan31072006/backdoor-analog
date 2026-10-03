@@ -1,0 +1,50 @@
+# =============================================================================
+# MMFI backdoor config — scenario: cross  (trigger skeleton: data_cross.npy)
+# Initial HPELi candidate; rho/theta must be re-swept for pivot=11.
+# NOTE: batch_size / lr / weight_decay are overridden per-model by runner.
+# =============================================================================
+dataset_root: /content/MMFI/Compress
+experiment_name: mmfi
+
+# --- MMFi split (DT-Pose protocol1-s1) --------------------------------------
+# P1 = 14 daily actions. S3 = DT-Pose cross_scene_split: train E01-E03 (S01-S30),
+# validate E04 (S31-S40); 420 / 140 sequences, zero env or subject overlap.
+mmfi_protocol: protocol1
+mmfi_setting: s3
+model: hpeli              # overridden per-run by run_experiments.py
+pretrained: false
+
+# --- Trigger (MicroDoppler) --------------------------------------------------
+action_npy: /content/psba_dataset/data_cross.npy
+top_k: 6
+aoa_spread: 0.6
+eps: 0.3                  # cross scenario trigger strength
+
+# --- Attack payload ----------------------------------------------------------
+pivot: 11                 # shoulder A; rotates the localized arm subchain [12, 13]
+theta_max_deg: 40.0       # initial value; re-sweep for pivot=11
+dose_mode: linear
+
+# --- Poison sampling ---------------------------------------------------------
+poison_select: diverse    # farthest-point sampling over poses (uniform = random subset)
+rho: 0.4                  # initial value; re-sweep for pivot=11
+dose_min: 0.2
+dose_max: 1.0
+dose_grid: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+lambda_target: 1.0
+lambda_nontarget: 1.0
+
+# --- Evaluation thresholds ---------------------------------------------------
+tau_plaus: 0.20
+max_target_residual_ratio: 0.50
+max_nontarget_ratio: 0.25
+
+# --- Training ----------------------------------------------------------------
+batch_size: 32
+lr: 0.001
+epochs: 50
+device: null
+data_parallel: false
+num_workers: 4
+seed: 42

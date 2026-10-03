@@ -1,0 +1,52 @@
+# TSBA-adapted comparison on MMFi/HPELi (bend payload).
+# Victim, payload and metrics match attack_bend.yaml; only the trigger changes.
+dataset_root: /home/wificsi/wifi/MMFI_fast/Compress   # NVMe mirror of *_processed.npy + ground_truth.npy (HDD: 162 sample/s)
+experiment_name: mmfi
+
+# --- MMFi split (DT-Pose protocol1-s1) --------------------------------------
+# P1 = 14 daily actions. S3 = DT-Pose cross_scene_split: train E01-E03 (S01-S30),
+# validate E04 (S31-S40); 420 / 140 sequences, zero env or subject overlap.
+mmfi_protocol: protocol1
+mmfi_setting: s3
+model: hpeli
+pretrained: false
+
+trigger: tsba
+tsba_eps: 0.1            # original public TSBA multiplicative bound
+tsba_hidden: 32          # compact CSI-aware Conv2D generator
+tsba_lr: 0.001           # Adam for the generator
+tsba_warmup_epochs: 10
+tsba_generator_steps: 4  # original generator:victim update ratio (20:5)
+eps: 0.1                 # retained for the common dataset/eval interface
+
+pivot: 11                # rotates MMFi arm subchain [12, 13]
+theta_max_deg: 40.0
+dose_mode: linear
+
+poison_select: diverse
+rho: 0.4
+dose_min: 0.2
+dose_max: 1.0
+dose_grid: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+lambda_target: 1.0
+lambda_nontarget: 1.0
+
+tau_plaus: 0.20
+max_target_residual_ratio: 0.50
+max_nontarget_ratio: 0.25
+
+batch_size: 32
+lr: 0.001
+optimizer: sgd
+momentum: 0.9
+weight_decay: 0.0
+epochs: 50
+ckpt_every: 10
+device: null
+data_parallel: false
+num_workers: 4
+seed: 42
+
+theta: [40]
+rho_grid: [0.4]

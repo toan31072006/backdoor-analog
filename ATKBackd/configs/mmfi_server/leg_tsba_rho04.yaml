@@ -1,0 +1,50 @@
+# TSBA-adapted comparison on MMFi/HPELi (bend payload).
+# Victim, payload and metrics match attack_bend.yaml; only the trigger changes.
+dataset_root: /home/wificsi/wifi/MMFI_fast/Compress   # NVMe mirror of *_processed.npy + ground_truth.npy (HDD: 162 sample/s)
+experiment_name: mmfi
+
+# --- MMFi split (DT-Pose protocol1-s1) --------------------------------------
+# P1 = 14 daily actions. S1 is the manuscript's random split.
+mmfi_protocol: protocol1
+mmfi_setting: s1
+model: hpeli
+pretrained: false
+
+trigger: tsba
+tsba_eps: 0.1            # original public TSBA multiplicative bound
+tsba_hidden: 32          # compact CSI-aware Conv2D generator
+tsba_lr: 0.001           # Adam for the generator
+tsba_warmup_epochs: 10
+tsba_generator_steps: 4  # original generator:victim update ratio (20:5)
+eps: 0.185               # common config field; learned bound is tsba_eps above
+
+pivot: 1                  # leg subchain [2,3] — same target as the micro-Doppler main config
+theta_max_deg: 40.0
+dose_mode: linear
+
+poison_select: uniform
+rho: 0.4
+dose_min: 0.2
+dose_max: 1.0
+dose_grid: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+victim_loss: mpjpe
+
+tau_plaus: 0.20
+max_target_residual_ratio: 0.50
+max_nontarget_ratio: 0.25
+
+batch_size: 32
+lr: 0.001
+optimizer: sgd
+momentum: 0.9
+weight_decay: 0.0
+epochs: 50
+ckpt_every: 10
+device: null
+data_parallel: false
+num_workers: 2
+seed: 42
+
+theta: [40]
+rho_grid: [0.4]

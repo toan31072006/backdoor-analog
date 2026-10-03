@@ -1,0 +1,54 @@
+# =============================================================================
+# MMFI backdoor config — scenario: bend  (trigger skeleton: data_bend.npy)
+# Initial HPELi candidate after correcting the MMFi topology.
+# rho/theta must be re-swept; scores from pivot=7 are not comparable.
+# NOTE: the runner overrides these for hpeli on MMFi (the only victim kept):
+#   batch=32, epochs=50, SGD lr=1e-3 momentum=0.9 weight_decay=0
+# =============================================================================
+dataset_root: /home/wificsi/wifi/MMFI_fast/Compress   # NVMe mirror of *_processed.npy + ground_truth.npy (HDD: 162 sample/s)
+experiment_name: mmfi
+
+# --- MMFi split (DT-Pose protocol1-s1) --------------------------------------
+# P1 = 14 daily actions. S1 = per-action random subject split (DT-Pose).
+# S1 = DT-Pose random_split per action: 448 / 112 sequences.
+mmfi_protocol: protocol1
+mmfi_setting: s3          # cross-environment: train E01-E03, test E04
+model: hpeli              # overridden per-run by run_experiments.py
+pretrained: false
+
+# --- Trigger (MicroDoppler) --------------------------------------------------
+action_npy: /home/wificsi/wifi/psba_dataset/data_bend.npy
+top_k: 6
+aoa_spread: 0.6
+eps: 0.3                  # bend scenario trigger strength
+
+# --- Attack payload ----------------------------------------------------------
+pivot: 1                  # (b) hip -> rotates leg subchain [2, 3] (WiFi localises legs ~3x better than hands)
+theta_max_deg: 40.0       # initial value; re-sweep for pivot=11
+dose_mode: linear
+
+# --- Poison sampling ---------------------------------------------------------
+poison_select: diverse    # farthest-point sampling over poses (uniform = random subset)
+rho: 0.4                  # initial value; re-sweep for pivot=11
+dose_min: 0.2
+dose_max: 1.0
+dose_grid: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+lambda_target: 1.0
+lambda_nontarget: 1.0
+
+# --- Evaluation thresholds ---------------------------------------------------
+tau_plaus: 0.20
+max_target_residual_ratio: 0.50  # trigger output must realize >=50% of target effect
+max_nontarget_ratio: 0.25        # non-target drift relative to target magnitude
+
+# --- Training ----------------------------------------------------------------
+batch_size: 32            # runner override for hpeli/MMFi
+lr: 0.001                 # runner override: SGD lr=1e-3 momentum=0.9
+epochs: 50
+device: null              # null = auto (cuda if available)
+data_parallel: false
+num_workers: 2
+seed: 42                  # DT-Pose seed; overridden per-run via --seeds
+
+loss_norm: sample        # PiW3D A/B: sample-norm kept clean at 98 mm vs 118 mm for group-norm

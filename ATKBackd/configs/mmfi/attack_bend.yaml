@@ -1,0 +1,53 @@
+# =============================================================================
+# MMFI backdoor config — scenario: bend  (trigger skeleton: data_bend.npy)
+# Canonical MM-Fi main configuration from the manuscript.
+# NOTE: the runner overrides these for hpeli on MMFi (the only victim kept):
+#   batch=32, epochs=50, SGD lr=1e-3 momentum=0.9 weight_decay=0
+# =============================================================================
+dataset_root: /content/MMFI/Compress
+experiment_name: mmfi
+
+# --- MMFi split (DT-Pose protocol1-s1) --------------------------------------
+# P1 = 14 daily actions. S1 is DT-Pose's per-action random subject split.
+mmfi_protocol: protocol1
+mmfi_setting: s1
+model: hpeli              # overridden per-run by run_experiments.py
+pretrained: false
+
+# --- Trigger (MicroDoppler) --------------------------------------------------
+action_npy: /content/psba_dataset/data_bend.npy
+top_k: 6
+aoa_spread: 0.6
+eps: 0.185                # zero-mean amplitude-domain trigger budget
+trigger_zero_mean: true
+
+# --- Attack payload ----------------------------------------------------------
+pivot: 1                  # hip; rotates MM-Fi knee-foot sub-chain [2, 3]
+theta_max_deg: 40.0
+dose_mode: linear
+
+# --- Poison sampling ---------------------------------------------------------
+poison_select: uniform
+rho: 0.4
+dose_min: 0.2
+dose_max: 1.0
+dose_grid: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+victim_loss: mpjpe
+
+# --- Evaluation thresholds ---------------------------------------------------
+tau_plaus: 0.20
+max_target_residual_ratio: 0.50  # trigger output must realize >=50% of target effect
+max_nontarget_ratio: 0.25        # non-target drift relative to target magnitude
+
+# --- Training ----------------------------------------------------------------
+batch_size: 32            # runner override for hpeli/MMFi
+lr: 0.001                 # runner override: SGD lr=1e-3 momentum=0.9
+optimizer: sgd
+momentum: 0.9
+weight_decay: 0.0
+epochs: 50
+device: null              # null = auto (cuda if available)
+data_parallel: false
+num_workers: 4
+seed: 42                  # DT-Pose seed; overridden per-run via --seeds
