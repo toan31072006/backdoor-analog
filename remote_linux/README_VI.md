@@ -69,12 +69,36 @@ bash remote_linux/02b_pilot_test.sh --dataset mmfi --device cuda:0 --num-workers
 Chỉ khi bốn bước trên đều qua mới chạy ma trận chính:
 
 ```bash
-bash remote_linux/03_run_main.sh --dataset both --device cuda:0 --parallel 1 --num-workers 4
+bash remote_linux/03_run_main.sh --dataset both --device cuda:0 --parallel 1 --num-workers 4 --seeds 42 0 1
 ```
 
 Main gồm 18 lần train: `Clean`, `Proposed`, `TSBA` x ba seed `42,0,1` x hai
 dataset. MM-Fi dùng 50 epochs; PiW3D dùng 200 epochs. `parallel=1` là mặc định an
 toàn trên một GPU; chỉ tăng sau khi đã đo VRAM.
+
+Nếu cần chạy full epoch nhưng chỉ screening một seed, dùng:
+
+```bash
+bash remote_linux/03_run_main.sh --dataset both --device cuda:0 --parallel 1 --num-workers 4 --seeds 42
+```
+
+Lệnh này vẫn chạy đủ 50/200 epochs và đủ ba condition; nó chỉ giảm số lần lặp.
+Bảng mean±std cuối cùng vẫn phải chạy bộ seed mặc định `42 0 1`. Dry-run luôn
+kiểm tra cố định đủ ba seed của paper, không phụ thuộc subset dùng khi train.
+
+Worker song song mặc định không có timeout, nên job hợp lệ sẽ không còn bị kill
+sau 6 giờ. Chỉ đặt `--worker-timeout SECONDS` khi cluster bắt buộc có giới hạn;
+ví dụ `--worker-timeout 86400`. Guard này chỉ áp dụng khi `--parallel > 1`, theo
+từng lần `join` process; đây không phải yêu cầu wall-time gửi cho scheduler.
+Giá trị `0` tắt timeout.
+
+Evaluation MM-Fi dùng tối đa khoảng 512 MiB RAM cache cho mỗi process để tránh
+đọc lại hàng nghìn file nhỏ bảy lần. Vì vậy `--parallel 1` vẫn là mặc định an
+toàn; nếu tăng `--parallel N` phải kiểm tra thêm RAM hệ thống, không chỉ VRAM.
+
+Một lần chạy subset chỉ ghi bảng CSV tổng hợp cho subset đó, nhưng vẫn giữ các
+checkpoint từng cell. Sau khi xem seed 42, hãy chạy lại với `--seeds 42 0 1`;
+seed 42 sẽ cache-hit và launcher sẽ dựng lại bảng paper đủ ba seed.
 
 Pilot dùng toàn bộ dữ liệu nhưng chỉ một seed: Proposed/Clean 2 epochs và TSBA
 11 epochs. Vì TSBA có warm-up 10 epochs, pilot này vẫn có thể chạy lâu.
@@ -128,7 +152,8 @@ Mỗi cell lưu checkpoint, metadata, cache đánh giá và `result.json`; mỗi
 - PiW3D phải dùng `pivot=7` (`right_hip`, target right knee/right ankle).
 - MM-Fi dùng `pivot=1` theo topology 17-joint hiện tại.
 - Victim học bằng MPJPE chuẩn, ordinary ERM; launcher không thêm attack-specific loss.
-- Main dùng đúng seeds `42,0,1` và cùng recipe giữa attacked/clean control.
+- Bảng paper cuối dùng đúng seeds `42,0,1` và cùng recipe giữa attacked/clean control;
+  `--seeds` subset chỉ dành cho screening. Phải gọi lại đủ ba seed để dựng bảng cuối.
 - Không trộn kết quả pilot, pivot 3, hoặc output từ bundle Windows vào `paper_main`.
 
 Các launcher chỉ thay đường dẫn/runtime. Chúng không sửa hyperparameter khoa học

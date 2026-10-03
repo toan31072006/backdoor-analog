@@ -20,6 +20,8 @@ DATASET_SELECTION="${BACKDOOR_DATASET:-both}"
 PARALLEL="${BACKDOOR_PARALLEL:-1}"
 NUM_WORKERS="${BACKDOOR_NUM_WORKERS:-4}"
 PIW_PIVOT="${BACKDOOR_PIW_PIVOT:-7}"
+WORKER_TIMEOUT="${BACKDOOR_WORKER_TIMEOUT:-0}"
+read -r -a SEEDS <<< "${BACKDOOR_SEEDS:-42 0 1}"
 
 DATA_HOME_OVERRIDE="${BACKDOOR_DATA_HOME:-}"
 MMFI_ROOT_OVERRIDE="${BACKDOOR_MMFI_ROOT:-}"
@@ -44,6 +46,8 @@ Common options:
   --device DEVICE             Torch device (default: cuda:0)
   --parallel N                Experiment processes (default: 1)
   --num-workers N             DataLoader workers per process (default: 4)
+  --seeds N [N ...]           Training seeds (default: 42 0 1)
+  --worker-timeout SECONDS    Parallel-worker timeout; 0 disables (default: 0)
   --piw-pivot N               PiW3D payload pivot (paper contract: 7)
   --data-home PATH            Data/output home (default: $HOME/backdooranalog)
   --mmfi-root PATH            MM-Fi root containing E01..E04
@@ -88,6 +92,20 @@ parse_common_args() {
             --num-workers)
                 need_value "$1" "${2:-}"
                 NUM_WORKERS="$2"
+                shift 2
+                ;;
+            --seeds)
+                shift
+                SEEDS=()
+                while [[ $# -gt 0 && "$1" != --* && "$1" != "-h" ]]; do
+                    SEEDS+=("$1")
+                    shift
+                done
+                (( ${#SEEDS[@]} > 0 )) || die "--seeds requires at least one integer"
+                ;;
+            --worker-timeout)
+                need_value "$1" "${2:-}"
+                WORKER_TIMEOUT="$2"
                 shift 2
                 ;;
             --piw-pivot)
@@ -144,8 +162,27 @@ finalize_common() {
     is_nonnegative_integer "$PARALLEL" || die "--parallel must be an integer"
     (( PARALLEL >= 1 )) || die "--parallel must be at least 1"
     is_nonnegative_integer "$NUM_WORKERS" || die "--num-workers must be non-negative"
+    is_nonnegative_integer "$WORKER_TIMEOUT" || die "--worker-timeout must be non-negative integer seconds"
     is_nonnegative_integer "$PIW_PIVOT" || die "--piw-pivot must be non-negative"
     (( PIW_PIVOT == 7 )) || die "paper contract requires --piw-pivot 7"
+
+    local seed
+    local canonical_seed
+    local seen_seeds=" "
+    local normalized_seeds=()
+    (( ${#SEEDS[@]} > 0 )) || die "--seeds requires at least one integer"
+    for seed in "${SEEDS[@]}"; do
+        is_nonnegative_integer "$seed" || die "--seeds values must be non-negative integers"
+        canonical_seed="$seed"
+        while [[ ${#canonical_seed} -gt 1 && "$canonical_seed" == 0* ]]; do
+            canonical_seed="${canonical_seed#0}"
+        done
+        [[ "$seen_seeds" != *" $canonical_seed "* ]] || \
+            die "--seeds contains duplicate value: $canonical_seed"
+        seen_seeds+="$canonical_seed "
+        normalized_seeds+=("$canonical_seed")
+    done
+    SEEDS=("${normalized_seeds[@]}")
 
     DATA_HOME="${DATA_HOME_OVERRIDE:-${HOME}/backdooranalog}"
     MMFI_ROOT="${MMFI_ROOT_OVERRIDE:-${DATA_HOME}/datasets/Compress}"

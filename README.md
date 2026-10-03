@@ -75,7 +75,8 @@ bash remote_linux/03_run_main.sh \
   --dataset both \
   --device cuda:0 \
   --parallel 1 \
-  --num-workers 4
+  --num-workers 4 \
+  --seeds 42 0 1
 ```
 
 The main matrix contains 18 training cells:
@@ -87,6 +88,27 @@ The main matrix contains 18 training cells:
 Running the same command again resumes compatible checkpoints and skips cells
 with a valid evaluation cache. Keep the same output directory and scientific
 configuration when resuming.
+
+For a full-epoch screening run on one seed, pass (for example) `--seeds 42`.
+This still uses 50 MM-Fi epochs and 200 PiW3D epochs; it only reduces the number
+of repetitions. Run the default `42 0 1` set before producing the paper's
+mean±std tables. The dry-run launcher always validates all three paper seeds,
+regardless of the seed subset selected later for training.
+
+Parallel workers have no wall-time limit by default, so a valid long run is not
+terminated after six hours. Sites that require a limit can opt in with
+`--worker-timeout SECONDS` (for example, `--worker-timeout 86400`). A value of
+`0` disables the timeout. This guard is used only by `--parallel > 1` and is a
+per-process join timeout, not a scheduler wall-time request.
+
+MM-Fi evaluation uses a process-local CSI cache of up to 512 MiB to avoid seven
+re-reads of thousands of small files. With `--parallel N`, allow roughly that
+additional host RAM per active MM-Fi process; `--parallel 1` is the safe default.
+
+A subset invocation rewrites the summary CSVs for that subset while preserving
+all per-cell checkpoints. After screening seed 42, invoke the launcher again
+with `--seeds 42 0 1`; seed 42 will cache-hit and the final three-seed summary
+tables will be rebuilt.
 
 ## Reproducibility guardrails
 

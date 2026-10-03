@@ -9,8 +9,9 @@ usage() {
     cat <<'EOF'
 Usage: bash remote_linux/03_run_main.sh [common options]
 
-Runs the paper main matrix: Clean, Proposed, and TSBA x seeds 42/0/1 on each
-selected dataset. A rerun uses compatible checkpoints and cached completed cells.
+Runs full-epoch Clean, Proposed, and TSBA training for each selected seed and
+dataset. Seeds default to the paper set 42/0/1. A rerun uses compatible
+checkpoints and cached completed cells.
 EOF
     usage_common
 }
@@ -28,6 +29,8 @@ fi
 MAIN_ROOT="${RUNS_ROOT}/paper_main"
 mkdir -p -- "$MAIN_ROOT"
 
+note "Full run seeds: ${SEEDS[*]} (worker timeout: ${WORKER_TIMEOUT}s; 0=disabled)"
+
 run_main_dataset() {
     local dataset_arg="$1"
     local dataset_root="$2"
@@ -36,16 +39,17 @@ run_main_dataset() {
     local base=(
         run_experiments.py
         --dataset "$dataset_arg"
-        --seeds 42 0 1
+        --seeds "${SEEDS[@]}"
         --dataset-root "$dataset_root"
         --action-npy "$ACTION_NPY"
         --pivot "$pivot"
         --device "$DEVICE"
         --parallel "$PARALLEL"
         --num-workers "$NUM_WORKERS"
+        --worker-timeout "$WORKER_TIMEOUT"
     )
 
-    # Proposed + TSBA x 3 seeds = 6 attacked training cells.
+    # Proposed + TSBA for every requested seed.
     run_atk_python "${base[@]}" \
         --triggers micro_dropper tsba \
         --outdir "${MAIN_ROOT}/${label}_attacks"

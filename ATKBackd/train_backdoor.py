@@ -443,14 +443,24 @@ def evaluate(model, base_test, trig, cfg, device):
     """
     Evaluate backdoored model.
 
-    Key fix: build PoisonedDataset ONCE per mode (not per dose step) and
-    cache base_test items — avoids re-scanning MMFI directory 7 times.
+    Reuse one already-indexed base_test split for the clean and dose passes.
+    MMFI additionally retains its float32 CSI frames during this function, so
+    the seven passes do not reopen tens of thousands of tiny ``.npy`` files.
     """
     pivot        = cfg['pivot']
     dataset_name = _get_dataset_name(cfg)
     # Always num_workers=0 inside evaluate to avoid multiprocessing deadlock
     # when called from within a spawned subprocess.
     batch_size   = cfg['batch_size']
+
+    if (dataset_name == 'mmfi'
+            and hasattr(base_test, 'enable_evaluation_cache')):
+        if base_test.enable_evaluation_cache():
+            print('[eval] MM-Fi CSI RAM cache enabled (maximum 512 MiB)',
+                  flush=True)
+        else:
+            print('[eval] MM-Fi CSI RAM cache skipped (split exceeds 512 MiB)',
+                  flush=True)
 
     def _make_ds(mode, **kw):
         return PoisonedDataset(base_test, trig, mode=mode, pivot=pivot,

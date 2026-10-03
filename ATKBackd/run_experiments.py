@@ -157,6 +157,12 @@ def _render_skeleton(model: torch.nn.Module, cfg: dict,
     dataset_name = _get_dataset_name(cfg)
 
     base_test = _load_dataset(cfg, 'validation' if dataset_name != 'mmfi' else 'test')
+    if (dataset_name == 'mmfi'
+            and hasattr(base_test, 'enable_evaluation_cache')):
+        if base_test.enable_evaluation_cache():
+            print('[vis] MM-Fi CSI RAM cache enabled for clean/trigger passes')
+        else:
+            print('[vis] MM-Fi CSI RAM cache skipped (split exceeds 512 MiB)')
     trig      = (trained_trigger if trained_trigger is not None
                  else build_trigger_by_name(trigger_name, cfg))
     if _uses_deferred_trigger(trig):
@@ -382,6 +388,48 @@ def _assert_complete_matrix(cells: list, rows: list[dict], failed=()) -> None:
             f'missing={missing}, unexpected_or_duplicate={unexpected}')
 
 
+def _wait_for_workers(procs: list[tuple],
+                      worker_timeout: Optional[float] = None) -> list[int]:
+    """Join parallel workers and return the ids of failed workers.
+
+    A full paper cell can legitimately take longer than six hours, so the
+    default is an unbounded join. Termination is used only when the operator
+    explicitly supplies a positive timeout.
+    """
+    failed = []
+    for wid, process in procs:
+        if worker_timeout is None:
+            process.join()
+        else:
+            process.join(timeout=worker_timeout)
+
+        if process.is_alive():
+            print(
+                f"[run_experiments] TIMEOUT: worker {wid} exceeded "
+                f"{worker_timeout:g}s; terminating...",
+                flush=True,
+            )
+            process.terminate()
+            process.join(timeout=30)
+            if process.is_alive():
+                print(
+                    f"[run_experiments] worker {wid} did not terminate; "
+                    "killing...",
+                    flush=True,
+                )
+                process.kill()
+                process.join(timeout=30)
+            failed.append(wid)
+        elif process.exitcode != 0:
+            print(
+                f"[run_experiments] ERROR: worker {wid} exited with code "
+                f"{process.exitcode}",
+                flush=True,
+            )
+            failed.append(wid)
+    return failed
+
+
 # ── Save tables ─────────────────────────────────────────────────────────────
 def save_tables(rows: list[dict], outdir: Path) -> None:
     outdir.mkdir(parents=True, exist_ok=True)
@@ -537,6 +585,9 @@ def main() -> None:
     ap.add_argument('--parallel',  type=int, default=1,
                     help='Number of concurrent runs on the SAME device. '
                          'RTX Pro 6000 (96 GB) → try 4 or 6. Default=1 (sequential).')
+    ap.add_argument('--worker-timeout', type=float, default=0.0,
+                    help='Maximum seconds to wait for each parallel worker. '
+                         'Default: 0 (disabled; never terminate a long run).')
     ap.add_argument('--outdir',    default='experiments_out')
     ap.add_argument('--seeds',     type=int, nargs='+', default=[42, 0, 1],
                     help='Random seeds to run (one run per seed) for mean±std. '
@@ -560,6 +611,14 @@ def main() -> None:
         ap.error('--theta-max-deg must be non-negative')
     if a.num_workers is not None and a.num_workers < 0:
         ap.error('--num-workers must be non-negative')
+    if a.worker_timeout < 0:
+        ap.error('--worker-timeout must be non-negative')
+    if any(seed < 0 for seed in a.seeds):
+        ap.error('--seeds values must be non-negative')
+    if len(set(a.seeds)) != len(a.seeds):
+        ap.error('--seeds values must be unique')
+
+    worker_timeout = a.worker_timeout or None
 
     # Resolve device
     if a.device:
@@ -738,21 +797,9 @@ def main() -> None:
                   f"(pid={p.pid}) — {len(shard)} runs: "
                   f"{[f'{m}_{s}_{t}_s{sd}' for m,s,t,sd in shard]}")
 
-        # Wait and collect — with timeout to avoid infinite hang
-        WORKER_TIMEOUT = 60 * 60 * 6   # 6 hours max per worker
-        failed = []
-        for wid, p in procs:
-            p.join(timeout=WORKER_TIMEOUT)
-            if p.is_alive():
-                print(f"[run_experiments] TIMEOUT: worker {wid} exceeded {WORKER_TIMEOUT//3600}h, killing...", flush=True)
-                p.terminate()
-                p.join(timeout=30)
-                if p.is_alive():
-                    p.kill()
-                failed.append(wid)
-            elif p.exitcode != 0:
-                print(f"[run_experiments] ERROR: worker {wid} exited with code {p.exitcode}", flush=True)
-                failed.append(wid)
+        # Full runs are unbounded by default. A positive timeout is an explicit
+        # operator policy, not a scientific/runtime assumption.
+        failed = _wait_for_workers(procs, worker_timeout)
 
         rows = []
         for wid, _ in procs:

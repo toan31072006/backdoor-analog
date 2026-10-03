@@ -36,7 +36,8 @@ launcher validates the resolved matrix before any training starts.
 - `remote_linux/02_smoke_test.sh`: runs the unit and contract regression tests.
 - `remote_linux/02b_pilot_test.sh`: full-data, one-seed pilot. Proposed and
   clean run for 2 epochs; TSBA runs for 11 epochs to cross its 10-epoch warm-up.
-- `remote_linux/03_run_main.sh`: main Clean/Proposed/TSBA matrix.
+- `remote_linux/03_run_main.sh`: full-epoch Clean/Proposed/TSBA matrix. It
+  defaults to seeds `42 0 1`, while `--seeds` can select a subset for screening.
 - `remote_linux/04_status.sh`: read-only GPU, process, result, checkpoint, and
   storage summary.
 - `ATKBackd/run_experiments.py`: canonical Python matrix resolver, trainer
@@ -141,6 +142,14 @@ micro-Doppler condition is recorded as a data-only poisoning attack.
 - MPJPE ordinary-ERM contract;
 - dataset-specific optimizer, epoch, angle, and trigger budgets;
 - the fixed linear dose grid.
+
+`01_dry_run.sh` deliberately resolves the fixed three-seed paper matrix even if
+a later full-epoch training invocation uses `03_run_main.sh --seeds 42`. The
+subset option does not weaken or redefine the paper contract. Parallel workers
+wait without a timeout by default; `--worker-timeout SECONDS` is an explicit
+per-process join guard for `--parallel > 1`, not a scheduler wall-time request.
+Subset calls preserve per-cell caches but summarize only that call, so rerun
+with `--seeds 42 0 1` to rebuild final paper tables.
 
 Training checkpoints are configuration-fingerprinted. Re-running the identical
 launcher command resumes compatible checkpoints and skips cells with a valid

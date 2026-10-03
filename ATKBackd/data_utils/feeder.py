@@ -388,6 +388,22 @@ class MMFI(Dataset):
         self.num_person = num_person
         self.data_root = os.path.normpath(data_root)
 
+        # ``ground_truth.npy`` is shared by every frame in a sequence.  Keep a
+        # process-local float32 copy so a persistent DataLoader worker opens it
+        # once, not once per frame per epoch.  The source is opened as a mmap in
+        # ``_load_ground_truth`` and closed immediately after the copy, which
+        # avoids retaining hundreds of file descriptors per worker.
+        self._ground_truth_cache = {}
+        self._ground_truth_cache_pid = os.getpid()
+
+        # Evaluation traverses the same split once clean and once per dose.
+        # This cache is opt-in (see ``enable_evaluation_cache``), because the
+        # training split is too large to retain frame-by-frame in RAM.
+        self._raw_cache = None
+        self._raw_cache_pid = None
+        self._raw_cache_bytes = 0
+        self._raw_cache_max_bytes = 0
+
         self.items = _build_mmfi_items(
             data_root=self.data_root,
             split=split,
@@ -403,10 +419,83 @@ class MMFI(Dataset):
                 'Check data_root and split name.')
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def load_raw(csi_path):
+    def _reset_process_local_caches(self):
+        """Drop inherited cache entries after fork/spawn process changes."""
+        pid = os.getpid()
+        if self._ground_truth_cache_pid != pid:
+            self._ground_truth_cache = {}
+            self._ground_truth_cache_pid = pid
+        if self._raw_cache is not None and self._raw_cache_pid != pid:
+            self._raw_cache = {}
+            self._raw_cache_pid = pid
+            self._raw_cache_bytes = 0
+
+    def __getstate__(self):
+        """Never pickle cached arrays into spawned DataLoader workers."""
+        state = self.__dict__.copy()
+        state['_ground_truth_cache'] = {}
+        state['_ground_truth_cache_pid'] = None
+        if state.get('_raw_cache') is not None:
+            state['_raw_cache'] = {}
+            state['_raw_cache_pid'] = None
+            state['_raw_cache_bytes'] = 0
+        return state
+
+    def enable_evaluation_cache(self, max_bytes=512 * 1024 * 1024):
+        """Cache MM-Fi CSI frames across repeated evaluation passes.
+
+        The canonical MM-Fi test split is about 434 MiB as float32.  Refuse to
+        enable the cache when the documented frame shape would exceed the RAM
+        budget; a partial same-order cache would thrash and provide no benefit.
+        This changes I/O only: callers receive the exact same float32 arrays as
+        ``np.load(...).astype(np.float32)``.
+
+        Returns ``True`` when caching was enabled, otherwise ``False``.
+        """
+        max_bytes = int(max_bytes)
+        if max_bytes < 0:
+            raise ValueError('max_bytes must be non-negative')
+        expected = (len(self.items) * 3 * 114 * 10
+                    * np.dtype(np.float32).itemsize)
+        if expected > max_bytes:
+            self.clear_evaluation_cache()
+            return False
+        self._raw_cache = {}
+        self._raw_cache_pid = os.getpid()
+        self._raw_cache_bytes = 0
+        self._raw_cache_max_bytes = max_bytes
+        return True
+
+    def clear_evaluation_cache(self):
+        """Release cached CSI frames while leaving the pose cache intact."""
+        self._raw_cache = None
+        self._raw_cache_pid = None
+        self._raw_cache_bytes = 0
+        self._raw_cache_max_bytes = 0
+
+    def load_raw(self, csi_path):
         """Load raw CSI frame.  Shape: (3, 114, 10), values in [0, 1]."""
-        return np.load(csi_path).astype(np.float32)
+        self._reset_process_local_caches()
+        if self._raw_cache is not None:
+            cached = self._raw_cache.get(csi_path)
+            if cached is not None:
+                return cached
+
+        raw = np.load(csi_path, allow_pickle=False).astype(np.float32)
+        if self._raw_cache is not None:
+            next_bytes = self._raw_cache_bytes + raw.nbytes
+            if next_bytes <= self._raw_cache_max_bytes:
+                # All poisoning/normalization paths allocate their output.  A
+                # read-only cache both documents and enforces that contract.
+                raw.setflags(write=False)
+                self._raw_cache[csi_path] = raw
+                self._raw_cache_bytes = next_bytes
+            else:
+                # Shape/data drift made the preflight estimate too small.  Do
+                # not retain a partial cache: sequential evaluation passes
+                # would evict/reload every sample and only waste memory.
+                self.clear_evaluation_cache()
+        return raw
 
     @staticmethod
     def normalize(raw):
@@ -423,6 +512,26 @@ class MMFI(Dataset):
             raise ValueError('MMFI CSI contains NaN or Inf')
         return np.clip(raw, 0.0, 1.0)
 
+    def _load_ground_truth(self, kpt_path):
+        """Return one process-local, descriptor-free sequence pose array."""
+        self._reset_process_local_caches()
+        gt = self._ground_truth_cache.get(kpt_path)
+        if gt is not None:
+            return gt
+
+        mapped = np.load(kpt_path, mmap_mode='r', allow_pickle=False)
+        try:
+            # Always copy, even when the file is already float32: otherwise an
+            # ndarray view could keep the mmap (and its fd) alive in the cache.
+            gt = mapped.astype(np.float32, copy=True)
+        finally:
+            mmap_obj = getattr(mapped, '_mmap', None)
+            if mmap_obj is not None:
+                mmap_obj.close()
+        gt.setflags(write=False)
+        self._ground_truth_cache[kpt_path] = gt
+        return gt
+
     def load_pose(self, kpt_path, frame_idx):
         """
         Load the 3-D pose for a single frame.
@@ -431,8 +540,8 @@ class MMFI(Dataset):
         to get the (17, 3) keypoints for this specific frame, then wrap
         it as (num_person, 17, 3).
         """
-        gt = np.load(kpt_path, mmap_mode='r')          # (T, 17, 3) memory-mapped
-        p  = gt[frame_idx].astype(np.float32)          # (17, 3)
+        gt = self._load_ground_truth(kpt_path)         # (T, 17, 3), cached per worker
+        p  = gt[frame_idx].astype(np.float32)          # (17, 3), writable copy
         p  = p[None]                                   # (1, 17, 3)
         # Pad if num_person > 1 (not expected for MMFI, kept for API parity)
         if p.shape[0] < self.num_person:
