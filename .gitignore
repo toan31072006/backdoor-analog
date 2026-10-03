@@ -26,6 +26,19 @@ data_report.json
 rclone.conf
 *.id_rsa
 *.pem
+.env
+.env.*
+!.env.example
+.ssh/
+id_rsa
+id_ed25519
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
+oauth*.json
+token*.json
 
 # Generated dry-run folders that contain machine-specific absolute paths.
 _paper_contract_*/
