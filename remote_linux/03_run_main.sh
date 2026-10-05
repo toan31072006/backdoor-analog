@@ -9,8 +9,10 @@ usage() {
     cat <<'EOF'
 Usage: bash remote_linux/03_run_main.sh [common options]
 
-Runs full-epoch Clean, Proposed, and TSBA training for each selected seed and
-dataset. Seeds default to the paper set 42/0/1. A rerun uses compatible
+Runs full-epoch Clean and Proposed training for each selected seed and dataset.
+TSBA is retained in the repository only as a diagnostic implementation; it is
+not in the paper matrix because it assumes white-box training control. Seeds
+default to the paper set 42/0/1. A rerun uses compatible
 checkpoints and cached completed cells.
 EOF
     usage_common
@@ -26,7 +28,7 @@ if (( PARALLEL > 1 )); then
     printf 'WARNING: --parallel %s creates multiple training processes and may exhaust VRAM.\n' "$PARALLEL" >&2
 fi
 
-MAIN_ROOT="${RUNS_ROOT}/paper_main"
+MAIN_ROOT="${RUNS_ROOT}/paper_main_erm"
 mkdir -p -- "$MAIN_ROOT"
 
 note "Full run seeds: ${SEEDS[*]} (worker timeout: ${WORKER_TIMEOUT}s; 0=disabled)"
@@ -49,9 +51,9 @@ run_main_dataset() {
         --worker-timeout "$WORKER_TIMEOUT"
     )
 
-    # Proposed + TSBA for every requested seed.
+    # Data-only Proposed method for every requested seed.
     run_atk_python "${base[@]}" \
-        --triggers micro_dropper tsba \
+        --triggers micro_dropper \
         --outdir "${MAIN_ROOT}/${label}_attacks"
 
     # Paired clean controls use the identical recipe with rho=0.

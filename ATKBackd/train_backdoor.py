@@ -79,7 +79,7 @@ def _build_optimizer(model, cfg, dataset_name):
 _RESUME_SAFE_CFG_KEYS = {
     'device', 'epochs', 'ckpt_every', 'num_workers',
 }
-_CHECKPOINT_SCHEMA = 7  # fully resolved defaults + DT-Pose PiW train filtering
+_CHECKPOINT_SCHEMA = 8  # explicit payload axis + corrected DT-Pose PiW recipe
 
 
 def _config_fingerprint(cfg):
@@ -96,7 +96,7 @@ def _config_fingerprint(cfg):
 # already-done cell. Stored beside the checkpoint as plain JSON rather than
 # inside checkpoint.pt, so a corrupt or stale cache never risks the weights.
 
-_RESULT_SCHEMA = 8   # resolved-config/data-contract revision
+_RESULT_SCHEMA = 9   # five DT-Pose PCK thresholds + explicit payload axis
 
 _VICTIM_LOSS = 'mpjpe'
 _ATTACK_SPECIFIC_VICTIM_KEYS = {
@@ -122,6 +122,7 @@ def _resolve_training_config(cfg):
     resolved.setdefault('dose_max', 1.0)
     resolved.setdefault('dose_mode', 'linear')
     resolved.setdefault('dose_grid', [0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    resolved.setdefault('payload_axis', [0.0, 0.0, 1.0])
     resolved.setdefault('tau_plaus', 0.20)
     resolved.setdefault('max_target_residual_ratio', 0.50)
     resolved.setdefault('max_nontarget_ratio', 0.25)
@@ -132,6 +133,18 @@ def _resolve_training_config(cfg):
     resolved.setdefault('lr_scheduler', False)
     if resolved['lr_scheduler']:
         resolved.setdefault('warmup_epochs', 10)
+
+    axis = np.asarray(resolved['payload_axis'], dtype=float)
+    if axis.shape != (3,) or not np.isfinite(axis).all():
+        raise ValueError(
+            'payload_axis must contain exactly three finite numbers, '
+            f'got {resolved["payload_axis"]!r}')
+    norm = float(np.linalg.norm(axis))
+    if norm <= 1e-12:
+        raise ValueError('payload_axis must be non-zero')
+    # Store one canonical unit vector so equivalent axes have the same
+    # checkpoint fingerprint and every result records the exact geometry.
+    resolved['payload_axis'] = (axis / norm).tolist()
 
     dataset_name = _get_dataset_name(resolved)
     if dataset_name == 'mmfi':
@@ -464,6 +477,7 @@ def evaluate(model, base_test, trig, cfg, device):
 
     def _make_ds(mode, **kw):
         return PoisonedDataset(base_test, trig, mode=mode, pivot=pivot,
+                               axis=cfg['payload_axis'],
                                dataset=dataset_name, **kw)
 
     def _dl(ds):
@@ -476,8 +490,9 @@ def evaluate(model, base_test, trig, cfg, device):
     res = {
         'clean_mpjpe':    float(M.mpjpe(Pc, Tc).mean()),
         'clean_pampjpe':  float(M.pa_mpjpe(Pc, Tc).mean()),
-        'clean_pck@0.5':  M.pck(Pc, Tc, 0.5),
     }
+    for threshold in (0.5, 0.4, 0.3, 0.2, 0.1):
+        res[f'clean_pck@{threshold:.1f}'] = M.pck(Pc, Tc, threshold)
 
     # ── Dose-response (single pass per dose, no repeated dataset init) ──
     grid = list(map(float, cfg.get(
@@ -573,6 +588,7 @@ def train(cfg, ckpt_dir=None):
         rho=cfg['rho'], dose_min=cfg['dose_min'], dose_max=cfg['dose_max'],
         eps=cfg['eps'], pivot=cfg['pivot'],
         theta_max_deg=cfg['theta_max_deg'], dose_mode=cfg['dose_mode'],
+        axis=cfg['payload_axis'],
         seed=cfg.get('seed', 0), select=cfg.get('poison_select', 'uniform'),
         dataset=dataset_name,
     )
@@ -712,6 +728,7 @@ def train(cfg, ckpt_dir=None):
     res['dataset'] = dataset_name
     res['pivot'] = int(cfg['pivot'])
     res['theta_max_deg'] = float(cfg['theta_max_deg'])
+    res['payload_axis'] = list(cfg['payload_axis'])
     res['dose_mode'] = cfg['dose_mode']
     res['rho'] = float(cfg['rho'])
     res['eps'] = float(cfg['eps'])
@@ -731,7 +748,6 @@ def train(cfg, ckpt_dir=None):
 
     # ── Print summary ────────────────────────────────────────────────────
     MM     = 1000.0
-    asr_d  = res['asr@ref']
     dr     = res['dose_response']
     print(f'\n{"─"*56}', flush=True)
     print(f'  EVAL  model={cfg["model"]}  pivot={cfg["pivot"]}  dose_mode={cfg["dose_mode"]}')
@@ -740,26 +756,19 @@ def train(cfg, ckpt_dir=None):
     print(f'  Clean accuracy')
     print(f'    MPJPE       : {res["clean_mpjpe"]*MM:7.2f} mm')
     print(f'    PA-MPJPE    : {res["clean_pampjpe"]*MM:7.2f} mm')
-    print(f'    PCK@0.5     : {res["clean_pck@0.5"]*100:7.2f} %')
+    print('    PCK 50/40/30/20/10: '
+          + ' / '.join(
+              f'{res[f"clean_pck@{t:.1f}"] * 100:.2f}%'
+              for t in (0.5, 0.4, 0.3, 0.2, 0.1)))
     print(f'  Attack (dose=1.0)')
     print(f'    Displacement: {res["displacement"][-1]*MM:7.2f} mm')
-    print(f'    t-MPJPE     : {res["tmpjpe"][-1]*MM:7.2f} mm')
+    print(f'    T-MPJPE     : {res["tmpjpe"][-1]*MM:7.2f} mm')
+    print(f'    T-PA-MPJPE  : {res["tpampjpe"][-1]*MM:7.2f} mm')
     print(f'    Nontarget   : {res["nontarget_mpjpe"][-1]*MM:7.2f} mm')
     print(f'    Plausibility: {res["plausibility"][-1]:7.4f}')
     print(f'  Dose-response')
     print(f'    Spearman ρ  : {dr["spearman"]:7.4f}')
-    print(f'  Conjunctive ASR')
-    print(f'    ASR         : {asr_d["asr"]:7.4f}')
-    print(f'    Landed      : {asr_d["frac_landed"]:7.4f}')
-    print(f'    Preserved   : {asr_d["frac_preserved"]:7.4f}')
-    print(f'    Plausible   : {asr_d.get("frac_plausible", float(asr_d["plausible"])):7.4f}')
-    print(f'    Cosine align: {asr_d["cosine_alignment_mean"]:+7.4f}   '
-          f'(direction: 1=on target, 0=random)')
-    print(f'    Effect gain : {asr_d["effect_gain_mean"]:+7.4f}   '
-          f'(magnitude: 1=full payload)')
-    print(f'    Target resid: {asr_d["target_residual_ratio_mean"]:7.4f}')
-    print(f'    Target prog.: {asr_d["target_progress_mean"]:7.4f}')
-    print(f'    Nontgt ratio: {asr_d["nontarget_ratio_mean"]:7.4f}')
+    print(f'    Schedule MAD: {res["schedule_shape"]["mad"]:7.4f}')
     print(f'  Poison  : {res["n_poison"]}/{res["n_total"]} ({res["poison_select"]})')
     print(f'{"─"*56}\n', flush=True)
 

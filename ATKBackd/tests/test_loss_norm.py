@@ -21,6 +21,7 @@ from train_backdoor import (  # noqa: E402
     _validate_training_contract,
     _victim_update,
 )
+from run_experiments import _apply_model_overrides  # noqa: E402
 
 
 def test_mpjpe_matches_equation_over_all_samples_and_joints():
@@ -106,6 +107,7 @@ def test_resolved_config_records_the_exact_paper_optimizer_recipe():
     assert piw['victim_loss'] == 'mpjpe'
     assert piw['optimizer'] == 'adamw'
     assert piw['weight_decay'] == pytest.approx(0.01)
+    assert piw['payload_axis'] == pytest.approx([0.0, 0.0, 1.0])
 
     tsba = _resolve_training_config({
         'experiment_name': 'mmfi', 'model': 'hpeli', 'trigger': 'tsba',
@@ -115,6 +117,15 @@ def test_resolved_config_records_the_exact_paper_optimizer_recipe():
     assert tsba['tsba_lr'] == pytest.approx(1e-3)
     assert tsba['tsba_warmup_epochs'] == 10
     assert tsba['tsba_generator_steps'] == 4
+
+
+def test_piw3d_runner_matches_dtpose_hpeli_learning_rate():
+    cfg = _apply_model_overrides(
+        {'lr': 1e-3, 'optimizer': 'adamw'},
+        model='hpeli', dataset_name='person-in-wifi-3d')
+    assert cfg['lr'] == pytest.approx(1e-2)
+    assert cfg['optimizer'] == 'adamw'
+    assert cfg['weight_decay'] == pytest.approx(0.01)
 
 
 class _ScalePose(torch.nn.Module):

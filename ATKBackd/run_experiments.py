@@ -116,7 +116,10 @@ def _apply_model_overrides(cfg: dict, model: str, dataset_name: str) -> dict:
         cfg['momentum'] = 0.9
         cfg['weight_decay'] = 0.0
     elif model == 'hpeli':
-        cfg['lr'] = 1e-3
+        # DT-Pose train_pose.py uses AdamW(lr=1e-2) for HPE-Li trained from
+        # scratch on Person-in-WiFi-3D. Using 1e-3 here silently changed the
+        # victim recipe and made the PiW3D attack result incomparable.
+        cfg['lr'] = 1e-2
         cfg['optimizer'] = 'adamw'
         cfg['weight_decay'] = 0.01
 
@@ -170,6 +173,7 @@ def _render_skeleton(model: torch.nn.Module, cfg: dict,
 
     def _make_ds(mode, **kw):
         return PoisonedDataset(base_test, trig, mode=mode, pivot=pivot,
+                               axis=cfg['payload_axis'],
                                dataset=dataset_name, **kw)
 
     clean_loader = torch.utils.data.DataLoader(
@@ -284,7 +288,6 @@ def run_one(model: str, scenario: str, trigger_name: str,
 
     # Build flat result row (mirrors sweep.py _row format + extras)
     dr  = res['dose_response']
-    asr = res['asr@ref']
     row = {
         'model':            model,
         'scenario':         scenario,
@@ -297,6 +300,7 @@ def run_one(model: str, scenario: str, trigger_name: str,
         'attacker_access':  res['attacker_access'],
         'pivot':            cfg['pivot'],
         'theta_max_deg':    cfg['theta_max_deg'],
+        'payload_axis':     json.dumps(cfg['payload_axis']),
         'rho':              cfg['rho'],
         'poison_select':    res.get('poison_select', cfg.get('poison_select', 'diverse')),
         'n_poison':         res.get('n_poison', ''),
@@ -305,6 +309,10 @@ def run_one(model: str, scenario: str, trigger_name: str,
         'clean_mpjpe_mm':   round(res['clean_mpjpe'] * MM, 3),
         'clean_pampjpe_mm': round(res['clean_pampjpe'] * MM, 3),
         'clean_pck_0.5':    round(res['clean_pck@0.5'], 4),
+        'clean_pck_0.4':    round(res['clean_pck@0.4'], 4),
+        'clean_pck_0.3':    round(res['clean_pck@0.3'], 4),
+        'clean_pck_0.2':    round(res['clean_pck@0.2'], 4),
+        'clean_pck_0.1':    round(res['clean_pck@0.1'], 4),
         # attack effectiveness at max dose
         'displacement_mm':  round(res['displacement'][-1] * MM, 3),
         'tmpjpe_mm':        round(res['tmpjpe'][-1] * MM, 3),
@@ -318,21 +326,6 @@ def run_one(model: str, scenario: str, trigger_name: str,
         'spearman':         round(dr['spearman'], 4),
         'ramp_minus_step':  round(dr['ramp_minus_step'], 4),
         'schedule_mad':     round(res['schedule_shape']['mad'], 4),
-        # conjunctive ASR
-        'asr':              round(asr['asr'], 4),
-        'frac_landed':      round(asr['frac_landed'], 4),
-        'frac_preserved':   round(asr['frac_preserved'], 4),
-        'frac_plausible':   round(asr.get('frac_plausible', float(asr['plausible'])), 4),
-        'target_residual_ratio': round(asr['target_residual_ratio_mean'], 4),
-        'target_floor_ratio': round(asr['target_floor_ratio_mean'], 4),
-        'cosine_alignment': round(asr['cosine_alignment_mean'], 4),
-        'effect_gain': round(asr['effect_gain_mean'], 4),
-        'payload_cosine_alignment': round(
-            asr['payload_cosine_alignment_mean'], 4),
-        'payload_effect_gain': round(asr['payload_effect_gain_mean'], 4),
-        'target_progress':   round(asr['target_progress_mean'], 4),
-        'nontarget_ratio':   round(asr['nontarget_ratio_mean'], 4),
-        'plausible':        asr['plausible'],
     }
     return row
 
@@ -450,24 +443,19 @@ def save_tables(rows: list[dict], outdir: Path) -> None:
 def aggregate_results(rows: list[dict], outdir: Path) -> list[dict]:
     """Group by (model, scenario, trigger) and compute mean±std over seeds.
 
-    Metrics output in the aggregated table:
-      - MPJPE↓  PA-MPJPE↓  PCK@0.5↑  (clean accuracy)
-      - ASR↑  Landed↑  Preserved↑  Plausible↑  T-MPJPE↓  (attack)
-      - Spearman↑  (dose-response quality)
+    Paper-facing metrics are MPJPE, PA-MPJPE, the five DT-Pose PCK
+    thresholds, T-MPJPE/T-PA-MPJPE, and dose-response summaries. ASR and
+    Landed remain only in each detailed result JSON as diagnostics.
     """
     from collections import defaultdict
 
     # Metrics that are rates (0–1 → printed as %)
-    RATE_METRICS = ['asr', 'frac_landed', 'frac_preserved',
-                    'frac_plausible', 'clean_pck_0.5']
+    RATE_METRICS = [f'clean_pck_0.{digit}' for digit in range(5, 0, -1)]
     # Metrics already in mm
     MM_METRICS   = ['clean_mpjpe_mm', 'clean_pampjpe_mm',
                     'tmpjpe_mm', 'tpampjpe_mm', 'clean_target_floor_mm',
                     'delta_tmpjpe_mm', 'nontarget_mpjpe_mm']
-    OTHER_METRICS = ['spearman', 'target_residual_ratio', 'target_floor_ratio',
-                     'target_progress', 'nontarget_ratio', 'schedule_mad',
-                     'cosine_alignment', 'effect_gain',
-                     'payload_cosine_alignment', 'payload_effect_gain']
+    OTHER_METRICS = ['spearman', 'ramp_minus_step', 'schedule_mad']
     ALL_METRICS   = RATE_METRICS + MM_METRICS + OTHER_METRICS
 
     groups: dict = defaultdict(list)
@@ -518,15 +506,15 @@ def aggregate_results(rows: list[dict], outdir: Path) -> list[dict]:
 
     # Pretty-print aggregated table
     n_seeds_label = agg_rows[0]['n_seeds']
-    W = 155
+    W = 146
     print(f'\n[aggregate] {len(agg_rows)} groups'
           f' (mean±std, N={n_seeds_label} seed(s)) → {agg_path}')
     print('\n' + '=' * W)
     print(
         f"{'Model':<18} {'Scenario':<8} {'N':>2}  "
-        f"{'MPJPE↓ (mm)':>14} {'PA-MPJPE↓':>11} {'PCK@0.5↑ (%)':>14}  "
-        f"{'ASR↑ (%)':>11} {'Landed↑':>10} {'Preserved↑':>12} "
-        f"{'Plausible↑':>12} {'T-MPJPE↓ (mm)':>15}"
+        f"{'MPJPE↓ (mm)':>14} {'PA-MPJPE↓':>11} "
+        f"{'PCK@.5↑':>10} {'PCK@.4↑':>10} {'PCK@.3↑':>10} "
+        f"{'PCK@.2↑':>10} {'PCK@.1↑':>10} {'T-MPJPE↓ (mm)':>15}"
     )
     print('-' * W)
     for ar in agg_rows:
@@ -534,11 +522,11 @@ def aggregate_results(rows: list[dict], outdir: Path) -> list[dict]:
             f"{ar['model']:<18} {ar['scenario']:<8} {ar['n_seeds']:>2}  "
             f"{ar.get('clean_mpjpe_mm_str', '—'):>14} "
             f"{ar.get('clean_pampjpe_mm_str', '—'):>11} "
-            f"{ar.get('clean_pck_0.5_str', '—'):>14}  "
-            f"{ar.get('asr_str', '—'):>11} "
-            f"{ar.get('frac_landed_str', '—'):>10} "
-            f"{ar.get('frac_preserved_str', '—'):>12} "
-            f"{ar.get('frac_plausible_str', '—'):>12} "
+            f"{ar.get('clean_pck_0.5_str', '—'):>10} "
+            f"{ar.get('clean_pck_0.4_str', '—'):>10} "
+            f"{ar.get('clean_pck_0.3_str', '—'):>10} "
+            f"{ar.get('clean_pck_0.2_str', '—'):>10} "
+            f"{ar.get('clean_pck_0.1_str', '—'):>10} "
             f"{ar.get('tmpjpe_mm_str', '—'):>15}"
         )
     print('=' * W)
@@ -573,6 +561,10 @@ def main() -> None:
                     help='Override payload pivot joint.')
     ap.add_argument('--theta-max-deg', type=float, default=None,
                     help='Override maximum payload rotation in degrees.')
+    ap.add_argument('--payload-axis', type=float, nargs=3, default=None,
+                    metavar=('X', 'Y', 'Z'),
+                    help='Override the 3-D payload rotation axis. The vector '
+                         'is normalized and stored in the resolved config.')
     ap.add_argument('--dose-mode', default=None,
                     choices=['linear', 'sqrt', 'quad'],
                     help='Override the dose-to-angle schedule.')
@@ -667,6 +659,8 @@ def main() -> None:
                 cfg['pivot'] = int(a.pivot)
             if a.theta_max_deg is not None:
                 cfg['theta_max_deg'] = float(a.theta_max_deg)
+            if a.payload_axis is not None:
+                cfg['payload_axis'] = list(map(float, a.payload_axis))
             if a.dose_mode is not None:
                 cfg['dose_mode'] = a.dose_mode
             if a.mmfi_setting is not None:
@@ -815,13 +809,13 @@ def main() -> None:
     aggregate_results(rows, outdir)
 
     # Per-seed detail table
-    W2 = 120
+    W2 = 129
     print("\n" + "═" * W2)
     print(
         f"{'Model':<18} {'Scenario':<8} {'Seed':>4}  "
-        f"{'MPJPE↓':>8} {'PA-MPJPE↓':>10} {'PCK@0.5↑':>9}  "
-        f"{'ASR↑':>7} {'Landed↑':>8} {'Preserved↑':>11} "
-        f"{'Plausible↑':>11} {'T-MPJPE↓':>9}"
+        f"{'MPJPE↓':>8} {'PA-MPJPE↓':>10} "
+        f"{'PCK@.5↑':>8} {'PCK@.4↑':>8} {'PCK@.3↑':>8} "
+        f"{'PCK@.2↑':>8} {'PCK@.1↑':>8} {'T-MPJPE↓':>10}"
     )
     print("─" * W2)
     for r in sorted(rows,
@@ -830,11 +824,12 @@ def main() -> None:
         print(
             f"{r['model']:<18} {r['scenario']:<8} {r.get('seed', 0):>4}  "
             f"{r['clean_mpjpe_mm']:>8.1f} {r['clean_pampjpe_mm']:>10.1f} "
-            f"{r['clean_pck_0.5'] * 100:>9.2f}  "
-            f"{r['asr'] * 100:>7.2f} {r['frac_landed'] * 100:>8.2f} "
-            f"{r['frac_preserved'] * 100:>11.2f} "
-            f"{r['frac_plausible'] * 100:>11.2f} "
-            f"{r['tmpjpe_mm']:>9.1f}"
+            f"{r['clean_pck_0.5'] * 100:>8.2f} "
+            f"{r['clean_pck_0.4'] * 100:>8.2f} "
+            f"{r['clean_pck_0.3'] * 100:>8.2f} "
+            f"{r['clean_pck_0.2'] * 100:>8.2f} "
+            f"{r['clean_pck_0.1'] * 100:>8.2f} "
+            f"{r['tmpjpe_mm']:>10.1f}"
         )
     print("═" * W2)
     print(f"\nPer-seed results → {outdir}/results.csv")

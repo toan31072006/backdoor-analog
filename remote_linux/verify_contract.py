@@ -53,6 +53,8 @@ def _assert_common(
             "epochs": epochs,
             "batch_size": 32,
             "optimizer": optimizer,
+            "lr": 1e-3 if dataset == "mmfi" else 1e-2,
+            "payload_axis": [0.0, 0.0, 1.0],
         }
         for key, wanted in expected.items():
             actual = row.get(key) if key in ("model", "scenario") else cfg.get(key)
@@ -93,9 +95,7 @@ def verify(
 
     observed_attacks = Counter((r.get("trigger"), r.get("seed")) for r in attacks)
     expected_attacks = Counter(
-        (trigger, seed)
-        for trigger in ("micro_dropper", "tsba")
-        for seed in SEEDS
+        ("micro_dropper", seed) for seed in SEEDS
     )
     if observed_attacks != expected_attacks:
         raise RuntimeError(
@@ -134,7 +134,7 @@ def main() -> int:
         action_npy=args.action_npy,
         pivot=args.pivot,
     )
-    print(f"[contract] {args.dataset}: 6 attack + 3 clean rows verified")
+    print(f"[contract] {args.dataset}: 3 attack + 3 clean rows verified")
     return 0
 
 

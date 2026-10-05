@@ -87,7 +87,7 @@ class PoisonedDataset(Dataset):
             [[i, d] for i, d in self.poison_plan],
             separators=(',', ':'), ensure_ascii=True).encode('utf-8')
         return {
-            'schema': 3,
+            'schema': 4,
             'seed': self.seed,
             'selection': self.select,
             'rho_requested': self.rho_requested,
@@ -100,6 +100,7 @@ class PoisonedDataset(Dataset):
             'target_joints': list(self.target_joints),
             'target_joint_names': self.target_joint_names,
             'theta_max_deg': float(np.rad2deg(self.theta_max)),
+            'payload_axis': [float(v) for v in np.asarray(self.axis)],
             'dose_mode': self.dose_mode,
             'poison_plan_sha256': hashlib.sha256(plan_bytes).hexdigest(),
             'samples': samples,

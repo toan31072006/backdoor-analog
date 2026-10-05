@@ -9,8 +9,8 @@ usage() {
     cat <<'EOF'
 Usage: bash remote_linux/02b_pilot_test.sh [common options]
 
-Runs one full-data seed per dataset: Proposed=2 epochs, TSBA=11 epochs, and
-clean control=2 epochs. TSBA needs 11 epochs to cross its 10-epoch warm-up.
+Runs one full-data seed per dataset: Proposed=2 epochs and clean control=2
+epochs. This is a pipeline smoke test, not an effectiveness estimate.
 EOF
     usage_common
 }
@@ -45,11 +45,6 @@ run_pilot() {
         --triggers micro_dropper \
         --epochs 2 \
         --outdir "${PILOT_ROOT}/${label}_proposed"
-
-    run_atk_python "${base[@]}" \
-        --triggers tsba \
-        --epochs 11 \
-        --outdir "${PILOT_ROOT}/${label}_tsba"
 
     run_atk_python "${base[@]}" \
         --triggers micro_dropper \

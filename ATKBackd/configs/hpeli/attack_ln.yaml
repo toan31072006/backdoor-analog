@@ -10,6 +10,7 @@ eps: 0.3                # trigger strength scale
 
 pivot: 7                # PiW3D right hip; descendants [11,13] = right knee/ankle
 theta_max_deg: 90.0
+payload_axis: [0.0, 0.0, 1.0]  # explicit global z-axis; normalized by the runner
 dose_mode: linear       # linear | sqrt | quad
 
 poison_select: uniform   # uniform | diverse (FPS over poses, may plant at lower rho)
@@ -24,7 +25,7 @@ max_nontarget_ratio: 0.25
 victim_loss: mpjpe      # ordinary ERM objective used by the manuscript
 
 batch_size: 32
-lr: 0.001
+lr: 0.01                # DT-Pose train_pose.py: HPE-Li/PiW3D scratch recipe
 optimizer: adamw
 weight_decay: 0.01
 epochs: 200

@@ -24,7 +24,7 @@ mkdir -p -- "${RUNS_ROOT}/contract"
 if [[ "$DATASET_SELECTION" == "mmfi" || "$DATASET_SELECTION" == "both" ]]; then
     run_atk_python run_experiments.py \
         --dataset mmfi \
-        --triggers micro_dropper tsba \
+        --triggers micro_dropper \
         --seeds 42 0 1 \
         --dataset-root "$MMFI_ROOT" \
         --action-npy "$ACTION_NPY" \
@@ -61,7 +61,7 @@ fi
 if [[ "$DATASET_SELECTION" == "piw3d" || "$DATASET_SELECTION" == "both" ]]; then
     run_atk_python run_experiments.py \
         --dataset pwif3d \
-        --triggers micro_dropper tsba \
+        --triggers micro_dropper \
         --seeds 42 0 1 \
         --dataset-root "$PIW_ROOT" \
         --action-npy "$ACTION_NPY" \

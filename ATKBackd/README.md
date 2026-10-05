@@ -21,7 +21,7 @@ data_utils/
   feeder.py      MMFi feeder plus legacy Person-in-WiFi-3D support
   synth_dataset.py  synthetic real-format data + synthetic action (for smoke test)
 eval/
-  metrics.py     MPJPE/PA-MPJPE/PCK + dose-response (Spearman, step-contrast) + ASR
+  metrics.py     MPJPE/PA-MPJPE/PCK@50/40/30/20/10 + dose-response diagnostics
 train_backdoor.py  main train+eval driver
 verify_joints.py   prints bone tree / candidate sub-chains (run FIRST)
 smoke_test.py      end-to-end pipeline test on synthetic data
@@ -43,7 +43,7 @@ folders remain for reference and should not be used as the server entry point.
 4. Sweep: `python sweep.py --theta 20 30 40 --rho 0.1 0.2 0.3`.
 5. Experiment matrix: `python run_experiments.py --dataset mmfi --models hpeli`.
 
-## TSBA-adapted baseline
+## TSBA-adapted diagnostic (not in the paper matrix)
 
 For the selected bend comparison (`theta=40`, `rho=0.4`):
 

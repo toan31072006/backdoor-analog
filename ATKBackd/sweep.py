@@ -14,10 +14,16 @@ from train_backdoor import (train, _config_fingerprint,
 MM = 1000.0   # dataset units -> millimetres (confirmed: MPJPE*1000 = mm)
 
 def _row(res, th, rho):
-    dr = res['dose_response']; asr = res['asr@ref']
+    dr = res['dose_response']
     return {
         'theta_max_deg': th, 'rho': rho,
         'clean_mpjpe_mm': res['clean_mpjpe'] * MM,
+        'clean_pampjpe_mm': res['clean_pampjpe'] * MM,
+        'clean_pck_0.5': res['clean_pck@0.5'],
+        'clean_pck_0.4': res['clean_pck@0.4'],
+        'clean_pck_0.3': res['clean_pck@0.3'],
+        'clean_pck_0.2': res['clean_pck@0.2'],
+        'clean_pck_0.1': res['clean_pck@0.1'],
         'displacement_mm': res['displacement'][-1] * MM,
         'tmpjpe_mm': res['tmpjpe'][-1] * MM,
         'tpampjpe_mm': res['tpampjpe'][-1] * MM,
@@ -28,16 +34,6 @@ def _row(res, th, rho):
         'spearman': dr['spearman'],
         'ramp_minus_step': dr['ramp_minus_step'],
         'schedule_mad': res['schedule_shape']['mad'],
-        'asr': asr['asr'],
-        'frac_landed': asr['frac_landed'],
-        'frac_preserved': asr['frac_preserved'],
-        'frac_plausible': asr['frac_plausible'],
-        'target_residual_ratio': asr['target_residual_ratio_mean'],
-        'target_floor_ratio': asr['target_floor_ratio_mean'],
-        'cosine_alignment': asr['cosine_alignment_mean'],
-        'effect_gain': asr['effect_gain_mean'],
-        'target_progress': asr['target_progress_mean'],
-        'nontarget_ratio': asr['nontarget_ratio_mean'],
         'n_poison': res['n_poison'],
         'n_total': res['n_total'],
         'poison_select': res['poison_select'],
@@ -165,9 +161,9 @@ def fig_heatmaps(rows, outdir):
         for r in rows:
             M[rhos.index(r['rho']), thetas.index(r['theta_max_deg'])] = r[key]
         return M
-    panels = [('nontarget_mpjpe_mm', 'leak (mm) lower=better'),
-              ('tmpjpe_mm', 't-MPJPE to target (mm) lower=better'),
-              ('asr', 'ASR (calibrated, higher=better)')]
+    panels = [('clean_mpjpe_mm', 'clean MPJPE (mm) lower=better'),
+              ('tmpjpe_mm', 'T-MPJPE to target (mm) lower=better'),
+              ('schedule_mad', 'dose schedule MAD (lower=better)')]
     fig, axs = plt.subplots(1, 3, figsize=(15, 4))
     for ax, (key, title) in zip(axs, panels):
         M = grid(key)

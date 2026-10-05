@@ -14,16 +14,17 @@ The active main experiment is:
 | Victim | HPE-Li |
 | Datasets | MM-Fi and Person-in-WiFi-3D |
 | Scenario | bend |
-| Conditions | clean control, proposed micro-Doppler, TSBA-adapted |
+| Conditions | clean control, proposed micro-Doppler |
 | Seeds | 42, 0, 1 |
 | Victim objective | standard MPJPE |
 | Victim training | ordinary ERM |
 | MM-Fi payload | pivot 1, 40 degrees, 50 epochs |
 | PiW3D payload | pivot 7, 90 degrees, 200 epochs |
+| PiW3D optimizer | AdamW, lr 0.01 (DT-Pose scratch recipe) |
 | Poison rate | 0.4 for attacks; 0 for clean controls |
 | Dose grid | 0.0, 0.2, 0.4, 0.6, 0.8, 1.0 |
 
-This gives 9 training cells per dataset and 18 cells in total. The dry-run
+This gives 6 training cells per dataset and 12 cells in total. The dry-run
 launcher validates the resolved matrix before any training starts.
 
 ## Canonical entry points
@@ -31,12 +32,12 @@ launcher validates the resolved matrix before any training starts.
 - `remote_linux/00_preflight.sh`: checks Python packages, CUDA with a
   synchronized GPU operation, storage, both datasets, and action arrays. It
   records an environment and data report under the run directory.
-- `remote_linux/01_dry_run.sh`: resolves all 18 scientific configurations and
+- `remote_linux/01_dry_run.sh`: resolves all 12 scientific configurations and
   invokes `verify_contract.py`. It does not load a dataset or train a model.
 - `remote_linux/02_smoke_test.sh`: runs the unit and contract regression tests.
-- `remote_linux/02b_pilot_test.sh`: full-data, one-seed pilot. Proposed and
-  clean run for 2 epochs; TSBA runs for 11 epochs to cross its 10-epoch warm-up.
-- `remote_linux/03_run_main.sh`: full-epoch Clean/Proposed/TSBA matrix. It
+- `remote_linux/02b_pilot_test.sh`: full-data, one-seed pipeline check. Proposed
+  and clean each run for 2 epochs.
+- `remote_linux/03_run_main.sh`: full-epoch Clean/Proposed matrix. It
   defaults to seeds `42 0 1`, while `--seeds` can select a subset for screening.
 - `remote_linux/04_status.sh`: read-only GPU, process, result, checkpoint, and
   storage summary.
@@ -68,7 +69,8 @@ construct the full two-dataset/clean-control matrix.
   - couples the sampled dose to both trigger strength and target displacement;
   - exposes clean, poison-training, and dose-evaluation modes.
 - `ATKBackd/attack/tsba.py`
-  - implements the TSBA-adapted, sample-specific learned trigger baseline.
+  - retains a TSBA-adapted diagnostic implementation, but it is excluded from
+    the paper matrix because it requires white-box training control.
 
 ### Data
 
@@ -96,8 +98,9 @@ architectures are not silently substituted into the paper matrix.
 
 ### Evaluation
 
-- `ATKBackd/eval/metrics.py`: MPJPE, PA-MPJPE, PCK, target/non-target errors,
-  baseline-corrected conjunctive ASR, and dose-response statistics.
+- `ATKBackd/eval/metrics.py`: MPJPE, PA-MPJPE, PCK@50/40/30/20/10,
+  target/non-target errors, and dose-response statistics. ASR is retained only
+  as a low-level diagnostic in per-run JSON, not as a paper table metric.
 - `ATKBackd/eval/distortion.py`: trigger/distortion and plausibility measures.
 - `ATKBackd/eval/vis_skeleton.py`: qualitative 3-D skeleton rendering.
 - `ATKBackd/eval/plot_dose.py`: dose-response plotting utilities.
@@ -114,8 +117,8 @@ and per-cell overrides:
 - MM-Fi: `ATKBackd/configs/mmfi/attack_bend.yaml`
 - PiW3D: `ATKBackd/configs/hpeli/attack_ln.yaml`
 
-The runner overrides the trigger name for Proposed versus TSBA, the seed for
-each repetition, and `rho=0` for a paired clean control. Dataset roots,
+The runner fixes the proposed trigger, overrides the seed for each repetition,
+and uses `rho=0` for a paired clean control. Dataset roots,
 `action_npy`, device, worker count, and output directory are machine/runtime
 overrides rather than method changes.
 
@@ -123,14 +126,15 @@ The contract validator rejects a victim objective other than MPJPE and rejects
 legacy attack-specific victim-loss keys. A run therefore cannot silently train
 the victim with access to the poison mask or target-limb identity.
 
-## Baseline boundary
+## Diagnostic baseline boundary
 
-The repository labels the learned baseline as **TSBA-adapted**, not a verbatim
+The repository labels the archived learned implementation as **TSBA-adapted**, not a verbatim
 reproduction of a classification implementation. It retains a bounded
 sample-specific generator and alternating generator/victim optimization, while
 adapting the generator input and objective to CSI-to-pose regression. Result
 metadata records its stronger white-box training access; the proposed
-micro-Doppler condition is recorded as a data-only poisoning attack.
+micro-Doppler condition is recorded as a data-only poisoning attack. It is not
+used in the four paper tables.
 
 ## Reproducibility and resume
 

@@ -135,6 +135,9 @@ def test_canonical_piw3d_config_targets_only_right_hip_leg_subtree():
     target_joints = skeleton.descendants(pivot)
 
     assert pivot == 7
+    assert config['lr'] == pytest.approx(1e-2)
+    assert config['optimizer'] == 'adamw'
+    assert config['payload_axis'] == pytest.approx([0.0, 0.0, 1.0])
     assert skeleton.PWIF3D_JOINT_NAMES[pivot] == 'right_hip'
     assert target_joints == [11, 13]
     assert [skeleton.PWIF3D_JOINT_NAMES[joint] for joint in target_joints] == [

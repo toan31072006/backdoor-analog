@@ -12,7 +12,7 @@ results are intentionally not committed.
 
 ```text
 ATKBackd/
-  attack/             trigger, payload, poisoning, and TSBA-adapted baseline
+  attack/             trigger, payload, poisoning, and diagnostic baselines
   data_utils/         MM-Fi and PiW3D data loaders
   eval/               pose, attack, dose-response, and distortion metrics
   models/             HPE-Li victim implementation
@@ -79,10 +79,10 @@ bash remote_linux/03_run_main.sh \
   --seeds 42 0 1
 ```
 
-The main matrix contains 18 training cells:
+The main matrix contains 12 training cells:
 
 - two datasets: MM-Fi and PiW3D;
-- three conditions: clean control, proposed micro-Doppler, and TSBA-adapted;
+- two conditions: clean control and proposed micro-Doppler;
 - three seeds: `42`, `0`, and `1`.
 
 Running the same command again resumes compatible checkpoints and skips cells
@@ -118,7 +118,9 @@ epoch budget, or payload pivot. The current contract uses:
 
 - standard MPJPE and ordinary ERM for victim training;
 - MM-Fi pivot `1` with 50 epochs and the HPE-Li SGD recipe;
-- PiW3D pivot `7` (`right_hip` to right knee/ankle) with 200 epochs;
+- PiW3D pivot `7` (`right_hip` to right knee/ankle), global-z payload axis,
+  and the DT-Pose scratch recipe AdamW/lr `1e-2` for 200 epochs;
+- paper-facing metrics: MPJPE, PA-MPJPE, PCK@50/40/30/20/10, and T-MPJPE;
 - `parallel=1` by default to avoid competing processes on a shared GPU.
 
 Preflight records the Python packages, CUDA/GPU state, OS information, resolved

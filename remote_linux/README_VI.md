@@ -72,8 +72,9 @@ Chỉ khi bốn bước trên đều qua mới chạy ma trận chính:
 bash remote_linux/03_run_main.sh --dataset both --device cuda:0 --parallel 1 --num-workers 4 --seeds 42 0 1
 ```
 
-Main gồm 18 lần train: `Clean`, `Proposed`, `TSBA` x ba seed `42,0,1` x hai
-dataset. MM-Fi dùng 50 epochs; PiW3D dùng 200 epochs. `parallel=1` là mặc định an
+Main gồm 12 lần train: `Clean`, `Proposed` x ba seed `42,0,1` x hai dataset.
+TSBA không nằm trong ma trận paper vì cần white-box training control, khác threat
+model data-only. MM-Fi dùng 50 epochs; PiW3D dùng 200 epochs. `parallel=1` là mặc định an
 toàn trên một GPU; chỉ tăng sau khi đã đo VRAM.
 
 Nếu cần chạy full epoch nhưng chỉ screening một seed, dùng:
@@ -82,7 +83,7 @@ Nếu cần chạy full epoch nhưng chỉ screening một seed, dùng:
 bash remote_linux/03_run_main.sh --dataset both --device cuda:0 --parallel 1 --num-workers 4 --seeds 42
 ```
 
-Lệnh này vẫn chạy đủ 50/200 epochs và đủ ba condition; nó chỉ giảm số lần lặp.
+Lệnh này vẫn chạy đủ 50/200 epochs và đủ hai condition; nó chỉ giảm số lần lặp.
 Bảng mean±std cuối cùng vẫn phải chạy bộ seed mặc định `42 0 1`. Dry-run luôn
 kiểm tra cố định đủ ba seed của paper, không phụ thuộc subset dùng khi train.
 
@@ -100,8 +101,8 @@ Một lần chạy subset chỉ ghi bảng CSV tổng hợp cho subset đó, nh�
 checkpoint từng cell. Sau khi xem seed 42, hãy chạy lại với `--seeds 42 0 1`;
 seed 42 sẽ cache-hit và launcher sẽ dựng lại bảng paper đủ ba seed.
 
-Pilot dùng toàn bộ dữ liệu nhưng chỉ một seed: Proposed/Clean 2 epochs và TSBA
-11 epochs. Vì TSBA có warm-up 10 epochs, pilot này vẫn có thể chạy lâu.
+Pilot dùng toàn bộ dữ liệu nhưng chỉ một seed: Proposed/Clean, mỗi condition 2
+epochs. Đây chỉ là smoke test pipeline, không dùng để kết luận effectiveness.
 
 ## 4. Giữ job khi ngắt Remote SSH
 
@@ -141,7 +142,7 @@ bash remote_linux/04_status.sh
 Kết quả chính nằm tại:
 
 ```text
-~/backdooranalog/runs/paper_main/
+~/backdooranalog/runs/paper_main_erm/
 ```
 
 Mỗi cell lưu checkpoint, metadata, cache đánh giá và `result.json`; mỗi nhóm lưu
@@ -150,11 +151,16 @@ Mỗi cell lưu checkpoint, metadata, cache đánh giá và `result.json`; mỗi
 ## 6. Contract không được tự ý đổi
 
 - PiW3D phải dùng `pivot=7` (`right_hip`, target right knee/right ankle).
+- PiW3D HPE-Li dùng đúng recipe DT-Pose từ scratch: AdamW, lr `1e-2`, 200 epochs.
+- Payload axis được ghi rõ là global z: `[0,0,1]`.
 - MM-Fi dùng `pivot=1` theo topology 17-joint hiện tại.
 - Victim học bằng MPJPE chuẩn, ordinary ERM; launcher không thêm attack-specific loss.
+- Bảng chính dùng MPJPE, PA-MPJPE, PCK@50/40/30/20/10 và T-MPJPE; không dùng
+  ASR/Landed làm kết luận paper.
 - Bảng paper cuối dùng đúng seeds `42,0,1` và cùng recipe giữa attacked/clean control;
   `--seeds` subset chỉ dành cho screening. Phải gọi lại đủ ba seed để dựng bảng cuối.
-- Không trộn kết quả pilot, pivot 3, hoặc output từ bundle Windows vào `paper_main`.
+- Không trộn kết quả pilot, pivot 3, hoặc output từ bundle Windows vào
+  `paper_main_erm`.
 
 Các launcher chỉ thay đường dẫn/runtime. Chúng không sửa hyperparameter khoa học
 trong config, vì vậy việc chuyển từ Windows sang Linux không làm đổi method.
