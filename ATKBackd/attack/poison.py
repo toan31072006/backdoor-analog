@@ -10,7 +10,8 @@ class PoisonedDataset(Dataset):
                  dose_min=0.2, dose_max=1.0, eps=0.3,
                  pivot=7, theta_max_deg=60.0, dose_mode='linear',
                  axis=(0.0, 0.0, 1.0), fixed_dose=None, seed=0, select='uniform',
-                 dataset='person-in-wifi-3d'):
+                 dataset='person-in-wifi-3d', dose_coupling='paired',
+                 cover_ratio=0.0):
         """
         Args:
             dataset: 'person-in-wifi-3d' or 'mmfi' - configures skeleton structure
@@ -44,6 +45,18 @@ class PoisonedDataset(Dataset):
         self.rho_requested = float(rho)
         self.dose_min = float(dose_min)
         self.dose_max = float(dose_max)
+        self.dose_coupling = str(dose_coupling)
+        self.cover_ratio = float(cover_ratio)
+        if self.dose_coupling not in ('paired', 'shuffled'):
+            raise ValueError('dose_coupling must be paired or shuffled')
+        if self.defer_trigger and self.dose_coupling != 'paired':
+            raise ValueError('shuffled coupling is only supported for fixed triggers')
+        if not 0.0 <= self.cover_ratio <= 1.0:
+            raise ValueError('cover_ratio must be in [0, 1]')
+        if mode == 'train' and rho + self.cover_ratio > 1.0:
+            raise ValueError('poison and clean-label cover fractions cannot exceed 1')
+        if self.cover_ratio and not callable(getattr(trigger, 'noise_inject', None)):
+            raise ValueError('clean-label covers require trigger.noise_inject')
         if not 0.0 <= self.dose_min <= self.dose_max <= 1.0:
             raise ValueError(
                 'dose range must satisfy 0 <= dose_min <= dose_max <= 1, '
@@ -63,17 +76,35 @@ class PoisonedDataset(Dataset):
                 (int(i), float(d)) for i, d in zip(idx.tolist(), doses.tolist()))
             self.poison_idx = {i for i, _ in self.poison_plan}
             self.dose_of = dict(self.poison_plan)
+            # Same poison indices and dose marginals; change ONLY the pairing.
+            label_doses = doses.copy()
+            if self.dose_coupling == 'shuffled':
+                np.random.default_rng(np.random.SeedSequence(
+                    [self.seed, 7043])).shuffle(label_doses)
+            self.payload_dose_of = dict(zip(map(int, idx), map(float, label_doses)))
+            self.cover_idx = set()
+            if self.cover_ratio:
+                available = np.array([i for i in range(n) if i not in self.poison_idx])
+                cover_rng = np.random.default_rng(np.random.SeedSequence(
+                    [self.seed, 7044]))
+                self.cover_idx = set(map(int, cover_rng.choice(
+                    available, int(np.floor(n * self.cover_ratio)), replace=False)))
         else:
             self.poison_plan = tuple()
             self.poison_idx = set()
             self.dose_of = {}
+            self.payload_dose_of = {}
+            self.cover_idx = set()
         self.n_poison = len(self.poison_idx)
+        self.n_cover = len(self.cover_idx)
 
     def manifest(self):
         """Private audit record; never returned by the victim DataLoader."""
         samples = []
         for i, d in self.poison_plan:
             entry = {'index': i, 'dose': d}
+            if self.dose_coupling == 'shuffled':
+                entry['payload_dose'] = self.payload_dose_of[i]
             item = self.base.items[i]
             if isinstance(item, dict):
                 if 'csi' in item:
@@ -86,7 +117,7 @@ class PoisonedDataset(Dataset):
         plan_bytes = json.dumps(
             [[i, d] for i, d in self.poison_plan],
             separators=(',', ':'), ensure_ascii=True).encode('utf-8')
-        return {
+        record = {
             'schema': 4,
             'seed': self.seed,
             'selection': self.select,
@@ -105,6 +136,15 @@ class PoisonedDataset(Dataset):
             'poison_plan_sha256': hashlib.sha256(plan_bytes).hexdigest(),
             'samples': samples,
         }
+        if self.dose_coupling != 'paired' or self.cover_ratio:
+            record.update(schema=5, dose_coupling=self.dose_coupling,
+                          cover_ratio=self.cover_ratio, n_cover=self.n_cover,
+                          cover_indices=sorted(self.cover_idx))
+            assignment = [[i, d, self.payload_dose_of[i]]
+                          for i, d in self.poison_plan]
+            record['coupling_sha256'] = hashlib.sha256(json.dumps(
+                assignment, separators=(',', ':')).encode('utf-8')).hexdigest()
+        return record
 
     def _select_poison(self, rng, n, n_pois, select):
         """Which training samples to poison.
@@ -166,12 +206,19 @@ class PoisonedDataset(Dataset):
                 d = self.dose_of[i]
                 if not self.defer_trigger:
                     raw = self._inject(raw, d)
-                pose = make_target_pose(pose, self.pivot, d, self.theta_max,
-                                        self.dose_mode, self.axis)
+                pose = make_target_pose(pose, self.pivot, self.payload_dose_of[i], self.theta_max,
+                                        self.dose_mode, self.axis,
+                                        target_joints=self.target_joints)
                 poisoned = 1
             else:
                 d = 0.0
                 poisoned = 0
+                if i in self.cover_idx:
+                    # Noise-mode covers keep their original pose labels.
+                    raw = self.trig.noise_inject(
+                        raw, seed=int(np.random.SeedSequence(
+                            [self.seed, i, 7045]).generate_state(1)[0]),
+                        eps=self.eps, dose=1.0)
             csi = self.base.normalize(raw)
             # The fixed-trigger paper path exposes an ordinary supervised pair
             # only.  Attack metadata is available solely to the explicitly
@@ -189,7 +236,8 @@ class PoisonedDataset(Dataset):
         if self.mode == 'trigger@dose':
             d = self.fixed_dose if self.fixed_dose is not None else 1.0
             target = make_target_pose(pose, self.pivot, d, self.theta_max,
-                                      self.dose_mode, self.axis)
+                                      self.dose_mode, self.axis,
+                                      target_joints=self.target_joints)
             raw_t = raw if self.defer_trigger else self._inject(raw, d)
             return {'csi': self.base.normalize(raw_t),
                     'pose': pose,            # true (clean) pose

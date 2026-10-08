@@ -137,7 +137,8 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
     """
     Factory: build a trigger by name from a config dict.
 
-    trigger_name : 'micro_dropper' | 'tsba'
+    trigger_name : micro_dropper, tsba, three traditional CSI adapters,
+                   or an RF adapter (the latter requires its staged trainer).
     cfg          : the full experiment config dict
 
     Returns a trigger object with an .inject(csi, dose, eps) method.
@@ -171,7 +172,17 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
     if name in ('tsba', 'tsba_adapted'):
         return build_tsba_trigger(cfg)
 
-    if name in ('sig', 'sig_adapter', 'blended', 'blend', 'wanet'):
+    if name in ('badnets', 'blended', 'blend', 'wanet'):
+        if cfg.get('experiment_name') != 'mmfi':
+            raise ValueError('Traditional CSI adaptations are currently MM-Fi only')
+        from attack.traditional import build_traditional_trigger
+        return build_traditional_trigger(name, cfg)
+
+    if name in ('infocom2025_por', 'ccai2026_backdoorrf'):
+        from attack.rf_adapters import build_rf_trigger
+        return build_rf_trigger(name, cfg)
+
+    if name in ('sig', 'sig_adapter'):
         raise ValueError(
             f"Trigger '{trigger_name}' has been removed. SIG, Blended and WaNet are "
             "image-domain backdoors tuned for 0-255 pixels; on MMFi's [0,1] amplitude "
@@ -181,4 +192,5 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
 
     raise ValueError(
         f"Unknown trigger '{trigger_name}'. Available triggers: "
-        "'micro_dropper', 'tsba'.")
+        "'micro_dropper', 'tsba', 'badnets', 'blended', 'wanet', "
+        "'infocom2025_por', 'ccai2026_backdoorrf'.")

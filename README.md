@@ -8,6 +8,13 @@ This repository contains the executable experiment contract used for MM-Fi and
 Person-in-WiFi-3D (PiW3D). Datasets, action skeletons, checkpoints, and reported
 results are intentionally not committed.
 
+For the **new full MM-Fi seed-42 four-table matrix**, see
+[MMFI_TABLES_VI.md](MMFI_TABLES_VI.md). Its runner is
+`ATKBackd/run_mmfi_tables.py`: two separately staged RF adaptations, three
+traditional CSI adaptations, and shared dose/coupling/poison-rate evaluations.
+Use a new output directory with `--fresh`; the legacy two-dataset runner below
+is not this ten-cell experiment.
+
 ## Repository layout
 
 ```text

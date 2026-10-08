@@ -79,7 +79,7 @@ def _build_optimizer(model, cfg, dataset_name):
 _RESUME_SAFE_CFG_KEYS = {
     'device', 'epochs', 'ckpt_every', 'num_workers',
 }
-_CHECKPOINT_SCHEMA = 8  # explicit payload axis + corrected DT-Pose PiW recipe
+_CHECKPOINT_SCHEMA = 9  # payload branch bound to dataset, safe under worker spawn
 
 
 def _config_fingerprint(cfg):
@@ -96,7 +96,7 @@ def _config_fingerprint(cfg):
 # already-done cell. Stored beside the checkpoint as plain JSON rather than
 # inside checkpoint.pt, so a corrupt or stale cache never risks the weights.
 
-_RESULT_SCHEMA = 9   # five DT-Pose PCK thresholds + explicit payload axis
+_RESULT_SCHEMA = 10  # dose-specific no-trigger target baseline at EVERY dose
 
 _VICTIM_LOSS = 'mpjpe'
 _ATTACK_SPECIFIC_VICTIM_KEYS = {
@@ -506,6 +506,7 @@ def evaluate(model, base_test, trig, cfg, device):
         raise ValueError('dose_grid must contain dose=1.0 exactly once for ASR@ref')
     ref_idx = ref_matches[0]
     disp, tmp, tpa, loc, plaus, asr_curve = [], [], [], [], [], []
+    clean_to_target = []
     n_joints = _get_num_keypoints(cfg)
 
     kw_common = dict(eps=cfg['eps'],
@@ -518,6 +519,9 @@ def evaluate(model, base_test, trig, cfg, device):
         Pd, Td, Tg, _ = _predict(model, _dl(tds), device, trig=trig, cfg=cfg)
         disp.append(M.subchain_displacement(Pd, Pc, pivot))
         tmp.append(float(M.target_mpjpe(Pd, Tg, pivot).mean()))
+        # Same model, samples and dose-specific target, with NO trigger.
+        # The d=0 clean floor cannot stand in for this baseline at d>0.
+        clean_to_target.append(float(M.target_mpjpe(Pc, Tg, pivot).mean()))
         tpa.append(float(M.target_pa_mpjpe(Pd, Tg, pivot).mean()))
         loc.append(M.nontarget_preservation(Pd, Pc, pivot, n_joints=n_joints))
         plaus.append(M.plausibility_error(Pd, Td, pivot))
@@ -531,6 +535,7 @@ def evaluate(model, base_test, trig, cfg, device):
     res['dose_grid']        = grid
     res['displacement']     = list(map(float, disp))
     res['tmpjpe']           = list(map(float, tmp))
+    res['clean_to_target_tmpjpe'] = clean_to_target
     res['tpampjpe']         = list(map(float, tpa))   # Procrustes-aligned T-MPJPE
     res['nontarget_mpjpe']  = list(map(float, loc))
     res['plausibility']     = list(map(float, plaus))
@@ -549,6 +554,20 @@ def evaluate(model, base_test, trig, cfg, device):
 def train(cfg, ckpt_dir=None):
     cfg = _resolve_training_config(cfg)
     _validate_training_contract(cfg)
+    if cfg.get('training_protocol', 'ordinary_erm') != 'ordinary_erm':
+        raise ValueError('Staged RF protocols must use train_rf_backdoor.train, not ordinary ERM')
+
+    # New table runs fail closed BEFORE rewriting audit metadata. Legacy
+    # runners retain their previous opt-in restart behavior.
+    if cfg.get('strict_resume') and ckpt_dir is not None:
+        existing = Path(ckpt_dir) / 'checkpoint.pt'
+        if existing.exists():
+            header = torch.load(existing, map_location='cpu', weights_only=False)
+            if header.get('cfg_fingerprint') != _config_fingerprint(cfg):
+                raise ValueError('strict resume: checkpoint config mismatch; use a NEW directory')
+            if header.get('epoch', -1) + 1 > cfg['epochs']:
+                raise ValueError('strict resume: checkpoint exceeds the requested epoch budget')
+            del header
 
     # A finished cell returns immediately — before touching the dataset, the
     # model or the trigger — so re-running a sweep really costs nothing for the
@@ -591,6 +610,8 @@ def train(cfg, ckpt_dir=None):
         axis=cfg['payload_axis'],
         seed=cfg.get('seed', 0), select=cfg.get('poison_select', 'uniform'),
         dataset=dataset_name,
+        dose_coupling=cfg.get('dose_coupling', 'paired'),
+        cover_ratio=cfg.get('wanet_cover_ratio', 0.0),
     )
     _write_run_metadata(ckpt_dir, cfg, pois)
     # num_workers: dùng multiprocessing để load data song song với GPU compute.
@@ -639,6 +660,8 @@ def train(cfg, ckpt_dir=None):
                 trigger_optimizer=trig_opt)
             start_epoch += 1   # resume from next epoch
         except ValueError as e:
+            if cfg.get('strict_resume', False):
+                raise
             print(f'[ckpt] config mismatch ({e}); starting fresh', flush=True)
             start_epoch = 0
 
@@ -725,6 +748,8 @@ def train(cfg, ckpt_dir=None):
     res = evaluate(model, base_test, trig, cfg, device)
     res['n_poison']     = int(pois.n_poison)
     res['n_total']      = int(pois.n_total)
+    res['n_cover']      = int(pois.n_cover)
+    res['dose_coupling'] = cfg.get('dose_coupling', 'paired')
     res['dataset'] = dataset_name
     res['pivot'] = int(cfg['pivot'])
     res['theta_max_deg'] = float(cfg['theta_max_deg'])

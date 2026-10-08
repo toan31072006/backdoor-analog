@@ -145,9 +145,14 @@ def g_dose(dose, theta_max=np.deg2rad(60.0), mode='linear'):
     raise ValueError(mode)
 
 
-def rotate_subchain(pose, pivot, theta, axis=(0.0, 0.0, 1.0)):
+def rotate_subchain(pose, pivot, theta, axis=(0.0, 0.0, 1.0), target_joints=None):
     pose = np.array(pose, float, copy=True)
-    rot_js = descendants(pivot)
+    # Datasets may be unpickled in spawned workers whose module-global tree
+    # defaults to PiW3D. An explicit, persisted branch makes labels independent
+    # of worker imports or a different dataset configured in the same process.
+    rot_js = descendants(pivot) if target_joints is None else list(target_joints)
+    if any(j == pivot or j < 0 or j >= pose.shape[-2] for j in rot_js):
+        raise ValueError('target_joints must be valid non-pivot pose indices')
     if not rot_js:
         return pose
     R = _rodrigues(axis, theta)
@@ -159,8 +164,9 @@ def rotate_subchain(pose, pivot, theta, axis=(0.0, 0.0, 1.0)):
 
 
 def make_target_pose(pose, pivot, dose, theta_max=np.deg2rad(60.0),
-                     mode='linear', axis=(0.0, 0.0, 1.0)):
-    return rotate_subchain(pose, pivot, g_dose(dose, theta_max, mode), axis)
+                     mode='linear', axis=(0.0, 0.0, 1.0), target_joints=None):
+    return rotate_subchain(pose, pivot, g_dose(dose, theta_max, mode), axis,
+                           target_joints=target_joints)
 
 
 def subchain_bone_lengths(pose, pivot):
