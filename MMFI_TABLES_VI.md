@@ -178,3 +178,24 @@ config, poison manifest và checkpoint từng cell.
 
 Trạng thái kiểm tra triển khai (không phải kết quả MM-Fi thật):
 [MMFI_IMPLEMENTATION_CHECK.md](MMFI_IMPLEMENTATION_CHECK.md).
+
+## Lỗi stride của BadNets/Blended và chạy tiếp
+
+Nếu log báo `view size is not compatible with input tensor's size and stride`,
+CSI có thể đang dùng Fortran/HWC-derived storage thay vì contiguous NCHW.
+`attack/poison.py:collate` nay chuyển riêng batch CSI sang contiguous trước khi
+đưa vào HPELi. Giá trị CSI, công thức trigger, payload và cấu hình không đổi;
+không sửa topology hay các phép reshape/transpose của mô hình.
+
+Bản sửa này giữ nguyên source hashes của trigger, fingerprints cấu hình và
+matrix, checkpoint schema9 và result schema10. Các cache hợp lệ đã hoàn thành
+vẫn được dùng; các run bị ngắt tiếp tục từ checkpoint tương thích gần nhất.
+
+Pull bản sửa, đặt `DOSE_OUT` lại đúng thư mục đang chạy dở, rồi chạy lệnh cũ
+**không có `--fresh`**. Không cần xóa cache, đổi output directory hay train lại
+Clean/Proposed/Shuffled chỉ vì lỗi layout này. Hãy giữ nguyên scientific options.
+
+Kiểm tra local trên Windows: **295 passed, 5 Linux-only skipped**; gồm 31 test mới
+cho layout C/Fortran/HWC, batch clean/mixed/poison, worker spawn và forward HPELi
+thật. Matrix fingerprint, fingerprints của cả 10 cell và hash adapter giữ nguyên
+trước/sau sửa. Đây là kiểm tra CPU/synthetic, không phải một lần train full MM-Fi.

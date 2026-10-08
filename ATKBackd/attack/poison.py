@@ -249,7 +249,10 @@ class PoisonedDataset(Dataset):
 def collate(batch):
     import torch
     out = {}
-    out['csi'] = torch.from_numpy(np.stack([b['csi'] for b in batch])).float()
+    # NumPy stacking can preserve Fortran/HWC-derived CSI strides. HPELi's
+    # view-based SK blocks need contiguous NCHW; this changes storage only,
+    # not CSI values, trigger operators, payloads, or training configuration.
+    out['csi'] = torch.from_numpy(np.stack([b['csi'] for b in batch])).float().contiguous()
     out['pose'] = torch.from_numpy(np.stack([b['pose'] for b in batch])).float()
     if 'target' in batch[0]:
         out['target'] = torch.from_numpy(np.stack([b['target'] for b in batch])).float()
