@@ -62,12 +62,32 @@ Repo chưa thấy license/DOI/citation chuẩn; adapter được viết độc l
 [Blended](https://arxiv.org/abs/1712.05526),
 [WaNet](https://arxiv.org/abs/2102.10369),
 [WaNet author code](https://github.com/VinAIResearch/Warping-based_Backdoor_Attack-release).
-Poison40%, train dose1/target dose1, cùng50 epochs. BadNets là soft patch8×3,
-opacity0.185; Blended alpha0.185; không dùng image scale255. WaNet warp trục
+**BadNets và Blended hiện gọi trực tiếp hai operator của
+[BackdoorBench](https://github.com/SCLBD/BackdoorBench)**, pin commit
+`f02e3534645f0ee63d6848653062cd6c0d6c400d`:
+`utils/bd_img_transform/patch.py::AddMaskPatchTrigger` và
+`utils/bd_img_transform/blended.py::blendedImageAttack`. Các đoạn source được giữ
+trong `ATKBackd/third_party/backdoorbench/`, có LICENSE, NOTICE và SHA-256 upstream.
+Đây là implementation của **benchmark bên thứ ba**, không phải code do tác giả
+hai paper gốc phát hành. Phần mã được dùng lại có giấy phép **CC BY-NC 4.0**.
+
+Poison40%, train dose1/target dose1, cùng50 epochs. BadNets dùng white patch8×3,
+**opacity1 tại dose1, thay trực tiếp vùng patch**, không còn soft patch0.185 cũ.
+Giá trị0 trong trigger array là vùng trong suốt theo đúng operator upstream.
+Dose nhỏ hơn1 nội suy opacity; `eps` chung không điều khiển opacity của BadNets.
+Blended giữ alpha0.185 và fixed random pattern seed42; upstream mặc định dùng
+Hello Kitty và alpha0.2. Dữ liệu chuyển CHW→HWC→CHW, giữ float[0,1], không resize,
+không trộn antennas và không chạy wrapper PIL/uint8 vì sẽ lượng tử hóa CSI.
+Chỉ tái sử dụng operator: dataset, HPELi, MPJPE và pose target vẫn là adaptation.
+WaNet vẫn giữ nguyên triển khai độc lập, warp trục
 subcarrier/time, không trộn antennas; thêm20% clean-label noise covers, không trùng
 poison. WaNet eps là **geometric strength**, RF amplitude là RMS/SD, Proposed là
 amplitude gain; **không được gọi các eps này là cùng L-infinity budget**.
-Chưa tìm thấy author attack code cho BadNets/Blended; hai adapter được suy ra từ paper.
+
+Source commit, upstream digest, local operator/adapter digest và implementation
+version được đưa vào resolved config/fingerprint của riêng BadNets/Blended.
+Không tái sử dụng checkpoint/cache baseline cũ. Toàn bộ matrix phải dùng
+**thư mục output mới**; không ghi đè kết quả cũ. Các config/model khác không đổi.
 
 **Shuffled** giữ nguyên poison indices và hai dose marginals của Proposed (.2..1),
 chỉ hoán vị payload-dose giữa poison samples. Victim vẫn nhận CSI+pose và ordinary

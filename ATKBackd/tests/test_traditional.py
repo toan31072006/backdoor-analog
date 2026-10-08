@@ -22,11 +22,14 @@ class TraditionalTriggerTests(unittest.TestCase):
     def setUp(self):
         self.csi = np.random.default_rng(7).uniform(0.0, 1.0, SHAPE).astype(np.float32)
 
-    def test_zero_dose_and_zero_epsilon_are_exact_identity(self):
+    def test_zero_dose_and_relevant_zero_strength_are_exact_identity(self):
         for cls in CLASSES:
             with self.subTest(trigger=cls.__name__):
                 trigger = cls(seed=42)
-                for dose, eps in ((0.0, 0.185), (1.0, 0.0)):
+                cases = [(0.0, 0.185)]
+                if cls is not BadNetsTrigger:
+                    cases.append((1.0, 0.0))
+                for dose, eps in cases:
                     result = trigger.inject(self.csi, dose=dose, eps=eps)
                     np.testing.assert_array_equal(result, self.csi)
                     self.assertFalse(np.shares_memory(result, self.csi))
@@ -55,7 +58,12 @@ class TraditionalTriggerTests(unittest.TestCase):
                 first.inject(1.0 - self.csi, dose=0.5, eps=0.185)
                 np.testing.assert_array_equal(first.inject(self.csi, 1.0, 0.185), expected)
                 np.testing.assert_array_equal(same.inject(self.csi, 1.0, 0.185), expected)
-                self.assertFalse(np.array_equal(other.inject(self.csi, 1.0, 0.185), expected))
+                if cls is BadNetsTrigger:
+                    # A white patch has no random pattern; seed controls the
+                    # dataset's poison selection, not this fixed operator.
+                    np.testing.assert_array_equal(other.inject(self.csi, 1.0, 0.185), expected)
+                else:
+                    self.assertFalse(np.array_equal(other.inject(self.csi, 1.0, 0.185), expected))
 
     def test_no_event_metadata_or_deferred_injection(self):
         for cls in CLASSES:
@@ -76,7 +84,7 @@ class TraditionalTriggerTests(unittest.TestCase):
         np.testing.assert_array_equal(full[trigger.mask], trigger.pattern[trigger.mask])
         np.testing.assert_array_equal(full[~trigger.mask], self.csi[~trigger.mask])
 
-    def test_patch_and_blend_dose_response_and_amplitude_bound(self):
+    def test_patch_and_blend_dose_response_and_distinct_strengths(self):
         for cls in (BadNetsTrigger, BlendedTrigger):
             with self.subTest(trigger=cls.__name__):
                 trigger = cls(seed=42)
@@ -85,7 +93,8 @@ class TraditionalTriggerTests(unittest.TestCase):
                 low_delta, high_delta = low - self.csi, high - self.csi
                 np.testing.assert_allclose(low_delta, 0.25 * high_delta, rtol=2e-4, atol=1e-7)
                 self.assertGreater(float(np.linalg.norm(high_delta)), float(np.linalg.norm(low_delta)))
-                self.assertLessEqual(float(np.max(np.abs(high_delta))), 0.185 + 1e-7)
+                limit = 1.0 if cls is BadNetsTrigger else 0.185
+                self.assertLessEqual(float(np.max(np.abs(high_delta))), limit + 1e-7)
 
     def test_blended_uses_published_convex_combination_in_unit_range(self):
         trigger = BlendedTrigger(seed=42)

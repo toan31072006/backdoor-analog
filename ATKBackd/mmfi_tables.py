@@ -46,7 +46,7 @@ REPORT_LIMITATIONS = (
     "The INFOCOM RF PTM/POR adaptation optimizes predefined encoder representations and then trains a clean pose head. Its T-MPJPE to the input-dependent pose target is a transferred diagnostic: POR does not optimize that HPE target.",
     "The default INFOCOM substitute is unlabeled downstream TRAIN CSI. This adaptation is not data-free: it also uses a supervised clean HPE teacher and downstream TRAIN CSI to calibrate POR scale, even with an external substitute. Any external pool still requires independent provenance.",
     "RF baselines use white-box access and distinct staged training budgets, whereas the proposed and traditional poisoning methods use data-only victim ERM. Interpret comparisons within these declared protocols; the tables do not establish a universally fair ranking across threat models or training budgets.",
-    "BadNets, Blended, and WaNet are independent CSI adaptations of image-domain methods, not RF-paper reproductions. Gain epsilon, blend alpha, RF segment RMS or Gaussian scale, and geometric warp strength have different meanings; these runs do not claim an equal L-infinity perturbation budget.",
+    "BadNets and Blended call pinned BackdoorBench trigger operators (a third-party implementation); WaNet remains independently adapted. These CSI/HPE experiments are not exact reproductions of the original image-domain papers. BadNets uses an opaque white patch at dose1, not the shared gain epsilon. Patch opacity, blend alpha, RF segment RMS or Gaussian scale, and geometric warp strength have different meanings; these runs do not claim an equal L-infinity perturbation budget.",
 )
 _RUNTIME_KEYS = {"device", "num_workers", "ckpt_every", "data_parallel"}
 _FINGERPRINT_RUNTIME_KEYS = {"device", "epochs", "ckpt_every", "num_workers"}
@@ -438,7 +438,7 @@ def _markdown(report: Mapping[str, Any]) -> str:
                 if isinstance(url, str) and url.startswith(("https://", "http://")):
                     references.append(f"[{label}]({url})")
             details = references[:]
-            for field in ("commit", "license", "implementation"):
+            for field in ("commit", "license", "source_file", "source_sha256", "implementation"):
                 if source.get(field):
                     details.append(f"{field}: {_display(source[field])}")
             lines.extend([f"{_display(labels.get(key, key))}: " + "; ".join(details) + ".", ""])

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/SCLBD/BackdoorBench",
+  "commit": "f02e3534645f0ee63d6848653062cd6c0d6c400d",
+  "license": "CC-BY-NC-4.0",
+  "files": {
+    "LICENSE": {
+      "sha256": "c67d7a90ddf78746757ebff6fcde6ef57cf57c6c9321faa5ffd275565f8f816e",
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/LICENSE",
+      "local_file": "LICENSE"
+    },
+    "utils/bd_img_transform/patch.py": {
+      "sha256": "b6eb898626e80cc852156324a65d0a1b1fc694e9b3c19792eaa2336085f3720d",
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/utils/bd_img_transform/patch.py",
+      "operator": "AddMaskPatchTrigger",
+      "local_file": "patch.py"
+    },
+    "utils/bd_img_transform/blended.py": {
+      "sha256": "e0820614234ebbc856405982ae7c543224b1dc750391b572baafa56ec98b56b5",
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/utils/bd_img_transform/blended.py",
+      "operator": "blendedImageAttack",
+      "local_file": "blended.py"
+    }
+  }
+}

@@ -15,6 +15,14 @@ traditional CSI adaptations, and shared dose/coupling/poison-rate evaluations.
 Use a new output directory with `--fresh`; the legacy two-dataset runner below
 is not this ten-cell experiment.
 
+BadNets and Blended use pinned BackdoorBench trigger operators, retained with
+source hashes, attribution and the upstream CC BY-NC 4.0 license under
+`ATKBackd/third_party/backdoorbench/`. This is a CSI/HPE adaptation of a third-party
+benchmark implementation, not an exact original-paper reproduction. Use a new
+matrix output directory; old independently implemented baseline caches are not reusable.
+Source equivalence and local test results are recorded in
+[BACKDOORBENCH_INTEGRATION_CHECK.md](BACKDOORBENCH_INTEGRATION_CHECK.md).
+
 ## Repository layout
 
 ```text

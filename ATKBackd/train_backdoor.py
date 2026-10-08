@@ -159,6 +159,10 @@ def _resolve_training_config(cfg):
         resolved.setdefault('n_pkt', 20)
 
     trigger_name = str(resolved['trigger']).lower().replace('-', '_')
+    if trigger_name in ('badnets', 'badnet', 'bad_nets', 'badnets_adapted',
+                        'blended', 'blend', 'blended_adapted'):
+        from attack.traditional import resolve_backdoorbench_config
+        resolved = resolve_backdoorbench_config(trigger_name, resolved)
     if trigger_name in ('tsba', 'tsba_adapted'):
         resolved.setdefault('tsba_eps', 0.1)
         resolved.setdefault('tsba_hidden', 32)

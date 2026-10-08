@@ -1,4 +1,4 @@
-"""Independent image-trigger adaptations for normalized MMFi amplitude CSI.
+"""Source-backed image-trigger adaptations for normalized MMFi amplitude CSI.
 
 These are ``BadNets-CSI-adapted``, ``Blended-CSI-adapted`` and
 ``WaNet-CSI-adapted``, not RF-native attacks or exact paper reproductions.
@@ -6,7 +6,13 @@ The antenna axis stays a channel axis; frequency and packet axes replace image
 height and width. All patterns are fixed by the experiment seed, and injection
 needs neither event locations nor per-sample metadata.
 
-Primary sources checked when implementing these adapters:
+BadNets and Blended call the pinned BackdoorBench operators retained under
+third_party/backdoorbench (CC BY-NC 4.0; copyright CUHK(SZ), SRIBD, 2022).
+This wrapper is adapted from those operators; see their NOTICE.md and LICENSE.
+BackdoorBench is a third-party benchmark, not the original paper authors' code.
+WaNet remains independently implemented; it is unchanged by this integration.
+
+Sources:
 * BadNets: Gu, Dolan-Gavitt and Garg (2017),
   https://arxiv.org/abs/1708.06733 -- fixed local pattern and poisoned targets.
 * Blended: Chen et al. (2017), https://arxiv.org/abs/1712.05526, Sec. III-B1
@@ -15,14 +21,14 @@ Primary sources checked when implementing these adapters:
   author code: https://github.com/VinAIResearch/Warping-based_Backdoor_Attack-release
   (``train.py``) -- smooth coarse random grid plus identity, then resampling.
 
-An original author attack-code release was not located for BadNets or Blended;
-their implementations below are derived from the papers. No third-party
-implementation is represented as original author code.
+* BackdoorBench: https://github.com/SCLBD/BackdoorBench at
+  f02e3534645f0ee63d6848653062cd6c0d6c400d, utils/bd_img_transform/{patch,blended}.py.
 
 Task-specific changes must be reported with results:
-* BadNets uses a seeded binary frequency/packet patch and opacity
-  ``alpha=min(dose*eps, 1)``. At alpha=1 it replaces the patch, as in a
-  fixed-pattern patch attack; opacity below one is our dose extension.
+* BadNets uses a fixed WHITE frequency/packet patch and the upstream masked
+  replacement. At dose1 default opacity1 replaces the patch, not a soft blend.
+  ``alpha=min(dose*patch_opacity, 1)`` is our dose extension; shared eps is
+  validated for interface compatibility but does NOT control this opacity.
 * Blended uses a fixed same-shaped pattern sampled in [0,1], replacing the
   paper's [0,255] image scale, with ``alpha=min(dose*eps, 1)``. This preserves
   the published blending equation. Train/test dose handling is caller policy.
@@ -46,8 +52,54 @@ that experiment policy belongs to the dataset/training configuration.
 
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 import numpy as np
 from scipy.ndimage import map_coordinates
+
+from third_party.backdoorbench.patch import AddMaskPatchTrigger
+from third_party.backdoorbench.blended import blendedImageAttack
+
+
+def resolve_backdoorbench_config(trigger_name, cfg):
+    """Bind source/adapter digests before cache hashing; reject stale markers."""
+    aliases = {'badnet': 'badnets', 'bad_nets': 'badnets',
+               'badnets_adapted': 'badnets', 'blend': 'blended',
+               'blended_adapted': 'blended'}
+    name = str(trigger_name).lower().replace('-', '_')
+    name = aliases.get(name, name)
+    resolved = dict(cfg)
+    if name not in ('badnets', 'blended'):
+        return resolved
+    folder = Path(__file__).resolve().parents[1] / 'third_party/backdoorbench'
+    manifest = json.loads((folder / 'SOURCE_MANIFEST.json').read_text(encoding='utf-8'))
+    source_path, operator_path, version = {
+        'badnets': ('utils/bd_img_transform/patch.py', 'patch.py', 'backdoorbench-mask-patch-v1'),
+        'blended': ('utils/bd_img_transform/blended.py', 'blended.py', 'backdoorbench-blend-v1'),
+    }[name]
+    expected = {
+        name + '_source_commit': manifest['commit'],
+        name + '_source_sha256': manifest['files'][source_path]['sha256'],
+        name + '_operator_sha256': hashlib.sha256(
+            (folder / operator_path).read_bytes().replace(b'\r\n', b'\n')).hexdigest(),
+        name + '_adapter_sha256': hashlib.sha256(
+            Path(__file__).read_bytes().replace(b'\r\n', b'\n')).hexdigest(),
+        name + '_implementation': version,
+    }
+    for key, value in expected.items():
+        if key in resolved and resolved[key] != value:
+            raise ValueError(f'BackdoorBench source metadata mismatch for {key}; use a NEW run directory')
+        resolved[key] = value
+    if name == 'badnets':
+        resolved.setdefault('badnets_patch_subcarriers', 8)
+        resolved.setdefault('badnets_patch_packets', 3)
+        resolved.setdefault('badnets_patch_opacity', 1.0)
+        resolved.setdefault('badnets_pattern', 'white')
+        if resolved['badnets_pattern'] != 'white':
+            raise ValueError('BackdoorBench BadNets adapter currently requires badnets_pattern=white')
+    return resolved
 
 
 def _nonnegative_finite(value, name):
@@ -93,15 +145,18 @@ class _AmplitudeTrigger:
 
 
 class BadNetsTrigger(_AmplitudeTrigger):
-    """Fixed binary patch on supported amplitude bins and contiguous packets."""
+    """BackdoorBench masked white patch on frequency/packet bins."""
 
     baseline_name = 'BadNets-CSI-adapted'
-    dose_semantics = 'patch opacity = min(dose * eps, 1)'
+    dose_semantics = 'patch opacity = min(dose * patch_opacity, 1); eps is not opacity'
 
     def __init__(self, n_ant=3, n_sub=114, n_pkt=10, seed=42,
                  patch_subcarriers=8, patch_packets=3, patch_start=None,
-                 antennas=None):
+                 antennas=None, patch_opacity=1.0):
         super().__init__(n_ant=n_ant, n_sub=n_sub, n_pkt=n_pkt, seed=seed)
+        self.patch_opacity = _nonnegative_finite(patch_opacity, 'patch_opacity')
+        if self.patch_opacity > 1.0:
+            raise ValueError('patch_opacity must be in [0, 1]')
         self.patch_subcarriers = _positive_integer(patch_subcarriers, 'patch_subcarriers')
         self.patch_packets = _positive_integer(patch_packets, 'patch_packets')
         if self.patch_subcarriers > self.n_sub or self.patch_packets > self.n_pkt:
@@ -136,15 +191,19 @@ class BadNetsTrigger(_AmplitudeTrigger):
         self.mask[list(selected), frequency:frequency + self.patch_subcarriers,
                   packet:packet + self.patch_packets] = True
         self.pattern = np.zeros(self.shape, dtype=np.float32)
-        rng = np.random.default_rng(self.seed)
-        self.pattern[self.mask] = rng.integers(0, 2, size=int(self.mask.sum()))
+        self.pattern[self.mask] = 1.0
+        # Upstream expects HWC. Do not resize, mix antennas, or quantize to uint8.
+        self.operator = AddMaskPatchTrigger(np.moveaxis(self.pattern, 0, -1))
 
     def inject(self, csi, dose, eps=0.3):
-        out, scale = self._input(csi, dose, eps)
-        if scale == 0:
+        out, _ = self._input(csi, dose, eps)
+        alpha = min(float(dose) * self.patch_opacity, 1.0)
+        if alpha == 0:
             return out
-        alpha = min(scale, 1.0)
-        out[self.mask] += alpha * (self.pattern[self.mask] - out[self.mask])
+        replacement = np.moveaxis(self.operator(np.moveaxis(out, 0, -1)), -1, 0)
+        if alpha == 1.0:
+            return replacement.astype(np.float32, copy=True)
+        out[self.mask] = (1.0 - alpha) * out[self.mask] + alpha * replacement[self.mask]
         return np.clip(out, 0.0, 1.0).astype(np.float32, copy=False)
 
 
@@ -164,7 +223,8 @@ class BlendedTrigger(_AmplitudeTrigger):
         if scale == 0:
             return out
         alpha = min(scale, 1.0)
-        out = (1.0 - alpha) * out + alpha * self.pattern
+        operator = blendedImageAttack(np.moveaxis(self.pattern, 0, -1), alpha)
+        out = np.moveaxis(operator(np.moveaxis(out, 0, -1)), -1, 0)
         return np.clip(out, 0.0, 1.0).astype(np.float32, copy=False)
 
 
@@ -267,6 +327,7 @@ def build_traditional_trigger(trigger_name: str, cfg: dict):
     """Build one MMFi adapter; the caller sets poison/target-dose policy."""
     if cfg.get('experiment_name', 'mmfi') != 'mmfi':
         raise ValueError('Traditional CSI adapters currently support MMFi amplitude CSI only')
+    cfg = resolve_backdoorbench_config(trigger_name, cfg)
     common = dict(n_ant=cfg.get('n_ant', 3), n_sub=cfg.get('n_sub', 114),
                   n_pkt=cfg.get('n_pkt', 10), seed=cfg.get('seed', 42))
     name = trigger_name.lower().replace('-', '_')
@@ -275,7 +336,8 @@ def build_traditional_trigger(trigger_name: str, cfg: dict):
             **common, patch_subcarriers=cfg.get('badnets_patch_subcarriers', 8),
             patch_packets=cfg.get('badnets_patch_packets', 3),
             patch_start=cfg.get('badnets_patch_start'),
-            antennas=cfg.get('badnets_antennas'))
+            antennas=cfg.get('badnets_antennas'),
+            patch_opacity=cfg.get('badnets_patch_opacity', 1.0))
     if name in ('blended', 'blend', 'blended_adapted'):
         return BlendedTrigger(**common)
     if name in ('wanet', 'wa_net', 'wanet_adapted'):
