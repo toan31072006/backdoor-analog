@@ -34,7 +34,7 @@ def _assert_common(
     pivot: int,
 ) -> None:
     epochs = 50 if dataset == "mmfi" else 200
-    theta = 40.0 if dataset == "mmfi" else 90.0
+    theta = 40.0 if dataset == "mmfi" else 60.0
     eps = 0.185 if dataset == "mmfi" else 0.3
     optimizer = "sgd" if dataset == "mmfi" else "adamw"
     for index, row in enumerate(rows):
@@ -48,12 +48,12 @@ def _assert_common(
             "theta_max_deg": theta,
             "eps": eps,
             "dose_mode": "linear",
-            "poison_select": "uniform",
+            "poison_select": "uniform" if dataset == "mmfi" else "diverse",
             "victim_loss": "mpjpe",
             "epochs": epochs,
             "batch_size": 32,
             "optimizer": optimizer,
-            "lr": 1e-3 if dataset == "mmfi" else 1e-2,
+            "lr": 1e-3,
             "payload_axis": [0.0, 0.0, 1.0],
         }
         for key, wanted in expected.items():
@@ -102,8 +102,9 @@ def verify(
             f"{dataset}: attack matrix mismatch; observed={observed_attacks}, "
             f"expected={expected_attacks}"
         )
-    if any(float(row["config"].get("rho", -1)) != 0.4 for row in attacks):
-        raise RuntimeError(f"{dataset}: attacked rows must use rho=0.4")
+    attack_rho = 0.4 if dataset == "mmfi" else 0.1
+    if any(float(row["config"].get("rho", -1)) != attack_rho for row in attacks):
+        raise RuntimeError(f"{dataset}: attacked rows must use rho={attack_rho}")
 
     observed_clean = Counter((r.get("trigger"), r.get("seed")) for r in clean)
     expected_clean = Counter(("micro_dropper", seed) for seed in SEEDS)

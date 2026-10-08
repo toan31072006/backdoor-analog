@@ -116,10 +116,10 @@ def _apply_model_overrides(cfg: dict, model: str, dataset_name: str) -> dict:
         cfg['momentum'] = 0.9
         cfg['weight_decay'] = 0.0
     elif model == 'hpeli':
-        # DT-Pose train_pose.py uses AdamW(lr=1e-2) for HPE-Li trained from
-        # scratch on Person-in-WiFi-3D. Using 1e-3 here silently changed the
-        # victim recipe and made the PiW3D attack result incomparable.
-        cfg['lr'] = 1e-2
+        # Original WBackdoor configuration: lr=1e-3, while honoring the YAML
+        # value so controlled LR experiments are not silently overwritten.
+        # DT-Pose's original PiW3D scratch recipe uses lr=1e-2 instead.
+        cfg.setdefault('lr', 1e-3)
         cfg['optimizer'] = 'adamw'
         cfg['weight_decay'] = 0.01
 
@@ -581,15 +581,18 @@ def main() -> None:
                     help='Maximum seconds to wait for each parallel worker. '
                          'Default: 0 (disabled; never terminate a long run).')
     ap.add_argument('--outdir',    default='experiments_out')
-    ap.add_argument('--seeds',     type=int, nargs='+', default=[42, 0, 1],
+    ap.add_argument('--seeds',     type=int, nargs='+', default=None,
                     help='Random seeds to run (one run per seed) for mean±std. '
-                         'Default: 42 0 1, matching the manuscript.')
+                          'Default: 0 for PiW3D (original WBackdoor), '
+                          '42 0 1 for MM-Fi. Explicit values override config seeds.')
     ap.add_argument('--gpus', type=int, nargs='+', default=None,
                     help='[legacy] GPU ids for multi-GPU round-robin')
     ap.add_argument('--dry-run', action='store_true',
                     help='Resolve and validate every cell, write the experiment '
                          'matrix, then exit without loading data or using a GPU.')
     a = ap.parse_args()
+    if a.seeds is None:
+        a.seeds = [0] if a.dataset == 'pwif3d' else [42, 0, 1]
 
     if a.rho is not None and not 0.0 <= a.rho <= 1.0:
         ap.error('--rho must be in [0, 1]')

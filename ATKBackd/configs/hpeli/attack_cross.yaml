@@ -24,7 +24,7 @@ max_target_residual_ratio: 0.50
 max_nontarget_ratio: 0.25
 
 batch_size: 32
-lr: 0.01
+lr: 0.001               # WBackdoor learning rate; DT-Pose's PiW3D recipe uses 0.01
 epochs: 50
 device: null            # null=auto (cuda if available); or "cuda:0" / "cpu"
 data_parallel: false     # wrap one run across all visible GPUs (rarely needed; sweep parallelism is per-cell)

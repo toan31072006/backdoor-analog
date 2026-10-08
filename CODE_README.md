@@ -19,13 +19,21 @@ The active main experiment is:
 | Victim objective | standard MPJPE |
 | Victim training | ordinary ERM |
 | MM-Fi payload | pivot 1, 40 degrees, 50 epochs |
-| PiW3D payload | pivot 7, 90 degrees, 200 epochs |
-| PiW3D optimizer | AdamW, lr 0.01 (DT-Pose scratch recipe) |
-| Poison rate | 0.4 for attacks; 0 for clean controls |
+| PiW3D payload | corrected pivot 7, original WBackdoor 60 degrees, 200 epochs |
+| PiW3D optimizer | AdamW, original WBackdoor lr 0.001 (DT-Pose lr is 0.01) |
+| Poison rate | PiW3D: original WBackdoor 0.1/diverse; MM-Fi: 0.4/uniform; clean: 0 |
 | Dose grid | 0.0, 0.2, 0.4, 0.6, 0.8, 1.0 |
 
 This gives 6 training cells per dataset and 12 cells in total. The dry-run
 launcher validates the resolved matrix before any training starts.
+
+PiW3D's source YAML keeps the original WBackdoor scientific parameters, except
+the corrected right-leg pivot 7 and explicit original z-axis default. Its source
+seed and direct-run default are 0. `--seeds 42` or the launcher's explicit seed
+list are operator-selected overrides, not the original seed. Paths and runtime
+worker/device settings are machine-specific. Use a new output directory for
+this 60-degree/rho=0.1/diverse profile; do not mix it with the earlier 90-degree/
+rho=0.4/uniform results. Other scenario YAMLs are separate experiment variants.
 
 ## Canonical entry points
 

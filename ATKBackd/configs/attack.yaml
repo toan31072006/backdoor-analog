@@ -8,11 +8,12 @@ top_k: 6
 aoa_spread: 0.6
 eps: 0.3                # trigger strength scale
 
-pivot: 6                # proximal joint of a forelimb {4,5} (VERIFY arm-vs-leg vs dataset doc)
+pivot: 7                # corrected PiW3D right hip; descendants [11,13]
 theta_max_deg: 60.0
+payload_axis: [0.0, 0.0, 1.0]  # explicit original rotation-axis default
 dose_mode: linear       # linear | sqrt | quad
 
-poison_select: uniform   # uniform | diverse (FPS over poses, may plant at lower rho)
+poison_select: diverse   # original WBackdoor configuration
 rho: 0.1
 dose_min: 0.2
 dose_max: 1.0

@@ -151,7 +151,9 @@ Mỗi cell lưu checkpoint, metadata, cache đánh giá và `result.json`; mỗi
 ## 6. Contract không được tự ý đổi
 
 - PiW3D phải dùng `pivot=7` (`right_hip`, target right knee/right ankle).
-- PiW3D HPE-Li dùng đúng recipe DT-Pose từ scratch: AdamW, lr `1e-2`, 200 epochs.
+- PiW3D HPE-Li giữ config WBackdoor gốc: AdamW, lr `1e-3`, 200 epochs,
+  góc 60 độ, rho `0.1`, chọn poison `diverse`, seed YAML `0`;
+  recipe DT-Pose gốc dùng lr `1e-2`. Clean và Proposed phải dùng cùng lr.
 - Payload axis được ghi rõ là global z: `[0,0,1]`.
 - MM-Fi dùng `pivot=1` theo topology 17-joint hiện tại.
 - Victim học bằng MPJPE chuẩn, ordinary ERM; launcher không thêm attack-specific loss.

@@ -119,9 +119,15 @@ epoch budget, or payload pivot. The current contract uses:
 - standard MPJPE and ordinary ERM for victim training;
 - MM-Fi pivot `1` with 50 epochs and the HPE-Li SGD recipe;
 - PiW3D pivot `7` (`right_hip` to right knee/ankle), global-z payload axis,
-  and the DT-Pose scratch recipe AdamW/lr `1e-2` for 200 epochs;
+  original WBackdoor parameters: 60 degrees, rho `0.1`, diverse selection,
+  AdamW/lr `1e-3` for 200 epochs (the original DT-Pose recipe uses `1e-2`);
 - paper-facing metrics: MPJPE, PA-MPJPE, PCK@50/40/30/20/10, and T-MPJPE;
 - `parallel=1` by default to avoid competing processes on a shared GPU.
+
+The PiW3D YAML and direct runner default to WBackdoor's original seed `0`.
+Launchers pass an explicit seed list; use `--seeds 0` for the original seed or
+`--seeds 42` for the previously chosen screening seed. Do not reuse the old
+90-degree/rho=0.4/uniform outputs for the restored original-parameter profile.
 
 Preflight records the Python packages, CUDA/GPU state, OS information, resolved
 data paths, and dataset/action metadata under `~/backdooranalog/runs/preflight`.

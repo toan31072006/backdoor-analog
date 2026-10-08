@@ -119,13 +119,20 @@ def test_resolved_config_records_the_exact_paper_optimizer_recipe():
     assert tsba['tsba_generator_steps'] == 4
 
 
-def test_piw3d_runner_matches_dtpose_hpeli_learning_rate():
+@pytest.mark.parametrize('learning_rate', [1e-3, 1e-2])
+def test_piw3d_runner_preserves_configured_learning_rate(learning_rate):
     cfg = _apply_model_overrides(
-        {'lr': 1e-3, 'optimizer': 'adamw'},
+        {'lr': learning_rate, 'optimizer': 'adamw'},
         model='hpeli', dataset_name='person-in-wifi-3d')
-    assert cfg['lr'] == pytest.approx(1e-2)
+    assert cfg['lr'] == pytest.approx(learning_rate)
     assert cfg['optimizer'] == 'adamw'
     assert cfg['weight_decay'] == pytest.approx(0.01)
+
+
+def test_piw3d_runner_defaults_to_original_wbackdoor_learning_rate():
+    cfg = _apply_model_overrides(
+        {}, model='hpeli', dataset_name='person-in-wifi-3d')
+    assert cfg['lr'] == pytest.approx(1e-3)
 
 
 class _ScalePose(torch.nn.Module):

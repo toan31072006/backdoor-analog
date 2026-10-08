@@ -83,7 +83,15 @@ Active MMFi config: `ATKBackd/configs/mmfi/attack_bend.yaml`
 - `weight_decay`: `0.0`
 
 For MMFi, this is the DT-Pose HPELi scratch-training recipe. Person-in-WiFi-3D
-uses AdamW at `lr=0.01`.
+uses AdamW at the original WBackdoor `lr=0.001`. The original DT-Pose PiW3D
+scratch recipe uses `lr=0.01`; the runner now preserves the configured PiW3D
+learning rate instead of overwriting it. Compare Clean and Proposed with the
+same learning rate and epoch budget, and keep new runs separate from old runs.
+
+The PiW3D bend YAML keeps WBackdoor's original rho=0.1, diverse poison selection,
+60-degree rotation and seed 0. Pivot 7 is the corrected right-hip subtree and
+the original z rotation axis is stored explicitly. A CLI seed list is an
+explicit experimental override.
 
 ### `metafiplusplus`
 

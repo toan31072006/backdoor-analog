@@ -2,6 +2,7 @@
 
 import os
 import sys
+import json
 
 import pytest
 
@@ -48,6 +49,27 @@ def test_complete_matrix_is_accepted():
     cells = [('hpeli', 'bend', 'micro_dropper', 42),
              ('hpeli', 'bend', 'micro_dropper', 0)]
     _assert_complete_matrix(cells, [_row(), _row(seed=0)])
+
+
+def test_piw3d_default_dry_run_preserves_original_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, 'argv', [
+        'run_experiments.py', '--dataset', 'pwif3d', '--dry-run',
+        '--device', 'cpu', '--outdir', str(tmp_path),
+    ])
+    runner_main()
+    matrix = json.loads(
+        (tmp_path / 'experiment_matrix.resolved.json').read_text(encoding='utf-8'))
+    assert len(matrix) == 1
+    cfg = matrix[0]['config']
+    assert cfg['seed'] == 0
+    assert cfg['lr'] == pytest.approx(0.001)
+    assert cfg['epochs'] == 200
+    assert cfg['batch_size'] == 32
+    assert cfg['eps'] == pytest.approx(0.3)
+    assert cfg['theta_max_deg'] == 60.0
+    assert cfg['rho'] == pytest.approx(0.1)
+    assert cfg['poison_select'] == 'diverse'
+    assert cfg['pivot'] == 7
 
 
 @pytest.mark.parametrize(

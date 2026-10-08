@@ -135,7 +135,7 @@ def test_canonical_piw3d_config_targets_only_right_hip_leg_subtree():
     target_joints = skeleton.descendants(pivot)
 
     assert pivot == 7
-    assert config['lr'] == pytest.approx(1e-2)
+    assert config['lr'] == pytest.approx(1e-3)
     assert config['optimizer'] == 'adamw'
     assert config['payload_axis'] == pytest.approx([0.0, 0.0, 1.0])
     assert skeleton.PWIF3D_JOINT_NAMES[pivot] == 'right_hip'
@@ -143,6 +143,39 @@ def test_canonical_piw3d_config_targets_only_right_hip_leg_subtree():
     assert [skeleton.PWIF3D_JOINT_NAMES[joint] for joint in target_joints] == [
         'right_knee', 'right_ankle',
     ]
+
+
+@pytest.mark.parametrize('relative_path', [
+    'configs/attack.yaml', 'configs/hpeli/attack_ln.yaml',
+])
+def test_piw3d_config_preserves_original_wbackdoor_parameters(relative_path):
+    from run_experiments import _apply_model_overrides, _prepare_run_config
+
+    config_path = Path(__file__).resolve().parents[1] / relative_path
+    with config_path.open(encoding='utf-8') as handle:
+        config = yaml.safe_load(handle)
+
+    expected = {
+        'experiment_name': 'one-person', 'model': 'hpeli', 'pretrained': False,
+        'top_k': 6, 'aoa_spread': 0.6, 'eps': 0.3,
+        'theta_max_deg': 60.0, 'dose_mode': 'linear',
+        'poison_select': 'diverse', 'rho': 0.1,
+        'dose_min': 0.2, 'dose_max': 1.0,
+        'dose_grid': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+        'batch_size': 32, 'lr': 0.001, 'epochs': 200,
+        'device': None, 'data_parallel': False, 'seed': 0,
+    }
+    for key, value in expected.items():
+        assert config[key] == value, key
+    assert config['pivot'] == 7  # intended right leg, not the original wrong tree
+    assert config['payload_axis'] == [0.0, 0.0, 1.0]
+    resolved = _prepare_run_config(
+        'hpeli', 'micro_dropper',
+        _apply_model_overrides(config.copy(), 'hpeli', 'person-in-wifi-3d'),
+        device=None, epochs=None, seed=config['seed'])
+    for key, value in expected.items():
+        assert resolved[key] == value, key
+    assert resolved['pivot'] == 7
 
 
 @pytest.mark.parametrize('dataset_name', ['mmfi', 'person-in-wifi-3d'])
