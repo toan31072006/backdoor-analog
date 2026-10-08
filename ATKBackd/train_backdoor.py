@@ -312,7 +312,10 @@ def _restore_rng_state(st):
     torch.set_rng_state(st['torch'].cpu() if hasattr(st['torch'], 'cpu')
                         else st['torch'])
     if st.get('cuda') is not None and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(st['cuda'])
+        # Loading a checkpoint onto a GPU also remaps its RNG tensors there.
+        # CUDA generators still require CPU ByteTensors for set_state; retain
+        # the saved bytes and device-list order rather than reseeding.
+        torch.cuda.set_rng_state_all([state.cpu() for state in st['cuda']])
 
 
 def _save_checkpoint(path, model, optimizer, epoch, best_loss, cfg,

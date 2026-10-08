@@ -199,3 +199,21 @@ Kiểm tra local trên Windows: **295 passed, 5 Linux-only skipped**; gồm 31 t
 cho layout C/Fortran/HWC, batch clean/mixed/poison, worker spawn và forward HPELi
 thật. Matrix fingerprint, fingerprints của cả 10 cell và hash adapter giữ nguyên
 trước/sau sửa. Đây là kiểm tra CPU/synthetic, không phải một lần train full MM-Fi.
+
+## Lỗi CUDA RNG khi resume
+
+`TypeError: RNG state must be a torch.ByteTensor` trong `_restore_rng_state`
+có thể do `torch.load(..., map_location=device)` kéo RNG state lên GPU cùng
+weights. CUDA generator yêu cầu RNG state là CPU ByteTensor, dù generator
+đang chạy trên GPU. Helper chung nay chuyển từng CUDA RNG state về CPU trước
+khi restore, giữ nguyên byte, thứ tự các state và seed; không reseed.
+
+Bản sửa dùng chung cho ordinary ERM và RF stages, không đổi config fingerprints,
+matrix, trigger hashes hay checkpoint/cache schemas. Pull bản sửa và resume đúng
+`DOSE_OUT` cũ **không có `--fresh`**; không xóa checkpoint/cache. Giữ nguyên số
+lượng và thứ tự `CUDA_VISIBLE_DEVICES` khi chạy tiếp, ví dụ `0,1,3` như lần đầu.
+
+Kiểm tra local sau bản sửa RNG: **303 passed, 6 skipped** (5 Linux-only và 1 test
+CUDA thật do máy local không có CUDA). Hai test từng tái hiện đúng lỗi ByteTensor
+đã qua; có thể chạy `python -m pytest -q ATKBackd/tests/test_cuda_rng_resume.py`
+trên MICA để kiểm tra thêm đường save/load và random streams bằng GPU thật.
