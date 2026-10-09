@@ -8,6 +8,14 @@ This repository contains the executable experiment contract used for MM-Fi and
 Person-in-WiFi-3D (PiW3D). Datasets, action skeletons, checkpoints, and reported
 results are intentionally not committed.
 
+For the latest **six-method, seed-42 MM-Fi comparison** (five traditional
+CSI adaptations + peak-limited Proposed; CCAI excluded), see
+[EXTENDED_COMPARISON_VI.md](EXTENDED_COMPARISON_VI.md) and
+`remote_linux/09_run_extended_comparison.sh`. FTrojan/FIBA retain source-pinned
+mechanisms with declared CSI/dose adaptations; native and shared-peak controls
+are isolated. Every baseline row is retained; equal peak ceilings do not mean
+equal realized L2 or an exact original-paper reproduction.
+
 For **quick method-development experiments** (seed 42, a common MM-Fi subset,
 15 epochs, original baseline plus three new hypotheses), see
 [METHOD_DRAFTS_VI.md](METHOD_DRAFTS_VI.md) and
@@ -24,6 +32,17 @@ This controls a peak upper bound, not simultaneous L2 matching or detectability.
 For a fresh **full MM-Fi, 50-epoch seed-42 confirmation** of Original against
 the peak-capped candidate, see [PEAK_CONFIRMATION_VI.md](PEAK_CONFIRMATION_VI.md)
 and `remote_linux/07_run_peak_confirmation.sh`.
+
+For an isolated **controlled-budget traditional comparison** (BadNets,
+Blended, source-formula WaNet; seed 42, common poison rate 0.1), see
+[TRADITIONAL_COMPARISON_VI.md](TRADITIONAL_COMPARISON_VI.md) and
+`remote_linux/08_run_traditional_comparison.sh`. All four methods learn the same
+paired continuous doses and pose targets; the baselines are explicitly
+dose-adapted, not unchanged classification attacks. Proposed is the peak-bound
+multi-carrier candidate. The default profile enforces a common per-input/dose
+Linf ceiling; realized L2 and cover usage are not identical. A separate
+`--budget-mode native` control preserves the unprojected baseline operators.
+Neither mode overwrites historical results or removes stronger baseline rows.
 
 For the **new full MM-Fi seed-42 four-table matrix**, see
 [MMFI_TABLES_VI.md](MMFI_TABLES_VI.md). Its runner is

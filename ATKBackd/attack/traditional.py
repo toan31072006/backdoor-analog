@@ -45,9 +45,10 @@ Task-specific changes must be reported with results:
   strength=0.5 and noise_strength=1 preserve the author's relative coefficients.
   Selecting disjoint cover samples and retaining their labels is caller policy.
 
-For the traditional fixed-trigger comparison, train poisoned samples at
-dose=1 and fixed target-payload dose=1. Vary only trigger dose at evaluation;
-that experiment policy belongs to the dataset/training configuration.
+Training-dose policy belongs to the caller. Historical endpoint comparisons
+train at dose=1. The isolated multi-dose comparison instead trains all methods
+with identical paired trigger/payload doses from U(0.2,1); these are explicitly
+dose-adapted baselines, not published controllable-dose classification attacks.
 """
 
 from __future__ import annotations

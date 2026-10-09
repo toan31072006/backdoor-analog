@@ -59,7 +59,11 @@ def build_trigger(cfg):
     180x20 for Person-in-WiFi-3D, and constructing MicroDopplerTrigger with its
     bare defaults (30x20) fails the shape assertion in inject() on MMFI.
     """
-    return build_trigger_by_name(cfg.get('trigger', 'micro_doppler'), cfg)
+    trigger = build_trigger_by_name(cfg.get('trigger', 'micro_doppler'), cfg)
+    if 'comparison_peak_budget' in cfg:
+        from attack.peak_budget import wrap_peak_budget
+        return wrap_peak_budget(trigger, cfg)
+    return trigger
 
 
 def _build_optimizer(model, cfg, dataset_name):
@@ -144,6 +148,9 @@ def _resolve_training_config(cfg):
     resolved.setdefault('lr_scheduler', False)
     if resolved['lr_scheduler']:
         resolved.setdefault('warmup_epochs', 10)
+    if ('loader_persistent_workers' in resolved
+            and not isinstance(resolved['loader_persistent_workers'], bool)):
+        raise ValueError('loader_persistent_workers must be a boolean')
 
     axis = np.asarray(resolved['payload_axis'], dtype=float)
     if axis.shape != (3,) or not np.isfinite(axis).all():
@@ -178,6 +185,14 @@ def _resolve_training_config(cfg):
                         'blended', 'blend', 'blended_adapted'):
         from attack.traditional import resolve_backdoorbench_config
         resolved = resolve_backdoorbench_config(trigger_name, resolved)
+    if trigger_name == 'wanet_source':
+        from attack.wanet_source import resolve_wanet_source_config
+        resolved = resolve_wanet_source_config(trigger_name, resolved)
+    if trigger_name in ('ftrojan', 'fiba'):
+        from attack.frequency_baselines import resolve_frequency_config
+        resolved = resolve_frequency_config(trigger_name, resolved)
+    from attack.peak_budget import resolve_peak_budget_config
+    resolved = resolve_peak_budget_config(resolved)
     if trigger_name in ('tsba', 'tsba_adapted'):
         resolved.setdefault('tsba_eps', 0.1)
         resolved.setdefault('tsba_hidden', 32)
@@ -346,7 +361,8 @@ def _save_checkpoint(path, model, optimizer, epoch, best_loss, cfg,
     }
     if trigger is not None:
         blob['trigger'] = trigger.state_dict()
-        blob['trigger_optimizer'] = trigger_optimizer.state_dict()
+        if trigger_optimizer is not None:
+            blob['trigger_optimizer'] = trigger_optimizer.state_dict()
     torch.save(blob, path)
     print(f'[ckpt] saved → {path}  (epoch {epoch})', flush=True)
 
@@ -373,13 +389,17 @@ def _load_checkpoint(path, model, optimizer, device, expected_cfg,
         raise ValueError(f'checkpoint has {done} epochs but this run asks for '
                          f'{want}; refusing to evaluate an over-trained model')
     if trigger is not None:
-        if 'trigger' not in ckpt or 'trigger_optimizer' not in ckpt:
+        if 'trigger' not in ckpt:
+            kind = 'learned-trigger' if trigger_optimizer is not None else 'stochastic fixed-trigger'
+            raise ValueError(f'checkpoint is missing the {kind} state')
+        if trigger_optimizer is not None and 'trigger_optimizer' not in ckpt:
             raise ValueError('checkpoint is missing the learned-trigger state')
     model.load_state_dict(ckpt['model'])
     optimizer.load_state_dict(ckpt['optimizer'])
     if trigger is not None:
         trigger.load_state_dict(ckpt['trigger'])
-        trigger_optimizer.load_state_dict(ckpt['trigger_optimizer'])
+        if trigger_optimizer is not None:
+            trigger_optimizer.load_state_dict(ckpt['trigger_optimizer'])
     _restore_rng_state(ckpt.get('rng'))
     print(f'[ckpt] resumed from epoch {ckpt["epoch"]}  (loss={ckpt["best_loss"]:.4f})', flush=True)
     return ckpt['epoch'], ckpt['best_loss']
@@ -602,6 +622,23 @@ def _draft_reference_action_sha256(cfg, ckpt_dir=None):
     return action_sha
 
 
+def _training_loader(dataset, cfg):
+    """Allow new comparisons to align epoch RNG draws across worker counts.
+
+    Historical profiles keep their persistent-worker default. Opting out makes
+    every epoch create a fresh iterator, including the num_workers=0 WaNet cell.
+    """
+    n_workers = cfg.get('num_workers', 4)
+    persistent = cfg.get('loader_persistent_workers', n_workers > 0)
+    if not isinstance(persistent, bool):
+        raise ValueError('loader_persistent_workers must be a boolean')
+    return DataLoader(dataset, batch_size=cfg['batch_size'], shuffle=True,
+        collate_fn=collate, drop_last=False, num_workers=n_workers,
+        prefetch_factor=2 if n_workers > 0 else None,
+        persistent_workers=persistent if n_workers > 0 else False,
+        pin_memory=True)
+
+
 def train(cfg, ckpt_dir=None):
     cfg = _resolve_training_config(cfg)
     _validate_training_contract(cfg)
@@ -661,7 +698,10 @@ def train(cfg, ckpt_dir=None):
     learned_trigger = _uses_deferred_trigger(trig)
     if learned_trigger:
         trig = trig.to(device)
-
+    # Source-faithful WaNet has a fixed warp key but fresh cover noise. Its
+    # CPU generator must resume too; this does not make the trigger learned.
+    checkpoint_trigger = trig if (learned_trigger or getattr(
+        trig, 'requires_stochastic_trigger_state', False)) else None
     pois = PoisonedDataset(
         base_train, trig, mode='train',
         rho=cfg['rho'], dose_min=cfg['dose_min'], dose_max=cfg['dose_max'],
@@ -671,7 +711,7 @@ def train(cfg, ckpt_dir=None):
         seed=cfg.get('seed', 0), select=cfg.get('poison_select', 'uniform'),
         dataset=dataset_name,
         dose_coupling=cfg.get('dose_coupling', 'paired'),
-        cover_ratio=cfg.get('wanet_cover_ratio', 0.0),
+        cover_ratio=cfg.get('clean_label_cover_ratio', cfg.get('wanet_cover_ratio', 0.0)),
     )
     _write_run_metadata(ckpt_dir, cfg, pois)
     if is_draft and ckpt_dir is not None:
@@ -689,13 +729,7 @@ def train(cfg, ckpt_dir=None):
     # num_workers: dùng multiprocessing để load data song song với GPU compute.
     # Dùng 'fork' start method trên Linux để tránh overhead của 'spawn'.
     # Chỉ áp dụng cho training loader — evaluate() vẫn dùng 0 để tránh deadlock.
-    n_workers = cfg.get('num_workers', 4)
-    loader = DataLoader(pois, batch_size=cfg['batch_size'], shuffle=True,
-                        collate_fn=collate, drop_last=False,
-                        num_workers=n_workers,
-                        prefetch_factor=2 if n_workers > 0 else None,
-                        persistent_workers=True if n_workers > 0 else False,
-                        pin_memory=True)
+    loader = _training_loader(pois, cfg)
 
     model = build_model(
         cfg['model'], num_keypoints=num_keypoints,
@@ -728,7 +762,7 @@ def train(cfg, ckpt_dir=None):
         try:
             start_epoch, best_loss = _load_checkpoint(
                 ckpt_file, model, opt, device, cfg,
-                trigger=trig if learned_trigger else None,
+                trigger=checkpoint_trigger,
                 trigger_optimizer=trig_opt)
             start_epoch += 1   # resume from next epoch
         except ValueError as e:
@@ -812,7 +846,7 @@ def train(cfg, ckpt_dir=None):
         if (epoch + 1) % ckpt_every == 0 or epoch == total_epochs - 1:
             _save_checkpoint(
                 ckpt_file, model, opt, epoch, best_loss, cfg,
-                trigger=trig if learned_trigger else None,
+                trigger=checkpoint_trigger,
                 trigger_optimizer=trig_opt)
 
     # ── Evaluation ───────────────────────────────────────────────────────

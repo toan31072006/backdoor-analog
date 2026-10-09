@@ -183,6 +183,20 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
         from attack.traditional import build_traditional_trigger
         return build_traditional_trigger(name, cfg)
 
+    if name == 'wanet_source':
+        if cfg.get('experiment_name') != 'mmfi':
+            raise ValueError('Source-faithful WaNet adaptation is currently MM-Fi only')
+        from attack.wanet_source import WaNetSourceTrigger
+        return WaNetSourceTrigger(
+            n_ant=n_ant, n_sub=n_sub, n_pkt=n_pkt, seed=cfg.get('seed', 42),
+            grid_size=cfg.get('wanet_grid_size', 4),
+            strength=cfg.get('wanet_strength', 0.5),
+            grid_rescale=cfg.get('wanet_grid_rescale', 1.0))
+
+    if name in ('ftrojan', 'fiba'):
+        from attack.frequency_baselines import build_frequency_trigger
+        return build_frequency_trigger(name, cfg)
+
     if name in ('infocom2025_por', 'ccai2026_backdoorrf'):
         from attack.rf_adapters import build_rf_trigger
         return build_rf_trigger(name, cfg)
@@ -197,6 +211,6 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
 
     raise ValueError(
         f"Unknown trigger '{trigger_name}'. Available triggers: "
-        "'micro_dropper', 'tsba', 'badnets', 'blended', 'wanet', "
+        "'micro_dropper', 'tsba', 'badnets', 'blended', 'wanet', 'wanet_source', "
         "'infocom2025_por', 'ccai2026_backdoorrf', 'md_multicarrier', "
-        "'md_dose_code', 'md_energy', 'md_multicarrier_peak_matched'.")
+        "'md_dose_code', 'md_energy', 'md_multicarrier_peak_matched', 'ftrojan', 'fiba'.")
