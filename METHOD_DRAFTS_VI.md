@@ -228,3 +228,84 @@ giả, và không thay các bảng đã hoàn thành bằng số draft.
 
 Đây là kiểm tra tính đúng của code, **không phải kết quả effectiveness trên
 MM-Fi**. Chưa kiểm tra CUDA training trên server trong lần phát triển này.
+
+## 8. Phép thử tiếp theo: Multi-carrier giới hạn nhiễu đỉnh
+
+Profile `peak_control` (`method_peak_control_v1`) chỉ train **một** cell mới:
+`md_multicarrier_peak_matched`. Giữ seed 42, 15 epochs, SGD lr 0.001, rho 0.4,
+20,000 train / 4,096 validation frames, subset seed 0, cùng poison IDs/doses
+và payload với draft trước. Không train lại Clean hoặc Original; không nhập
+cache cũ vào manifest mới, không sửa/xóa kết quả cũ.
+
+Với cùng CSI `x`, dose `d` và `eps=0.185`, tính hai output bằng đúng operator
+float32 và clipping hiện tại:
+
+```text
+x_original = Original.inject(x, d, eps)
+x_multi    = MultiCarrier.inject(x, d, eps)
+b          = max(abs(x_original - x))
+delta      = x_multi - x
+alpha      = min(1, b / max(abs(delta)))
+x_peak     = x + alpha * delta
+```
+
+Nếu candidate đã nằm trong budget thì giữ output Multi-carrier nguyên vẹn.
+Nếu `b=0` và cần cap thì trả input sạch; không chia cho 0. Khi đổi về float32,
+tọa độ nào làm tròn vượt budget được làm tròn vào phía `x`, để **output lưu
+thực tế** thỏa `max(abs(x_peak-x)) <= b` theo từng mẫu và từng dose. Dose 0
+là identity. Thu nhỏ nhiễu không thay dose của payload/nhãn mục tiêu.
+
+Đây là giới hạn trên L-infinity **sau clipping**, không phải bắt hai trigger
+có cả L2 và L-infinity bằng nhau. Quy tắc thu nhỏ phụ thuộc CSI và dose,
+nên không gọi là ablation thuần chỉ thay carrier. Không dùng nhãn, dự đoán
+victim hoặc thống kê validation để tune `alpha`; công thức áp dụng giống nhau
+trong train và evaluation. Không suy ra tính không bị phát hiện hay khả thi RF
+chỉ từ các norm đầu vào.
+
+Chạy sau khi `nvidia-smi` xác nhận GPU được phép dùng và còn đủ tài nguyên.
+Ví dụ GPU vật lý 3 (chỉ cần **một GPU** cho một cell):
+
+```bash
+cd ~/backdooranalog/code
+git pull --ff-only
+nvidia-smi
+tmux new -s mmfi-peak-control
+```
+
+Trong shell tmux, paste riêng đoạn sau:
+
+```bash
+cd ~/backdooranalog/code
+CUDA_VISIBLE_DEVICES=3 bash remote_linux/06_run_method_drafts.sh --profile peak_control --outdir "$HOME/backdooranalog/runs/mmfi_peak_control_s42_v1" --devices cuda:0 --num-workers 4 --fresh
+```
+
+Chọn GPU khác bằng cách đổi số `3`; trong process vẫn là `cuda:0`. Detach bằng
+`Ctrl-b`, rồi `d`. Nếu chạy lại để resume thì giữ outdir và bỏ `--fresh`.
+**Không chạy vào outdir screening cũ**: source hash/profile đã thay đổi, runner
+sẽ từ chối thay vì trộn protocol. Profile screening mặc định vẫn giữ đủ năm cell.
+
+Kết quả nằm trong `draft_summary.csv/json/md` và `input_distortion.csv/json`.
+Profile mới đo Original operator trên **cùng 256 mẫu validation và sáu dose**
+để đối chiếu norm, không train thêm một Original victim. File distortion có
+`original_relative_l2`, `original_rmse`, `original_linf`, SNR và audit từng mẫu
+trong JSON. `paired_linf_violations` phải bằng 0; vượt bound sẽ báo lỗi,
+không xuất một báo cáo success giả. Hash action/trigger/subset được ghi lại.
+
+So T-MPJPE/clean metrics của candidate với hàng Original draft cũ như một
+**đối chứng lịch sử đã lưu**, không ghi nó là một run mới. Trước khi gộp kiểm
+tra cùng subset hashes, action hash, poison-plan hash và các config victim/
+payload/budget (ngoại trừ profile và trigger). Không dùng source hash mới để
+ghi đè provenance cũ. Full 50-epoch MM-Fi và paper vẫn chưa được thay đổi.
+
+### Kiểm tra bản peak-control trước khi push
+
+2026-10-09: toàn bộ `ATKBackd/tests` **632 passed, 7 skipped** trên CPU local;
+bao gồm train/evaluate/checkpoint/cache/resume bằng dữ liệu giả cho cả profile
+năm cell cũ và một cell mới. Có 48 test riêng cho giới hạn nhiễu thực tế,
+trường hợp suy biến, clipping, rounding, RNG/state và factory. CLI dry-run của
+`peak_control` xác nhận đúng một cell; Python compile và shell syntax qua.
+Phép stress độc lập 8,960 injection không phát hiện vượt peak Original.
+
+Test local từng bị lỗi quyền ở temp mặc định của pytest; dùng một `--basetemp`
+mới trong workspace để kiểm tra, không đổi quyền hệ thống. Trạng thái code:
+đã kiểm thử; **chưa có kết quả hiệu quả MM-Fi thật/CUDA cho biến thể mới**.

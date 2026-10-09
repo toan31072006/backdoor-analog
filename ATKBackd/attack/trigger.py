@@ -172,7 +172,8 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
     if name in ('tsba', 'tsba_adapted'):
         return build_tsba_trigger(cfg)
 
-    if name in ('md_multicarrier', 'md_dose_code', 'md_energy'):
+    if name in ('md_multicarrier', 'md_dose_code', 'md_energy',
+                'md_multicarrier_peak_matched'):
         from attack.method_drafts import build_method_draft_trigger
         return build_method_draft_trigger(name, cfg)
 
@@ -198,4 +199,4 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
         f"Unknown trigger '{trigger_name}'. Available triggers: "
         "'micro_dropper', 'tsba', 'badnets', 'blended', 'wanet', "
         "'infocom2025_por', 'ccai2026_backdoorrf', 'md_multicarrier', "
-        "'md_dose_code', 'md_energy'.")
+        "'md_dose_code', 'md_energy', 'md_multicarrier_peak_matched'.")

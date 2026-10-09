@@ -15,6 +15,7 @@ import numpy as np
 
 
 DRAFT_PROFILE = 'method_screening_v1'
+DRAFT_PROFILES = (DRAFT_PROFILE, 'method_peak_control_v1')
 _DRAFT_OPTIONS = (
     'draft_train_samples', 'draft_eval_samples', 'draft_subset_seed',
     'draft_eval_source',
@@ -65,7 +66,10 @@ class DraftSubset:
 
     def __init__(self, base, indices, *, split, requested_cap,
                  selection_seed=0, selection_stream=0,
-                 eval_source='training_holdout', reserved_holdout_n=0):
+                 eval_source='training_holdout', reserved_holdout_n=0,
+                 profile=DRAFT_PROFILE):
+        if profile not in DRAFT_PROFILES:
+            raise ValueError(f'unsupported draft_profile: {profile!r}')
         parent_n = len(base)
         if len(base.items) != parent_n:
             raise ValueError('draft parent items and dataset length disagree')
@@ -84,6 +88,7 @@ class DraftSubset:
         self.selection_stream = int(selection_stream)
         self.draft_eval_source = eval_source
         self.reserved_holdout_n = int(reserved_holdout_n)
+        self.draft_profile = profile
 
     def __getattr__(self, name):
         # Pickle asks for special methods before restoring __dict__.  Forwarding
@@ -126,7 +131,7 @@ class DraftSubset:
         indices = list(self.subset_indices)
         return {
             'schema': 1,
-            'profile': DRAFT_PROFILE,
+            'profile': self.draft_profile,
             'split': self.split,
             'eval_source': self.draft_eval_source,
             'parent_n': self.parent_n,
@@ -154,9 +159,9 @@ def apply_draft_subset(base, cfg, split):
     if not isinstance(marker, bool):
         raise ValueError('method_draft must be a boolean')
     profile = cfg.get('draft_profile')
-    if profile is not None and profile != DRAFT_PROFILE:
+    if profile is not None and profile not in DRAFT_PROFILES:
         raise ValueError(f'unsupported draft_profile: {profile!r}')
-    enabled = marker or profile == DRAFT_PROFILE
+    enabled = marker or profile in DRAFT_PROFILES
     if not enabled:
         if any(key in cfg for key in _DRAFT_OPTIONS):
             raise ValueError('draft subset options require an explicit method-draft marker')
@@ -200,4 +205,5 @@ def apply_draft_subset(base, cfg, split):
         base, sorted(map(int, selected)), split=split, requested_cap=cap,
         selection_seed=int(seed), selection_stream=stream,
         eval_source=eval_source, reserved_holdout_n=holdout_n,
+        profile=profile if profile is not None else DRAFT_PROFILE,
     )

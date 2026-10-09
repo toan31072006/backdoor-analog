@@ -12,7 +12,8 @@ from __future__ import annotations
 import numpy as np
 
 
-METHOD_DRAFT_NAMES = ('md_multicarrier', 'md_dose_code', 'md_energy')
+METHOD_DRAFT_NAMES = ('md_multicarrier', 'md_dose_code', 'md_energy',
+                      'md_multicarrier_peak_matched')
 METHOD_DRAFT_SCHEMA = 1
 
 
@@ -206,6 +207,55 @@ class MDMultiCarrierTrigger(_CarrierDraftTrigger):
         return self._gain_inject(value, self._pattern, scale)
 
 
+class MDPeakMatchedMultiCarrierTrigger(MDMultiCarrierTrigger):
+    """Never exceed Original's realized per-sample postclip peak distortion.
+
+    Both reference and candidate use the same input, dose, and epsilon. Shrink
+    the realized candidate delta uniformly, never amplify it. This preserves
+    its postclip direction up to float32 rounding, but is input conditioned;
+    it is not a pure fixed-pattern ablation or simultaneous L2 matching.
+    No dataset statistic, label, model output, or learned calibration is used.
+    """
+
+    name = 'md_multicarrier_peak_matched'
+    dose_semantics = 'dose*eps gain followed by a per-input Original postclip Linf cap'
+
+    @property
+    def protocol_parameters(self):
+        params = super().protocol_parameters
+        params.update(
+            reference_trigger='micro_dropper',
+            reference_budget='per-sample postclip float32 Linf of Original on the same CSI/dose/eps',
+            peak_matching='uniform shrink of realized multicarrier delta; never amplify; inward float32 rounding',
+            matches_l2_budget=False)
+        return params
+
+    def inject(self, csi, dose, eps=0.3):
+        value, _, scale = self._input(csi, dose, eps)
+        if scale == 0:
+            return value
+        # Reuse the exact original gain/float32/clip operator, not a nominal
+        # eps*max(pattern) bound or a peak estimated on validation data.
+        reference = self._gain_inject(value, self.p0, scale)
+        candidate = self._gain_inject(value, self._pattern, scale)
+        x = value.astype(np.float64)
+        budget = float(np.max(np.abs(reference.astype(np.float64) - x)))
+        delta = candidate.astype(np.float64) - x
+        peak = float(np.max(np.abs(delta)))
+        if peak <= budget:
+            return candidate
+        if budget == 0:
+            return value
+        shrunk = x + (budget / peak) * delta
+        out = np.clip(shrunk, 0.0, 1.0).astype(np.float32)
+        # Nearest float32 rounding can exceed the cap by one ULP. Round those
+        # coordinates inward, so the ACTUAL stored output obeys the bound too.
+        outside = np.abs(out.astype(np.float64) - x) > budget
+        if np.any(outside):
+            out[outside] = np.nextafter(out[outside], value[outside])
+        return out
+
+
 class MDDoseCodeTrigger(_CarrierDraftTrigger):
     """Dose rotates a constant-RMS key toward the exact baseline at dose one."""
 
@@ -303,5 +353,7 @@ def build_method_draft_trigger(name, cfg):
                   seed=resolved['method_carrier_seed'])
     if name == 'md_multicarrier':
         return MDMultiCarrierTrigger(base, **common)
+    if name == 'md_multicarrier_peak_matched':
+        return MDPeakMatchedMultiCarrierTrigger(base, **common)
     return MDDoseCodeTrigger(base, **common,
                              angle_max_deg=resolved['method_dose_angle_max_deg'])

@@ -23,7 +23,8 @@ def cfg(tmp_path):
                 batch_size=32, lr=0.001, epochs=15, victim_loss='mpjpe')
 
 
-@pytest.mark.parametrize('name', ['md_multicarrier', 'md_dose_code', 'md_energy'])
+@pytest.mark.parametrize('name', ['md_multicarrier', 'md_dose_code', 'md_energy',
+                               'md_multicarrier_peak_matched'])
 def test_factory_and_resolved_defaults_are_fixed_data_only(name, cfg):
     resolved = training._resolve_training_config(dict(cfg, trigger=name))
     training._validate_training_contract(resolved)
@@ -81,7 +82,8 @@ def test_canonical_matrix_is_not_converted_into_a_draft(tmp_path):
 
 
 @pytest.mark.parametrize('marker', [{'method_draft': True},
-                                  {'draft_profile': 'method_screening_v1'}])
+                                  {'draft_profile': 'method_screening_v1'},
+                                  {'draft_profile': 'method_peak_control_v1'}])
 def test_draft_loader_uses_training_parent_with_default_holdout(monkeypatch, marker):
     class MetadataOnlyMMFI:
         def __init__(self, *, split, **kwargs):

@@ -21,7 +21,8 @@ def _load_dataset(cfg, split):
         # when either does.
         base_split = split
         draft_requested = (cfg.get('method_draft') is True
-                           or cfg.get('draft_profile') == 'method_screening_v1')
+                           or cfg.get('draft_profile') in (
+                               'method_screening_v1', 'method_peak_control_v1'))
         if (draft_requested
                 and cfg.get('draft_eval_source', 'training_holdout') == 'training_holdout'):
             # Draft selection uses a disjoint holdout from the official TRAIN
@@ -169,7 +170,8 @@ def _resolve_training_config(cfg):
         resolved.setdefault('n_pkt', 20)
 
     trigger_name = str(resolved['trigger']).lower().replace('-', '_')
-    if trigger_name in ('md_multicarrier', 'md_dose_code', 'md_energy'):
+    if trigger_name in ('md_multicarrier', 'md_dose_code', 'md_energy',
+                        'md_multicarrier_peak_matched'):
         from attack.method_drafts import resolve_method_draft_config
         resolved = resolve_method_draft_config(resolved)
     if trigger_name in ('badnets', 'badnet', 'bad_nets', 'badnets_adapted',
@@ -606,7 +608,8 @@ def train(cfg, ckpt_dir=None):
     if cfg.get('training_protocol', 'ordinary_erm') != 'ordinary_erm':
         raise ValueError('Staged RF protocols must use train_rf_backdoor.train, not ordinary ERM')
     is_draft = (cfg.get('method_draft') is True
-                or cfg.get('draft_profile') == 'method_screening_v1')
+                or cfg.get('draft_profile') in (
+                    'method_screening_v1', 'method_peak_control_v1'))
     draft_action_sha = (_draft_reference_action_sha256(cfg, ckpt_dir)
                         if is_draft else None)
 

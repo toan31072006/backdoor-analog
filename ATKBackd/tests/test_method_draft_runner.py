@@ -54,6 +54,14 @@ def matrix(tmp_path, monkeypatch):
                                distortion_samples=4)
 
 
+@pytest.fixture
+def peak_matrix(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, '_source_provenance', lambda: {'fixture': 'a' * 64})
+    return runner.build_matrix(tmp_path / 'data', tmp_path / 'peak_drafts', 'cpu', 0,
+                               epochs=3, train_samples=10, eval_samples=4,
+                               distortion_samples=4, profile='peak_control')
+
+
 def _write_completed(matrix):
     datasets = {}
     for cell in matrix['cells']:
@@ -116,6 +124,65 @@ def test_plan_is_separate_and_has_exact_common_scientific_settings(matrix):
         assert cell['dependencies'] == [] and cell['tables'] == []
 
 
+def test_peak_profile_trains_only_new_candidate_with_unchanged_scientific_budget(matrix, peak_matrix):
+    assert peak_matrix['draft_profile'] == runner.PEAK_PROFILE
+    assert [cell['method_key'] for cell in peak_matrix['cells']] == ['md_multicarrier_peak_matched']
+    assert peak_matrix['metrics_contract']['reference_training'] is False
+    assert peak_matrix['metrics_contract']['matches_l2_budget'] is False
+    runner._validate_manifest(peak_matrix)
+    original = matrix['cells'][1]['cfg']
+    peak = peak_matrix['cells'][0]['cfg']
+    for key in ('seed', 'epochs', 'victim_epochs', 'draft_train_samples', 'draft_eval_samples',
+                'draft_subset_seed', 'draft_eval_source', 'optimizer', 'lr', 'momentum',
+                'weight_decay', 'batch_size', 'rho', 'eps', 'pivot', 'target_joints',
+                'theta_max_deg', 'payload_axis', 'dose_mode', 'dose_grid', 'dose_min',
+                'dose_max', 'dose_coupling', 'training_protocol', 'attacker_access'):
+        assert peak[key] == original[key], key
+    assert 'original' not in [cell['method_key'] for cell in peak_matrix['cells']]
+
+
+def test_default_profile_retains_original_five_cells_and_config_markers(matrix):
+    assert matrix['draft_profile'] == 'method_screening_v1'
+    assert [cell['method_key'] for cell in matrix['cells']] == [row[0] for row in runner.METHODS]
+    assert all(cell['cfg']['draft_profile'] == 'method_screening_v1' for cell in matrix['cells'])
+
+
+def test_unknown_profile_is_rejected_before_data_access(tmp_path):
+    with pytest.raises(ValueError, match='Unknown method draft profile'):
+        runner.build_matrix(tmp_path, tmp_path / 'out', profile='not-a-profile')
+    assert not (tmp_path / 'out').exists()
+
+
+def test_peak_manifest_cannot_mislabel_another_trigger(peak_matrix):
+    peak_matrix['cells'][0]['cfg']['trigger'] = 'md_multicarrier'
+    peak_matrix['plan_sha256'] = runner._plan_fingerprint(peak_matrix)
+    with pytest.raises(ValueError, match='trigger does not match'):
+        runner._validate_manifest(peak_matrix)
+
+
+@pytest.mark.parametrize('profile,cells', [('screening', ['md_multicarrier_peak_matched']),
+                                         ('peak_control', ['original'])])
+def test_requested_cells_cannot_cross_profiles(tmp_path, profile, cells):
+    with pytest.raises(ValueError, match='selected --profile'):
+        runner.main(['--data-home', str(tmp_path), '--outdir', str(tmp_path / 'out'),
+                     '--profile', profile, '--cells', *cells, '--dry-run'])
+    assert not (tmp_path / 'out').exists()
+
+
+def test_peak_dry_run_is_one_cell_without_data_cuda_or_training(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, '_check_inputs', _forbidden)
+    monkeypatch.setattr(runner, 'run_matrix', _forbidden)
+    monkeypatch.setattr(trainer, '_load_dataset', _forbidden)
+    monkeypatch.setattr(trainer, 'build_trigger', _forbidden)
+    monkeypatch.setattr(trainer.torch.cuda, 'is_available', _forbidden)
+    output = tmp_path / 'out'
+    assert runner.main(['--data-home', str(tmp_path), '--outdir', str(output),
+                        '--profile', 'peak_control', '--devices', 'cuda:999', '--dry-run']) == 0
+    manifest = json.loads((output / 'method_drafts.resolved.json').read_text())
+    assert len(manifest['cells']) == 1
+    assert manifest['draft_profile'] == runner.PEAK_PROFILE
+
+
 @pytest.mark.parametrize('key,value', [('epochs', True), ('epochs', 0),
     ('train_samples', -2), ('eval_samples', False), ('distortion_samples', 0)])
 def test_plan_rejects_bool_and_nonpositive_budgets(tmp_path, key, value):
@@ -159,7 +226,7 @@ def test_bad_runtime_and_budget_inputs_create_no_output(tmp_path, extra):
 
 
 @pytest.mark.parametrize('extra', [['--epochs', '4'], ['--train-samples', '11'],
-                                  ['--eval-samples', '5']])
+                                  ['--eval-samples', '5'], ['--profile', 'peak_control']])
 def test_resume_rejects_changed_scientific_budget_without_overwrite(matrix, extra):
     folder = Path(matrix['cells'][0]['ckpt_dir']).parent
     path = folder / 'method_drafts.resolved.json'
@@ -211,6 +278,55 @@ def test_summary_numeric_contract_preserves_all_rows(matrix):
     assert len(set(r['eval_subset_sha256'] for r in report['rows'])) == 1
     assert len(set(r['poison_plan_sha256'] for r in report['rows'][1:])) == 1
     assert not set(report['audit']['train_parent_indices']).intersection(report['audit']['eval_parent_indices'])
+
+
+def test_peak_summary_requires_only_its_valid_completed_cache(peak_matrix, tmp_path):
+    _write_completed(peak_matrix)
+    report = runner.build_summary(peak_matrix)
+    assert report['draft_profile'] == runner.PEAK_PROFILE
+    assert len(report['rows']) == 1 and len(report['dose_response']) == 6
+    assert report['rows'][0]['method_key'] == 'md_multicarrier_peak_matched'
+    assert len(report['audit']['poison_plan_sha256']) == 1
+    output = tmp_path / 'reports'
+    runner.export_summary(peak_matrix, output, skip_distortion=True)
+    with (output / 'draft_summary.csv').open(newline='') as handle:
+        assert len(list(csv.DictReader(handle))) == 1
+    markdown = (output / 'draft_summary.md').read_text()
+    assert runner.PEAK_PROFILE in markdown and 'no Original victim result is imported' in markdown
+
+
+def test_peak_profile_audits_exact_same_subset_and_poison_plan_as_original(matrix, peak_matrix):
+    _write_completed(matrix)
+    _write_completed(peak_matrix)
+    original = runner.build_summary(matrix)
+    peak = runner.build_summary(peak_matrix)
+    candidate_key = peak_matrix['cells'][0]['method_key']
+    assert original['audit']['train_parent_indices'] == peak['audit']['train_parent_indices']
+    assert original['audit']['eval_parent_indices'] == peak['audit']['eval_parent_indices']
+    assert original['audit']['subsets']['original'] == peak['audit']['subsets'][candidate_key]
+    assert original['audit']['poison_plan_sha256']['original'] == peak['audit']['poison_plan_sha256'][candidate_key]
+
+
+@pytest.mark.parametrize('mutation', ['subset_profile', 'subset_hash', 'action_hash', 'cache_epochs'])
+def test_single_peak_cell_still_rejects_bad_audit_or_cache(peak_matrix, mutation):
+    _write_completed(peak_matrix)
+    cell = peak_matrix['cells'][0]
+    if mutation == 'cache_epochs':
+        path = Path(cell['eval_cache'])
+        blob = json.loads(path.read_text())
+        blob['trained_epochs'] -= 1
+    else:
+        path = Path(cell['ckpt_dir']) / 'draft_subsets.json'
+        blob = json.loads(path.read_text())
+        if mutation == 'subset_profile':
+            blob['eval']['profile'] = runner.PROFILE
+        elif mutation == 'subset_hash':
+            blob['eval']['index_sha256'] = 'b' * 64
+        else:
+            blob['action_file_sha256'] = 'b' * 64
+    runner._atomic_json(path, blob)
+    with pytest.raises(ValueError):
+        runner.build_summary(peak_matrix)
 
 
 @pytest.mark.parametrize('mutation', ['missing', 'old_schema', 'epochs', 'fingerprint'])
@@ -326,6 +442,61 @@ def test_distortion_uses_real_fixed_variants_common_ids_and_strict_json(matrix, 
     assert 'NaN' not in json.dumps(distortion, allow_nan=False)
 
 
+def test_peak_distortion_records_actual_original_pairs_and_zero_tolerance_bound(peak_matrix, tmp_path, monkeypatch):
+    datasets = _write_completed(peak_matrix)
+    cell = peak_matrix['cells'][0]
+    monkeypatch.setattr(trainer, '_load_dataset', lambda cfg, split: datasets[cell['method_key']][1])
+    monkeypatch.setattr(trainer, 'build_model', _forbidden)
+    monkeypatch.setattr(trainer.torch.cuda, 'is_available', _forbidden)
+    report = runner.build_summary(peak_matrix)
+    distortion = runner.build_distortion(peak_matrix, report['audit'], n=4)
+    assert len(distortion['rows']) == 6 and len(distortion['paired_samples']) == 6
+    assert distortion['reference_training'] is False and distortion['matches_l2_budget'] is False
+    for row, audit in zip(distortion['rows'], distortion['paired_samples']):
+        assert row['linf'] <= row['original_linf']
+        assert row['paired_linf_violations'] == 0 and row['max_paired_linf_excess'] <= 0
+        assert len(audit['pairs']) == 4
+        assert [pair['pair_id'] for pair in audit['pairs']] == distortion['common_pair_ids']
+        assert all(pair['candidate_linf'] <= pair['original_linf'] for pair in audit['pairs'])
+        assert all(pair['linf_excess'] <= 0 for pair in audit['pairs'])
+        assert row['original_trigger_state_sha256']
+        if row['dose'] == 0:
+            assert row['linf'] == row['original_linf'] == 0
+            assert row['original_snr_db'] is None and row['original_snr_db_is_infinite']
+    assert 'Infinity' not in json.dumps(distortion, allow_nan=False)
+    output = tmp_path / 'reports'
+    runner.export_summary(peak_matrix, output, distortion_samples=4)
+    with (output / 'input_distortion.csv').open(newline='') as handle:
+        reader = csv.DictReader(handle)
+        assert reader.fieldnames == list(runner.PEAK_DISTORTION_COLUMNS)
+        assert len(list(reader)) == 6
+
+
+def test_peak_pair_audit_rejects_local_violation_even_when_global_maximum_is_lower():
+    class PairDataset:
+        items = [{'csi': 'first'}, {'csi': 'second'}]
+
+        def load_raw(self, path):
+            return np.full((1, 1, 1), 0.25 if path == 'first' else 0.5, dtype=np.float32)
+
+        @staticmethod
+        def normalize(raw):
+            return raw.copy()
+
+    class Candidate:
+        def inject(self, raw, dose, eps):
+            return raw + (0.2 if raw.item() == 0.25 else 0.1)
+
+    class Original:
+        def inject(self, raw, dose, eps):
+            return raw + (0.1 if raw.item() == 0.25 else 0.3)
+
+    # The candidate global maximum is .2 < .3, but its first pair violates .1.
+    with pytest.raises(ValueError, match='per-sample Linf exceeds Original'):
+        runner._measure_peak_pair({'eps': 0.185}, PairDataset(), [0, 1],
+                                 ['first', 'second'], 1.0, Candidate(), Original())
+
+
 def test_summary_writes_draft_names_and_marker(matrix, tmp_path):
     _write_completed(matrix)
     output = tmp_path / 'reports'
@@ -362,8 +533,9 @@ def test_linux_launcher_targets_draft_driver_and_forwards_flags():
     assert 'rm ' not in source and 'run_mmfi_tables.py' not in source
 
 
-def test_actual_train_evaluate_all_five_cells_produce_auditable_summary(matrix, tmp_path, monkeypatch):
-    """Smoke the actual integration with five one-batch CPU victim updates.
+@pytest.mark.parametrize('profile', ['screening', 'peak_control'])
+def test_actual_train_evaluate_all_five_cells_produce_auditable_summary(matrix, tmp_path, monkeypatch, profile):
+    """Smoke each profile with one-batch CPU victim updates.
 
     Only the external MMFi constructor and expensive HPELi model are replaced.
     Dataset routing, subset selection, fixed triggers, poison labels, ERM,
@@ -376,7 +548,7 @@ def test_actual_train_evaluate_all_five_cells_produce_auditable_summary(matrix, 
         environment.update(METHOD_DRAFT_SMOKE_CHILD='1', MKL_THREADING_LAYER='SEQUENTIAL',
                            OMP_NUM_THREADS='1', MKL_NUM_THREADS='1')
         command = [sys.executable, '-m', 'pytest',
-            str(Path(__file__).resolve()) + '::test_actual_train_evaluate_all_five_cells_produce_auditable_summary',
+            str(Path(__file__).resolve()) + f'::test_actual_train_evaluate_all_five_cells_produce_auditable_summary[{profile}]',
             '-q', '--tb=short', '--basetemp', str(tmp_path / 'isolated_cpu_smoke')]
         result = subprocess.run(command, env=environment, capture_output=True,
                                 text=True, timeout=60, check=False)
@@ -384,6 +556,10 @@ def test_actual_train_evaluate_all_five_cells_produce_auditable_summary(matrix, 
         return
 
     import run_mmfi_tables as cell_runner
+
+    if profile == 'peak_control':
+        matrix = runner.build_matrix(tmp_path / 'data', tmp_path / 'peak_drafts', 'cpu', 0,
+            epochs=3, train_samples=10, eval_samples=4, distortion_samples=4, profile=profile)
 
     torch = trainer.torch
     constructed_splits = []
@@ -439,17 +615,24 @@ def test_actual_train_evaluate_all_five_cells_produce_auditable_summary(matrix, 
             assert cached['res']['attacker_access'] == 'data_only'
 
         report = runner.build_summary(matrix)
-        assert len(report['rows']) == 5 and len(report['dose_response']) == 30
+        cell_count = 5 if profile == 'screening' else 1
+        assert len(report['rows']) == cell_count and len(report['dose_response']) == 6 * cell_count
         assert all(row['epochs'] == 1 and row['train_samples'] == 10 and row['eval_samples'] == 4
                    for row in report['rows'])
-        assert len(set(row['poison_plan_sha256'] for row in report['rows'][1:])) == 1
-        assert constructed_splits == ['training'] * 10
+        attack_rows = [row for row in report['rows'] if row['method_key'] != 'clean']
+        assert len(set(row['poison_plan_sha256'] for row in attack_rows)) == 1
+        assert constructed_splits == ['training'] * 2 * cell_count
+        if profile == 'peak_control':
+            distortion = runner.build_distortion(matrix, report['audit'], n=4)
+            assert all(row['paired_linf_violations'] == 0 for row in distortion['rows'])
+            assert all(row['linf'] <= row['original_linf'] for row in distortion['rows'])
 
         # Completed real caches must return before dataset/model/trigger construction.
         monkeypatch.setattr(trainer, 'MMFI', _forbidden)
         monkeypatch.setattr(trainer, 'build_model', _forbidden)
         monkeypatch.setattr(trainer, 'build_trigger', _forbidden)
-        cell_runner._run_cell(matrix['cells'][1])
+        resume_cell = matrix['cells'][1 if profile == 'screening' else 0]
+        cell_runner._run_cell(resume_cell)
         resumed = runner.build_summary(matrix)
         assert resumed['rows'] == report['rows']
         stored_action_sha = resumed['audit']['action_file_sha256']
@@ -457,6 +640,6 @@ def test_actual_train_evaluate_all_five_cells_produce_auditable_summary(matrix, 
             size=(1, 3, 30, 25, 1)).astype(np.float32))
         assert runner._file_sha(action) != stored_action_sha
         with pytest.raises(ValueError, match='action'):
-            cell_runner._run_cell(matrix['cells'][1])
+            cell_runner._run_cell(resume_cell)
     finally:
         torch.set_num_threads(previous_threads)

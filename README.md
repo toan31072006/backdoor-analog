@@ -15,6 +15,12 @@ For **quick method-development experiments** (seed 42, a common MM-Fi subset,
 the full publication matrix below. The existing baseline and full configs are
 unchanged; references motivate the variants but are not exact reproductions.
 
+The follow-up `--profile peak_control` trains **only one new candidate**, with
+its realized per-sample peak distortion bounded by Original at the same CSI,
+dose, and epsilon. It keeps the seed-42 subset/15-epoch recipe and writes to a
+new directory; old results are not overwritten or imported as new caches.
+This controls a peak upper bound, not simultaneous L2 matching or detectability.
+
 For the **new full MM-Fi seed-42 four-table matrix**, see
 [MMFI_TABLES_VI.md](MMFI_TABLES_VI.md). Its runner is
 `ATKBackd/run_mmfi_tables.py`: two separately staged RF adaptations, three

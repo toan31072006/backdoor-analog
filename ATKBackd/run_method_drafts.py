@@ -36,6 +36,15 @@ METHODS = (
     ('md_dose_code', 'Draft dose code', 'md_dose_code'),
     ('md_energy', 'Draft input-energy normalization', 'md_energy'),
 )
+PEAK_PROFILE = 'method_peak_control_v1'
+PEAK_METHODS = (
+    ('md_multicarrier_peak_matched', 'Draft multicarrier with Original peak bound',
+     'md_multicarrier_peak_matched'),
+)
+PROFILES = {
+    'screening': (PROFILE, METHODS),
+    'peak_control': (PEAK_PROFILE, PEAK_METHODS),
+}
 SUMMARY_COLUMNS = (
     'status', 'method_key', 'method', 'seed', 'epochs', 'train_samples',
     'eval_samples', 'clean_mpjpe_mm', 'clean_pampjpe_mm',
@@ -51,6 +60,26 @@ DISTORTION_COLUMNS = (
     'cfg_fingerprint', 'trigger_state_sha256', 'action_file_sha256',
     'common_pair_ids_sha256',
 )
+PEAK_DISTORTION_COLUMNS = DISTORTION_COLUMNS + (
+    'original_relative_l2', 'original_rmse', 'original_linf',
+    'original_snr_db', 'original_snr_db_is_infinite',
+    'original_snr_db_is_negative_infinite', 'original_trigger_state_sha256',
+    'paired_linf_violations', 'max_paired_linf_excess',
+)
+
+
+def _profile(value):
+    try:
+        return PROFILES[value]
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f'Unknown method draft profile: {value!r}') from exc
+
+
+def _manifest_methods(matrix):
+    for profile, methods in PROFILES.values():
+        if matrix.get('draft_profile') == profile:
+            return methods
+    raise ValueError('Manifest is not an isolated DRAFT_ONLY method screen')
 
 
 def _positive_int(value, name):
@@ -85,11 +114,12 @@ def _source_provenance():
 
 def build_matrix(data_home, outdir, device='cuda:0', num_workers=4, *,
                  epochs=15, train_samples=20000, eval_samples=4096,
-                 distortion_samples=256):
+                 distortion_samples=256, profile='screening'):
     """Resolve a draft plan without opening datasets, triggers, or CUDA."""
     from train_backdoor import (_resolve_training_config,
                                 _validate_training_contract,
                                 _CHECKPOINT_SCHEMA, _RESULT_SCHEMA)
+    resolved_profile, methods = _profile(profile)
     for name, value in [('epochs', epochs), ('train_samples', train_samples),
                         ('eval_samples', eval_samples),
                         ('distortion_samples', distortion_samples)]:
@@ -109,11 +139,11 @@ def build_matrix(data_home, outdir, device='cuda:0', num_workers=4, *,
         rho=0.4, poison_select='uniform', dose_min=0.2, dose_max=1.0,
         dose_coupling='paired', trigger_zero_mean=True,
         training_protocol='ordinary_erm', threat_model='training_data_poisoning',
-        attacker_access='data_only', method_draft=True, draft_profile=PROFILE,
+        attacker_access='data_only', method_draft=True, draft_profile=resolved_profile,
         draft_train_samples=train_samples, draft_eval_samples=eval_samples,
         draft_subset_seed=0, draft_eval_source='training_holdout')
     cells = []
-    for key, label, trigger in METHODS:
+    for key, label, trigger in methods:
         cfg = copy.deepcopy(base)
         cfg.update(trigger=trigger, rho=0.0 if key == 'clean' else 0.4)
         cfg = _resolve_training_config(cfg)
@@ -123,13 +153,13 @@ def build_matrix(data_home, outdir, device='cuda:0', num_workers=4, *,
             tables=[], dependencies=[], cfg=cfg, ckpt_dir=str(folder),
             eval_cache=str(folder / 'eval_cache.json')))
     matrix = dict(schema=1, dataset='mmfi', seed=42, fresh_results_only=True,
-        status=STATUS, DRAFT_ONLY=True, draft_profile=PROFILE,
+        status=STATUS, DRAFT_ONLY=True, draft_profile=resolved_profile,
         created_utc=datetime.now(timezone.utc).isoformat(),
         sources={'status': STATUS, 'source_sha256': _source_provenance(),
             'baseline_config': 'configs/mmfi/attack_bend.yaml',
             'implementation': 'Independent exploratory fixed NumPy trigger variants',
             'publication_claim': False}, cells=cells,
-        metrics_contract=dict(status=STATUS, draft_profile=PROFILE,
+        metrics_contract=dict(status=STATUS, draft_profile=resolved_profile,
             checkpoint_schema=_CHECKPOINT_SCHEMA, result_schema=_RESULT_SCHEMA,
             errors='millimetres; cached pose errors in metres',
             pck='relative thresholds 0.5/0.4/0.3/0.2/0.1, displayed as percent',
@@ -142,24 +172,35 @@ def build_matrix(data_home, outdir, device='cuda:0', num_workers=4, *,
     matrix['metrics_contract'].update(evaluation_role='training_holdout_validation',
         official_test_used=False,
         subset_selection='seed-0 shared permutation; disjoint train and validation from official training')
+    if resolved_profile == PEAK_PROFILE:
+        matrix['sources']['implementation'] = 'Exploratory input-conditioned multicarrier peak-bound trigger'
+        matrix['metrics_contract'].update(
+            reference_trigger='micro_dropper',
+            reference_training=False,
+            distortion_reference='Original operator on exactly the same CSI/dose/eps; no old cache imported',
+            peak_bound='per-sample post-normalization float64 Linf <= Original, zero tolerance',
+            matches_l2_budget=False,
+            mechanism_limitation='Input-conditioned peak scaling and rounding guard are not a pure fixed-pattern ablation')
     matrix['plan_sha256'] = _plan_fingerprint(matrix)
     return matrix
 
 
 def _validate_manifest(matrix):
     if (matrix.get('status') != STATUS or matrix.get('DRAFT_ONLY') is not True or
-            matrix.get('draft_profile') != PROFILE):
+            matrix.get('draft_profile') not in {value[0] for value in PROFILES.values()}):
         raise ValueError('Manifest is not an isolated DRAFT_ONLY method screen')
     if matrix.get('plan_sha256') != _plan_fingerprint(matrix):
         raise ValueError('Draft plan fingerprint differs from its resolved contents')
     keys = [cell['method_key'] for cell in matrix['cells']]
-    if keys != [row[0] for row in METHODS]:
-        raise ValueError('Draft plan must retain all five cells in their fixed order')
-    for cell in matrix['cells']:
+    if keys != [row[0] for row in _manifest_methods(matrix)]:
+        raise ValueError('Draft plan must retain every profile cell in its fixed order')
+    for cell, (_, _, trigger) in zip(matrix['cells'], _manifest_methods(matrix)):
         cfg = cell['cfg']
-        if (cfg.get('method_draft') is not True or cfg.get('draft_profile') != PROFILE or
+        if (cfg.get('method_draft') is not True or cfg.get('draft_profile') != matrix['draft_profile'] or
                 cfg.get('draft_eval_source') != 'training_holdout'):
             raise ValueError(f"{cell['method_key']}: missing isolated draft config markers")
+        if cfg.get('trigger') != trigger:
+            raise ValueError(f"{cell['method_key']}: trigger does not match the selected profile cell")
         for key in ('epochs', 'draft_train_samples', 'draft_eval_samples'):
             _positive_int(cfg.get(key), key)
 
@@ -189,7 +230,7 @@ def _read_audit(path, cell):
     return record
 
 
-def _subset_identity(record, name):
+def _subset_identity(record, name, profile=PROFILE):
     subset = record.get(name)
     if not isinstance(subset, dict):
         raise ValueError(f'Missing {name} subset identity')
@@ -199,7 +240,7 @@ def _subset_identity(record, name):
             indices != sorted(set(indices))):
         raise ValueError(f'{name} subset requires its exact sorted unique parent indices')
     digest = subset.get('identifiers_sha256')
-    if (subset.get('schema') != 1 or subset.get('profile') != PROFILE or
+    if (subset.get('schema') != 1 or subset.get('profile') != profile or
             subset.get('eval_source') != 'training_holdout' or
             subset.get('selection_seed') != 0 or subset.get('n') != len(indices) or
             not isinstance(digest, str) or re.fullmatch('[0-9a-f]{64}', digest) is None or
@@ -213,7 +254,7 @@ def _subset_identity(record, name):
 
 
 def audit_common_inputs(cells):
-    """Validate shared pair IDs and recompute the four attack poison-plan hashes."""
+    """Validate shared pair IDs and recompute all attack poison-plan hashes."""
     subsets, poisons, reference, action_sha = {}, {}, None, None
     for cell in cells:
         key = cell['method_key']
@@ -228,8 +269,8 @@ def audit_common_inputs(cells):
         if action_sha is not None and recorded_action_sha != action_sha:
             raise ValueError(f'{key}: draft cells used different action-file versions')
         action_sha = recorded_action_sha
-        train_indices, train_sha = _subset_identity(subset, 'train')
-        eval_indices, eval_sha = _subset_identity(subset, 'eval')
+        train_indices, train_sha = _subset_identity(subset, 'train', cell['cfg']['draft_profile'])
+        eval_indices, eval_sha = _subset_identity(subset, 'eval', cell['cfg']['draft_profile'])
         if set(train_indices).intersection(eval_indices):
             raise ValueError(f'{key}: draft training and validation indices overlap')
         if subset['train']['parent_n'] != subset['eval']['parent_n']:
@@ -276,14 +317,14 @@ def audit_common_inputs(cells):
         poisons[key] = digest
     attacks = [poisons[cell['method_key']] for cell in cells if cell['method_key'] != 'clean']
     if len(set(attacks)) != 1:
-        raise ValueError('The four attack cells did not use the same poison indices and doses')
+        raise ValueError('The attack cells did not use the same poison indices and doses')
     return dict(subsets=subsets, poison_plan_sha256=poisons,
         train_parent_indices=reference[0], eval_parent_indices=reference[1],
         action_file_sha256=action_sha)
 
 
 def build_summary(matrix):
-    """Read all five verified caches; never invent a missing result or rank rows."""
+    """Read every profile cache; never invent a missing result or rank rows."""
     from mmfi_tables import dose_rows, metric_row
     _validate_manifest(matrix)
     loaded = [_verified_cache(cell) for cell in matrix['cells']]
@@ -316,7 +357,7 @@ def build_summary(matrix):
         rows.append({name: row[name] for name in SUMMARY_COLUMNS})
         doses.extend(dict(status=STATUS, **r) for r in series)
         provenance.append(source)
-    return dict(status=STATUS, DRAFT_ONLY=True, draft_profile=PROFILE,
+    report = dict(status=STATUS, DRAFT_ONLY=True, draft_profile=matrix['draft_profile'],
         plan_sha256=matrix['plan_sha256'], rows=rows, dose_response=doses,
         metrics_contract=matrix['metrics_contract'], sources=matrix['sources'],
         audit=audit, provenance=provenance,
@@ -324,6 +365,12 @@ def build_summary(matrix):
             'Reduced subsets and epoch budget; no rank selection or uncertainty estimate.',
             'Digital input distortion does not establish over-the-air feasibility.',
             'Clean-victim T metrics probe the original trigger; clean distortion measures the unmodified control input.'])
+    if matrix['draft_profile'] == PEAK_PROFILE:
+        report['limitations'].extend([
+            'Only the peak-controlled candidate is trained here; Original victim results are not imported.',
+            'A per-sample peak upper bound does not match relative L2 or prove lower detectability.',
+            'Input-conditioned scaling and rounding guard change the trigger rule, not only its fixed carrier.'])
+    return report
 
 
 def trigger_state_sha256(trigger):
@@ -367,6 +414,45 @@ class _CleanIdentityTrigger:
         return csi.copy()
 
 
+def _measure_peak_pair(cfg, ds, indices, ids, dose, trigger, original):
+    """Audit the actual model-input Linf on each pair, not just pooled maxima."""
+    import numpy as np
+    from eval.distortion import distortion_stats, _aggregate
+    from train_backdoor import _trigger_eps
+    if not indices or len(indices) != len(ids):
+        raise ValueError('Paired peak audit requires one identifier per selected sample')
+    eps = _trigger_eps(cfg, trigger)
+    reference_cfg = dict(cfg, trigger='micro_dropper')
+    reference_eps = _trigger_eps(reference_cfg, original)
+    if eps != reference_eps:
+        raise ValueError('Peak-control candidate and Original must use identical nominal epsilon')
+    candidate_rows, reference_rows, paired = [], [], []
+    for index, identifier in zip(indices, ids):
+        raw = ds.load_raw(ds.items[index]['csi'])
+        clean = ds.normalize(raw)
+        candidate = ds.normalize(trigger.inject(raw.copy(), dose, eps=eps))
+        reference = ds.normalize(original.inject(raw.copy(), dose, eps=reference_eps))
+        if (not np.isfinite(candidate).all() or not np.isfinite(reference).all() or
+                candidate.shape != clean.shape or reference.shape != clean.shape):
+            raise ValueError('Invalid model-input tensor in paired peak audit')
+        candidate_stats = distortion_stats(clean, candidate)
+        reference_stats = distortion_stats(clean, reference)
+        excess = candidate_stats['max_abs'] - reference_stats['max_abs']
+        if excess > 0.0:
+            raise ValueError(
+                f'Peak-control per-sample Linf exceeds Original at dose {dose}: '
+                f'{excess:.17g}; sample {identifier}')
+        paired.append(dict(pair_id=identifier, candidate_linf=candidate_stats['max_abs'],
+            original_linf=reference_stats['max_abs'], linf_excess=excess,
+            candidate_relative_l2=candidate_stats['relative_l2'],
+            original_relative_l2=reference_stats['relative_l2']))
+        candidate_rows.append(candidate_stats)
+        reference_rows.append(reference_stats)
+    values, reference_values = _aggregate(candidate_rows), _aggregate(reference_rows)
+    values['n_samples'] = reference_values['n_samples'] = len(ids)
+    return values, reference_values, paired
+
+
 def build_distortion(matrix, audit, n=256):
     """Measure every fixed variant on the same real held-out pairs, on CPU."""
     import numpy as np
@@ -374,7 +460,8 @@ def build_distortion(matrix, audit, n=256):
     from train_backdoor import _load_dataset, build_trigger
     from mmfi_tables import config_fingerprint
     _positive_int(n, 'distortion_samples')
-    rows, common_ids, common_sha = [], None, None
+    rows, common_ids, common_sha, paired_records = [], None, None, []
+    is_peak_profile = matrix['draft_profile'] == PEAK_PROFILE
     for cell in matrix['cells']:
         cfg = dict(cell['cfg'], device='cpu', num_workers=0)
         action_sha = _file_sha(cfg['action_npy'])
@@ -382,7 +469,7 @@ def build_distortion(matrix, audit, n=256):
             raise ValueError(f"{cell['method_key']}: current action file differs from the training action-file SHA256")
         ds = _load_dataset(cfg, 'test')
         subset = ds.draft_subset_manifest()
-        dataset_indices, dataset_sha = _subset_identity({'eval': subset}, 'eval')
+        dataset_indices, dataset_sha = _subset_identity({'eval': subset}, 'eval', matrix['draft_profile'])
         dataset_ids = ds.draft_pair_ids()
         if (_sha_json(dataset_ids) != dataset_sha or
                 dataset_indices != audit['eval_parent_indices'] or
@@ -396,8 +483,17 @@ def build_distortion(matrix, audit, n=256):
         common_ids, common_sha = ids, digest
         trigger = _CleanIdentityTrigger() if cell['method_key'] == 'clean' else build_trigger(cfg)
         trigger_sha = trigger_state_sha256(trigger)
+        original = build_trigger(dict(cfg, trigger='micro_dropper')) if is_peak_profile else None
+        original_sha = trigger_state_sha256(original) if original is not None else None
+        if is_peak_profile and _file_sha(cfg['action_npy']) != action_sha:
+            raise ValueError('Action reference changed while building paired peak-control triggers')
         for dose in GRID:
-            values = measure(cfg, n=n, dose=dose, trig=trigger, dataset=ds)
+            if is_peak_profile:
+                values, reference_values, pairs = _measure_peak_pair(
+                    cfg, ds, indices, ids, dose, trigger, original)
+                paired_records.append(dict(method_key=cell['method_key'], dose=dose, pairs=pairs))
+            else:
+                values = measure(cfg, n=n, dose=dose, trig=trigger, dataset=ds)
             if values['n_samples'] != len(ids):
                 raise ValueError('Distortion sample count differs from the recorded common IDs')
             snr = float(values['snr_db'])
@@ -414,15 +510,43 @@ def build_distortion(matrix, audit, n=256):
             if any(not math.isfinite(row[name]) or row[name] < 0
                    for name in ('relative_l2', 'rmse', 'linf')):
                 raise ValueError('Nonfinite or negative distortion measurement')
+            if is_peak_profile:
+                reference_snr = float(reference_values['snr_db'])
+                if math.isnan(reference_snr):
+                    raise ValueError('Original reference distortion SNR is NaN')
+                row.update(original_relative_l2=float(reference_values['relative_l2']),
+                    original_rmse=float(reference_values['rms']),
+                    original_linf=float(reference_values['max_abs']),
+                    original_snr_db=reference_snr if math.isfinite(reference_snr) else None,
+                    original_snr_db_is_infinite=reference_snr == float('inf'),
+                    original_snr_db_is_negative_infinite=reference_snr == float('-inf'),
+                    original_trigger_state_sha256=original_sha,
+                    paired_linf_violations=0,
+                    max_paired_linf_excess=max(pair['linf_excess'] for pair in pairs))
+                if any(not math.isfinite(row[name]) or row[name] < 0
+                       for name in ('original_relative_l2', 'original_rmse', 'original_linf')):
+                    raise ValueError('Nonfinite or negative Original distortion measurement')
             rows.append(row)
         if trigger_state_sha256(trigger) != trigger_sha:
             raise ValueError('Fixed trigger state changed during distortion measurement')
-    return dict(status=STATUS, DRAFT_ONLY=True, plan_sha256=matrix['plan_sha256'],
+        if original is not None and trigger_state_sha256(original) != original_sha:
+            raise ValueError('Original reference trigger state changed during distortion measurement')
+        if is_peak_profile and _file_sha(cfg['action_npy']) != action_sha:
+            raise ValueError('Action reference changed during paired peak-control measurement')
+    report = dict(status=STATUS, DRAFT_ONLY=True, plan_sha256=matrix['plan_sha256'],
         common_pair_ids=common_ids, common_pair_ids_sha256=common_sha,
         selection='linspace over the common sorted held-out draft subset',
         units='dimensionless model-input CSI; SNR in dB',
         clean_control='identity injection; clean-victim T metrics separately probe the original trigger',
         aggregation='pooled signal/error energy; Linf is the global maximum', rows=rows)
+    if is_peak_profile:
+        report.update(reference_trigger='micro_dropper', reference_training=False,
+            peak_audit='per-sample post-normalization float64 Linf <= Original, zero tolerance',
+            matches_l2_budget=False, paired_samples=paired_records,
+            limitations=['The reference operator is measured without training an Original victim.',
+                'Peak upper bounds are checked per sample/dose; relative L2 is measured, not matched.',
+                'Input-conditioned peak scaling and a rounding guard are not pure carrier isolation.'])
+    return report
 
 
 def _write_csv(path, rows, columns):
@@ -444,13 +568,13 @@ def export_summary(matrix, outdir, *, distortion_samples=256, skip_distortion=Fa
     _atomic_json(outdir / 'draft_summary.json', report)
     _write_csv(outdir / 'draft_summary.csv', report['rows'], SUMMARY_COLUMNS)
     lines = [f'# {STATUS}', '',
-        'Exploratory method screening only. All five rows are retained in plan order.', '',
+        f"Exploratory method screening only. All {len(report['rows'])} profile rows are retained in plan order.", '',
         '| Method | Clean MPJPE (mm) | PA-MPJPE (mm) | PCK .5/.4/.3/.2/.1 (%) | T1 (mm) | Mean positive-dose T (mm) | I1 (mm) |',
         '| --- | ---: | ---: | --- | ---: | ---: | ---: |']
     for row in report['rows']:
         pck = '/'.join(f"{row[f'clean_pck_{t:.1f}_pct']:.2f}" for t in (0.5, 0.4, 0.3, 0.2, 0.1))
         lines.append(f"| {row['method']} | {row['clean_mpjpe_mm']:.3f} | {row['clean_pampjpe_mm']:.3f} | {pck} | {row['t1_mpjpe_mm']:.3f} | {row['mean_positive_dose_tmpjpe_mm']:.3f} | {row['i1_improvement_mm']:.3f} |")
-    lines.extend(['', f"Profile: `{PROFILE}`; seed 42; epochs {report['rows'][0]['epochs']}.",
+    lines.extend(['', f"Profile: `{report['draft_profile']}`; seed 42; epochs {report['rows'][0]['epochs']}.",
         'T1 is triggered T-MPJPE at dose 1. I1 uses the same-model no-trigger target baseline.',
         'PCK thresholds are relative, not millimetres. No uncertainty or ranking is estimated.',
         'Evaluation uses a disjoint validation holdout from official training; the official test split is untouched.',
@@ -458,6 +582,11 @@ def export_summary(matrix, outdir, *, distortion_samples=256, skip_distortion=Fa
         f"Plan SHA256: `{matrix['plan_sha256']}`", '',
         'Digital distortion is skipped.' if skip_distortion else
         'Digital input distortion is recorded separately; no HPE forward is used.'])
+    if report['draft_profile'] == PEAK_PROFILE:
+        lines.extend(['',
+            'Only this candidate is trained. Original operator distortion is measured on identical pairs/doses/epsilon; no Original victim result is imported.',
+            'Per-sample Linf must not exceed Original (zero tolerance); L2 is measured, not matched.',
+            'This is an input-conditioned peak-bound rule, not a pure fixed-carrier ablation.'])
     target = outdir / 'draft_summary.md'
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix('.md.tmp')
@@ -467,7 +596,8 @@ def export_summary(matrix, outdir, *, distortion_samples=256, skip_distortion=Fa
         # Every nonfinite SNR has already become null with an explicit flag.
         json.dumps(distortion, allow_nan=False)
         _atomic_json(outdir / 'input_distortion.json', distortion)
-        _write_csv(outdir / 'input_distortion.csv', distortion['rows'], DISTORTION_COLUMNS)
+        columns = PEAK_DISTORTION_COLUMNS if report['draft_profile'] == PEAK_PROFILE else DISTORTION_COLUMNS
+        _write_csv(outdir / 'input_distortion.csv', distortion['rows'], columns)
     return report
 
 
@@ -481,10 +611,12 @@ def parse_args(argv=None):
     parser.add_argument('--train-samples', type=int, default=20000)
     parser.add_argument('--eval-samples', type=int, default=4096)
     parser.add_argument('--distortion-samples', type=int, default=256)
-    parser.add_argument('--cells', nargs='+', choices=[row[0] for row in METHODS])
+    parser.add_argument('--profile', choices=list(PROFILES), default='screening',
+                        help='screening keeps the five original draft cells; peak_control trains only the peak-bound candidate')
+    parser.add_argument('--cells', nargs='+', choices=[row[0] for _, methods in PROFILES.values() for row in methods])
     parser.add_argument('--fresh', action='store_true', help='Require a NEW empty output directory; never delete results')
     parser.add_argument('--dry-run', action='store_true', help='Resolve only; no dataset, trigger, CUDA, or training')
-    parser.add_argument('--export-only', action='store_true', help='Require all five valid completed caches')
+    parser.add_argument('--export-only', action='store_true', help='Require every profile cell to have a valid completed cache')
     parser.add_argument('--skip-distortion', action='store_true')
     return parser.parse_args(argv)
 
@@ -501,6 +633,9 @@ def main(argv=None):
         raise ValueError('--devices must list distinct logical cuda:N devices, or cpu')
     if args.cells is not None and len(set(args.cells)) != len(args.cells):
         raise ValueError('--cells cannot contain duplicates')
+    _, methods = _profile(args.profile)
+    if args.cells is not None and not set(args.cells).issubset({row[0] for row in methods}):
+        raise ValueError('--cells must belong to the selected --profile')
     if args.dry_run and args.export_only:
         raise ValueError('--dry-run and --export-only cannot be combined')
     outdir = args.outdir.resolve()
@@ -510,7 +645,8 @@ def main(argv=None):
         manifest_path = outdir / 'method_drafts.resolved.json'
         requested = build_matrix(args.data_home, outdir, devices[0], args.num_workers,
             epochs=args.epochs, train_samples=args.train_samples,
-            eval_samples=args.eval_samples, distortion_samples=args.distortion_samples)
+            eval_samples=args.eval_samples, distortion_samples=args.distortion_samples,
+            profile=args.profile)
         if manifest_path.exists():
             matrix = json.loads(manifest_path.read_text(encoding='utf-8'))
             _validate_manifest(matrix)
@@ -524,7 +660,7 @@ def main(argv=None):
             matrix = requested
         _atomic_json(manifest_path, matrix)
         if args.dry_run:
-            print(f'[{STATUS}] DRY RUN: five isolated cells; NO training.\n{manifest_path}', flush=True)
+            print(f'[{STATUS}] DRY RUN: {len(matrix["cells"])} isolated profile cells; NO training.\n{manifest_path}', flush=True)
             return 0
         if not args.export_only:
             _check_inputs(matrix, devices)

@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from attack.method_drafts import (METHOD_DRAFT_NAMES, MDMultiCarrierTrigger,
                                  MDDoseCodeTrigger, MDEnergyTrigger,
+                                 MDPeakMatchedMultiCarrierTrigger,
                                  build_method_draft_trigger,
                                  resolve_method_draft_config)
 from attack.trigger import MicroDopplerTrigger, build_trigger_by_name
@@ -29,6 +30,7 @@ def _base(n_ant=3, n_sub=16, n_pkt=8, zero_mean=True):
 
 def _draft(name):
     return {'md_multicarrier': MDMultiCarrierTrigger,
+            'md_multicarrier_peak_matched': MDPeakMatchedMultiCarrierTrigger,
             'md_dose_code': MDDoseCodeTrigger,
             'md_energy': MDEnergyTrigger}[name](_base())
 
@@ -234,7 +236,8 @@ def test_bad_scalars_refuse(name, field, value):
         trigger.inject(_amplitudes(trigger.shape), **kwargs)
 
 
-@pytest.mark.parametrize('constructor', [MDMultiCarrierTrigger, MDDoseCodeTrigger, MDEnergyTrigger])
+@pytest.mark.parametrize('constructor', [MDMultiCarrierTrigger, MDDoseCodeTrigger, MDEnergyTrigger,
+                                      MDPeakMatchedMultiCarrierTrigger])
 def test_unbuilt_nonzero_mean_or_invalid_base_refused(constructor):
     with pytest.raises(ValueError):
         constructor(_base(zero_mean=False))

@@ -104,6 +104,23 @@ def test_profile_alone_can_explicitly_enable_screening():
     assert isinstance(apply_draft_subset(_SyntheticDataset(), config, 'train'), DraftSubset)
 
 
+def test_peak_profile_selects_exact_existing_screening_subsets_without_data_reads():
+    base = _SyntheticDataset()
+    screening = _cfg(draft_profile='method_screening_v1')
+    peak = _cfg(draft_profile='method_peak_control_v1')
+    del peak['method_draft']
+    for split in ('train', 'test'):
+        first = apply_draft_subset(base, screening, split)
+        second = apply_draft_subset(base, peak, split)
+        assert first.subset_indices == second.subset_indices
+        assert first.draft_pair_ids() == second.draft_pair_ids()
+        left, right = first.draft_subset_manifest(), second.draft_subset_manifest()
+        assert left.pop('profile') == 'method_screening_v1'
+        assert right.pop('profile') == 'method_peak_control_v1'
+        assert left == right
+    assert base.reads == []
+
+
 @pytest.mark.parametrize('key', ['draft_train_samples', 'draft_eval_samples'])
 @pytest.mark.parametrize('value', [0, -1, True, 1.5, '12', None])
 def test_invalid_budget_is_refused_for_both_views(key, value):
