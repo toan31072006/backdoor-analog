@@ -8,6 +8,13 @@ This repository contains the executable experiment contract used for MM-Fi and
 Person-in-WiFi-3D (PiW3D). Datasets, action skeletons, checkpoints, and reported
 results are intentionally not committed.
 
+For **quick method-development experiments** (seed 42, a common MM-Fi subset,
+15 epochs, original baseline plus three new hypotheses), see
+[METHOD_DRAFTS_VI.md](METHOD_DRAFTS_VI.md) and
+`remote_linux/06_run_method_drafts.sh`. These are explicitly DRAFT results, not
+the full publication matrix below. The existing baseline and full configs are
+unchanged; references motivate the variants but are not exact reproductions.
+
 For the **new full MM-Fi seed-42 four-table matrix**, see
 [MMFI_TABLES_VI.md](MMFI_TABLES_VI.md). Its runner is
 `ATKBackd/run_mmfi_tables.py`: two separately staged RF adaptations, three

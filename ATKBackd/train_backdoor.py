@@ -19,12 +19,22 @@ def _load_dataset(cfg, split):
         # DT-Pose names these protocol<N>-s<M>; both come from the config so a
         # run is pinned to one setting and the checkpoint fingerprint changes
         # when either does.
-        return MMFI(split=split, data_root=cfg['dataset_root'],
+        base_split = split
+        draft_requested = (cfg.get('method_draft') is True
+                           or cfg.get('draft_profile') == 'method_screening_v1')
+        if (draft_requested
+                and cfg.get('draft_eval_source', 'training_holdout') == 'training_holdout'):
+            # Draft selection uses a disjoint holdout from the official TRAIN
+            # pool. The canonical test split is not used to choose a method.
+            base_split = 'training'
+        base = MMFI(split=base_split, data_root=cfg['dataset_root'],
                     num_person=cfg.get('num_person', 1),
                     protocol=cfg.get('mmfi_protocol', 'protocol1'),
                     setting=cfg.get('mmfi_setting', 's1'),
                     random_ratio=cfg.get('mmfi_random_ratio', 0.8),
                     random_seed=cfg.get('mmfi_split_seed', 0))
+        from data_utils.draft_subset import apply_draft_subset
+        return apply_draft_subset(base, cfg, split)
     else:
         return PersonInWiFi3D(split=split, data_root=cfg['dataset_root'],
                                experiment_name=dataset_name,
@@ -159,6 +169,9 @@ def _resolve_training_config(cfg):
         resolved.setdefault('n_pkt', 20)
 
     trigger_name = str(resolved['trigger']).lower().replace('-', '_')
+    if trigger_name in ('md_multicarrier', 'md_dose_code', 'md_energy'):
+        from attack.method_drafts import resolve_method_draft_config
+        resolved = resolve_method_draft_config(resolved)
     if trigger_name in ('badnets', 'badnet', 'bad_nets', 'badnets_adapted',
                         'blended', 'blend', 'blended_adapted'):
         from attack.traditional import resolve_backdoorbench_config
@@ -558,11 +571,44 @@ def evaluate(model, base_test, trig, cfg, device):
 
 # ── Train ─────────────────────────────────────────────────────────────────────
 
+def _draft_reference_action_sha256(cfg, ckpt_dir=None):
+    """Bind marked draft results to their external reference skeleton bytes.
+
+    Config fingerprints bind paths, not external file contents. Reject a
+    changed or missing training-time record before a draft cache/epoch resume;
+    the canonical full experiment path does not call this helper.
+    """
+    digest = hashlib.sha256()
+    with Path(cfg['action_npy']).open('rb') as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(block)
+    action_sha = digest.hexdigest()
+    if ckpt_dir is not None:
+        folder = Path(ckpt_dir)
+        record_path = folder / 'draft_subsets.json'
+        if record_path.exists():
+            try:
+                record = json.loads(record_path.read_text(encoding='utf-8'))
+            except (OSError, ValueError) as exc:
+                raise ValueError('Draft reference audit is invalid; use a NEW directory') from exc
+            if (not isinstance(record, dict)
+                    or record.get('config_fingerprint') != _config_fingerprint(cfg)
+                    or record.get('action_file_sha256') != action_sha):
+                raise ValueError('Draft reference action/config changed; use a NEW directory')
+        elif any((folder / name).exists() for name in ('checkpoint.pt', 'eval_cache.json')):
+            raise ValueError('Draft reference audit is missing; use a NEW directory')
+    return action_sha
+
+
 def train(cfg, ckpt_dir=None):
     cfg = _resolve_training_config(cfg)
     _validate_training_contract(cfg)
     if cfg.get('training_protocol', 'ordinary_erm') != 'ordinary_erm':
         raise ValueError('Staged RF protocols must use train_rf_backdoor.train, not ordinary ERM')
+    is_draft = (cfg.get('method_draft') is True
+                or cfg.get('draft_profile') == 'method_screening_v1')
+    draft_action_sha = (_draft_reference_action_sha256(cfg, ckpt_dir)
+                        if is_draft else None)
 
     # New table runs fail closed BEFORE rewriting audit metadata. Legacy
     # runners retain their previous opt-in restart behavior.
@@ -580,9 +626,11 @@ def train(cfg, ckpt_dir=None):
     # model or the trigger — so re-running a sweep really costs nothing for the
     # cells already done. Returns (None, res): callers that only read metrics
     # (sweep.py, run_experiments.py) are fine; anyone needing the model must
-    # clear the cache.
+    # clear the cache. Marked drafts first verify the reference skeleton hash.
     cached = _load_cached_result(ckpt_dir, cfg)
     if cached is not None:
+        if is_draft and cached.get('draft_action_sha256') != draft_action_sha:
+            raise ValueError('Draft cache reference action mismatch; use a NEW directory')
         return None, cached
 
     device = cfg.get('device') or ('cuda' if torch.cuda.is_available() else 'cpu')
@@ -605,6 +653,8 @@ def train(cfg, ckpt_dir=None):
     print(f'[train] train={len(base_train)} val={len(base_test)} samples', flush=True)
 
     trig = build_trigger(cfg)
+    if is_draft and _draft_reference_action_sha256(cfg, ckpt_dir) != draft_action_sha:
+        raise ValueError('Draft reference action changed while building the trigger')
     learned_trigger = _uses_deferred_trigger(trig)
     if learned_trigger:
         trig = trig.to(device)
@@ -621,6 +671,18 @@ def train(cfg, ckpt_dir=None):
         cover_ratio=cfg.get('wanet_cover_ratio', 0.0),
     )
     _write_run_metadata(ckpt_dir, cfg, pois)
+    if is_draft and ckpt_dir is not None:
+        subset_record = {
+            'status': 'DRAFT_ONLY_NOT_PAPER_RESULTS',
+            'config_fingerprint': _config_fingerprint(cfg),
+            'action_file_sha256': draft_action_sha,
+            'train': base_train.draft_subset_manifest(),
+            'eval': base_test.draft_subset_manifest(),
+        }
+        subset_path = Path(ckpt_dir) / 'draft_subsets.json'
+        subset_tmp = subset_path.with_suffix('.json.tmp')
+        subset_tmp.write_text(json.dumps(subset_record, indent=2), encoding='utf-8')
+        os.replace(subset_tmp, subset_path)
     # num_workers: dùng multiprocessing để load data song song với GPU compute.
     # Dùng 'fork' start method trên Linux để tránh overhead của 'spawn'.
     # Chỉ áp dụng cho training loader — evaluate() vẫn dùng 0 để tránh deadlock.
@@ -768,6 +830,8 @@ def train(cfg, ckpt_dir=None):
     res['seed'] = int(cfg['seed'])
     res['config_fingerprint'] = _config_fingerprint(cfg)
     res['poison_plan_sha256'] = pois.manifest()['poison_plan_sha256']
+    if is_draft:
+        res['draft_action_sha256'] = draft_action_sha
     res['victim_loss'] = _VICTIM_LOSS
     res['training_contract'] = 'ordinary_erm'
     res['attacker_access'] = ('white_box_training_control'

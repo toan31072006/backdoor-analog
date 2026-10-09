@@ -140,19 +140,27 @@ def load_trigger_for_measurement(cfg, checkpoint=None, allow_untrained=False,
     return trig, ckpt['epoch']
 
 
-def measure(cfg, n=64, dose=1.0, split='validation', trig=None):
-    """Dataset-level distortion over n real samples."""
+def measure(cfg, n=64, dose=1.0, split='validation', trig=None, dataset=None):
+    """Dataset-level distortion over n real samples.
+
+    A caller measuring a dose grid may reuse its already-indexed dataset.
+    The caller must bind its sample IDs to the experiment config; the draft
+    runner checks their recorded fingerprints before measuring distortion.
+    """
     from train_backdoor import (_uses_deferred_trigger, _trigger_eps,
                                 _resolve_training_config,
                                 _validate_training_contract)
     cfg = _resolve_training_config(cfg)
     _validate_training_contract(cfg)
-    try:                                        # ATKBackd exposes a loader
-        from train_backdoor import _load_dataset, _get_dataset_name
-        ds = _load_dataset(cfg, split if _get_dataset_name(cfg) != 'mmfi' else 'test')
-    except ImportError:                         # wbackdoor: Person-in-WiFi-3D only
-        from data_utils.feeder import PersonInWiFi3D
-        ds = PersonInWiFi3D(split, cfg['dataset_root'], cfg['experiment_name'])
+    if dataset is not None:
+        ds = dataset
+    else:
+        try:                                    # ATKBackd exposes a loader
+            from train_backdoor import _load_dataset, _get_dataset_name
+            ds = _load_dataset(cfg, split if _get_dataset_name(cfg) != 'mmfi' else 'test')
+        except ImportError:                     # wbackdoor: Person-in-WiFi-3D only
+            from data_utils.feeder import PersonInWiFi3D
+            ds = PersonInWiFi3D(split, cfg['dataset_root'], cfg['experiment_name'])
 
     if trig is None:
         trig, _ = load_trigger_for_measurement(cfg)

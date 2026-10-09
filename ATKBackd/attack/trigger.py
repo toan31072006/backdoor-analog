@@ -172,6 +172,10 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
     if name in ('tsba', 'tsba_adapted'):
         return build_tsba_trigger(cfg)
 
+    if name in ('md_multicarrier', 'md_dose_code', 'md_energy'):
+        from attack.method_drafts import build_method_draft_trigger
+        return build_method_draft_trigger(name, cfg)
+
     if name in ('badnets', 'blended', 'blend', 'wanet'):
         if cfg.get('experiment_name') != 'mmfi':
             raise ValueError('Traditional CSI adaptations are currently MM-Fi only')
@@ -193,4 +197,5 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
     raise ValueError(
         f"Unknown trigger '{trigger_name}'. Available triggers: "
         "'micro_dropper', 'tsba', 'badnets', 'blended', 'wanet', "
-        "'infocom2025_por', 'ccai2026_backdoorrf'.")
+        "'infocom2025_por', 'ccai2026_backdoorrf', 'md_multicarrier', "
+        "'md_dose_code', 'md_energy'.")
