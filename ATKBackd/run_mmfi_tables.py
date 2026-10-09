@@ -249,7 +249,7 @@ def _select_cells(matrix, requested):
     return [c for c in matrix['cells'] if c['method_key'] in selected]
 
 
-def run_matrix(matrix, manifest_path, devices, requested=None):
+def run_matrix(matrix, manifest_path, devices, requested=None, *, worker_script=None):
     """One independent process per device, with explicit clean-teacher dependency."""
     from train_rf_backdoor import finalize_rf_config
     pending = _select_cells(matrix, requested)
@@ -271,7 +271,8 @@ def run_matrix(matrix, manifest_path, devices, requested=None):
                 logfile = Path(eligible['ckpt_dir']) / 'console.log'
                 logfile.parent.mkdir(parents=True, exist_ok=True)
                 stream = logfile.open('a', encoding='utf-8')
-                command = [sys.executable, '-u', str(Path(__file__).resolve()),
+                child_script = Path(__file__ if worker_script is None else worker_script).resolve()
+                command = [sys.executable, '-u', str(child_script),
                            '--_cell', eligible['method_key'], '--_manifest', str(manifest_path)]
                 env = os.environ.copy()
                 env.setdefault('OMP_NUM_THREADS', '4')

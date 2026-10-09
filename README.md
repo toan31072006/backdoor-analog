@@ -21,6 +21,10 @@ dose, and epsilon. It keeps the seed-42 subset/15-epoch recipe and writes to a
 new directory; old results are not overwritten or imported as new caches.
 This controls a peak upper bound, not simultaneous L2 matching or detectability.
 
+For a fresh **full MM-Fi, 50-epoch seed-42 confirmation** of Original against
+the peak-capped candidate, see [PEAK_CONFIRMATION_VI.md](PEAK_CONFIRMATION_VI.md)
+and `remote_linux/07_run_peak_confirmation.sh`.
+
 For the **new full MM-Fi seed-42 four-table matrix**, see
 [MMFI_TABLES_VI.md](MMFI_TABLES_VI.md). Its runner is
 `ATKBackd/run_mmfi_tables.py`: two separately staged RF adaptations, three
