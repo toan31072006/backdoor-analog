@@ -238,8 +238,8 @@ def _validated_prepared(cell, prepared):
             if _file_sha(path) != prepared.get('lc_artifact_sha256'):
                 raise ValueError('Frozen learned-trigger artifact changed')
             artifact = json.loads(path.read_text(encoding='utf-8'))
-            operator_keys = ('lc_relative_l2', 'lc_reference_eps', 'lc_mask_fraction',
-                'lc_carrier_sub_mode', 'lc_carrier_time_mode', 'lc_carrier_seed')
+            from attack.learned_carrier import operator_config_keys
+            operator_keys = operator_config_keys(prepared)
             if (artifact.get('schema') != 1 or artifact.get('status') != STATUS
                     or artifact.get('recipe_sha256') != cell['recipe_sha256']
                     or artifact.get('variant') != variant
@@ -304,7 +304,7 @@ def _run_cell(cell):
         print(f"[learned-draft] completed {cell['method_key']}", flush=True)
 
 
-def run_matrix(matrix, manifest_path, devices, requested=None):
+def run_matrix(matrix, manifest_path, devices, requested=None, *, worker_script=None):
     selected = set(requested or [c['method_key'] for c in matrix['cells']])
     if matrix['metrics_contract']['clean_probe'] != 'missing_by_explicit_skip':
         selected.add('clean')
@@ -327,7 +327,8 @@ def run_matrix(matrix, manifest_path, devices, requested=None):
                 env = os.environ.copy()
                 env.setdefault('OMP_NUM_THREADS', '4')
                 env.setdefault('MKL_NUM_THREADS', '4')
-                child = subprocess.Popen([sys.executable, '-u', str(Path(__file__).resolve()),
+                script = Path(worker_script or __file__).resolve()
+                child = subprocess.Popen([sys.executable, '-u', str(script),
                     '--_cell', cell['method_key'], '--_manifest', str(manifest_path)],
                     cwd=HERE, env=env, stdout=stream, stderr=subprocess.STDOUT)
                 running[device] = (child, cell, stream)
@@ -353,14 +354,14 @@ def run_matrix(matrix, manifest_path, devices, requested=None):
             stream.close()
 
 
-def audit_common_inputs(cells):
+def audit_common_inputs(cells, profile=PROFILE):
     """Same train/holdout and uniform poison pairing; selection is its own arm."""
     shared, action_sha, uniform_plan, uniform_doses, selection_doses, result = None, None, None, None, None, {}
     for cell in cells:
         key, cfg = cell['method_key'], cell['cfg']
         subset = _read_audit(Path(cell['ckpt_dir']) / 'draft_subsets.json', cell)
-        ti, tsha = _subset_identity(subset, 'train', PROFILE)
-        ei, esha = _subset_identity(subset, 'eval', PROFILE)
+        ti, tsha = _subset_identity(subset, 'train', profile)
+        ei, esha = _subset_identity(subset, 'eval', profile)
         identity = (ti, ei, tsha, esha)
         if (set(ti) & set(ei) or (shared is not None and identity != shared)
                 or subset['train']['parent_n'] != subset['eval']['parent_n']
@@ -468,7 +469,7 @@ def build_distortion(matrix, audit, n=256):
         cfg = dict(cell['cfg'], device='cpu', num_workers=0)
         ds = _load_dataset(cfg, 'test')
         subset = ds.draft_subset_manifest()
-        indices, digest = _subset_identity({'eval': subset}, 'eval', PROFILE)
+        indices, digest = _subset_identity({'eval': subset}, 'eval', matrix['draft_profile'])
         if indices != audit['eval_parent_indices'] or digest != audit['cells'][cell['method_key']]['eval_subset_sha256']:
             raise ValueError('Distortion holdout differs from evaluated holdout')
         selected = np.linspace(0, len(ds) - 1, min(n, len(ds))).astype(int).tolist()

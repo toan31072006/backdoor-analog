@@ -21,10 +21,13 @@ from attack.method_drafts import _CarrierDraftTrigger, _integer, _scalar
 
 SCHEMA = 1
 STATUS = 'DRAFT_ONLY_NOT_PAPER_RESULTS'
-VARIANTS = ('weights', 'sparse', 'combined', 'gradient', 'energy')
+LEGACY_VARIANTS = ('weights', 'sparse', 'combined', 'gradient', 'energy')
+BANK_VARIANTS = ('trainaware', 'bank', 'bank_guard')
+VARIANTS = (*LEGACY_VARIANTS, *BANK_VARIANTS)
 POLICY = 'original_postclip_linf_relative_l2_v1'
 _OPERATOR_KEYS = ('lc_relative_l2', 'lc_reference_eps', 'lc_mask_fraction',
                   'lc_carrier_sub_mode', 'lc_carrier_time_mode', 'lc_carrier_seed')
+_BANK_KEYS = ('lc_bank_size', 'lc_bank_seed')
 _KNOWN = set(_OPERATOR_KEYS) | {
     'lc_schema', 'lc_variant', 'lc_recipe_sha256', 'lc_artifact_path',
     'lc_artifact_sha256', 'lc_warmup_epochs', 'lc_rounds', 'lc_inner_steps',
@@ -32,7 +35,16 @@ _KNOWN = set(_OPERATOR_KEYS) | {
     'lc_clean_weight', 'lc_fit_samples', 'lc_poison_indices', 'lc_selection',
     'lc_fit_seed', 'lc_fit_profile', 'lc_fitting_sha256', 'lc_poison_indices_sha256',
     'lc_inner_val_fraction', 'lc_gradient_tensors', 'lc_selection_sha256',
+    'lc_bank_size', 'lc_bank_seed', 'lc_surrogate_count',
+    'lc_surrogate_seed_stride', 'lc_lookahead_steps', 'lc_pa_weight',
+    'lc_pck_weight', 'lc_pck_temperature', 'lc_utility_mpjpe_tolerance',
+    'lc_utility_pa_tolerance', 'lc_utility_pck_tolerance',
 }
+
+
+def operator_config_keys(cfg):
+    """Bind bank fields only for new variants; preserve legacy artifact schema."""
+    return (*_OPERATOR_KEYS, *_BANK_KEYS) if cfg.get('lc_variant') in BANK_VARIANTS else _OPERATOR_KEYS
 
 
 def _sha256(value, name):
@@ -71,6 +83,15 @@ def resolve_learned_config(cfg):
     variant = resolved.get('lc_variant')
     if variant is not None and variant not in (*VARIANTS, 'selection', 'reference', 'control'):
         raise ValueError(f'Unsupported learned-carrier variant: {variant}')
+    if variant in BANK_VARIANTS:
+        required_size = 2 if variant == 'trainaware' else 8
+        size = _integer(resolved.get('lc_bank_size', required_size), 'lc_bank_size', minimum=2)
+        if size != required_size:
+            raise ValueError(f'lc_bank_size must equal {required_size} for {variant}')
+        bank_seed = _integer(resolved.get('lc_bank_seed', 42), 'lc_bank_seed')
+        resolved.update(lc_bank_size=size, lc_bank_seed=bank_seed)
+    elif any(key in resolved for key in _BANK_KEYS):
+        raise ValueError('Bank configuration requires a trainaware, bank or bank_guard variant')
     for key in ('lc_recipe_sha256', 'lc_artifact_sha256'):
         if key in resolved:
             _sha256(resolved[key], key)
@@ -84,6 +105,63 @@ def resolve_learned_config(cfg):
                     lc_carrier_sub_mode=sub, lc_carrier_time_mode=time,
                     lc_carrier_seed=seed)
     return resolved
+
+
+def _basis_sha256(bank):
+    return hashlib.sha256(np.ascontiguousarray(bank, dtype='<f8').tobytes()).hexdigest()
+
+
+def _smooth_carrier_bank(built, size, seed):
+    """Keep Original/two-carrier bases, then add six smooth separable modes.
+
+    Link profiles combine low antenna-axis DCT modes with decaying coefficients.
+    Frequency/time ranks remain small, and double Gram-Schmidt gives independent
+    keys without labels, victim outputs or data-dependent basis construction.
+    """
+    bases = [built.p0.copy(), built.p1.copy()]
+    records = [dict(kind='original'), dict(kind='existing_carrier',
+        sub_mode=built.sub_mode, time_mode=built.time_mode, seed=built.seed)]
+    if size == 2:
+        return np.stack(bases), records
+    n_ant, n_sub, n_pkt = built.shape
+    preferred = [(1, 0), (2, 0), (1, 1), (2, 1), (0, 2), (3, 2)]
+    available = [(s, t) for t in range(min(n_pkt, 3))
+                 for s in range(min(n_sub, 6)) if s or t]
+    pairs = [pair for pair in preferred if pair in available]
+    pairs.extend(pair for pair in available if pair not in pairs)
+    rng = np.random.default_rng(seed)
+    antenna_modes = np.arange(min(n_ant, 3))
+    antenna_basis = np.cos(np.pi * antenna_modes[:, None]
+                           * (np.arange(n_ant)[None, :] + .5) / n_ant)
+    # Multiple antenna profiles per frequency/time pair support small fixtures.
+    for repetition in range(max(1, n_ant)):
+        for sub_mode, time_mode in pairs:
+            coefficients = rng.normal(size=len(antenna_modes)) / (1 + antenna_modes) ** 2
+            antenna = coefficients @ antenna_basis
+            frequency = np.cos(np.pi * sub_mode * (np.arange(n_sub) + .5) / n_sub)
+            packet = np.cos(np.pi * time_mode * (np.arange(n_pkt) + .5) / n_pkt)
+            carrier = antenna[:, None, None] * frequency[None, :, None] * packet[None, None, :]
+            for _ in range(2):
+                carrier -= carrier.mean()
+                for previous in bases:
+                    carrier -= np.mean(carrier * previous) / np.mean(previous ** 2) * previous
+            rms = float(np.sqrt(np.mean(carrier ** 2)))
+            if not np.isfinite(rms) or rms <= 1e-12:
+                continue
+            bases.append(carrier / rms)
+            records.append(dict(kind='smooth_dct', sub_mode=sub_mode, time_mode=time_mode,
+                antenna_coefficients=coefficients.tolist(), repetition=repetition))
+            if len(bases) == size:
+                return np.stack(bases), records
+    raise ValueError('CSI axes cannot support the declared independent carrier bank')
+
+
+def _bank_diagnostics(bank, records, seed):
+    flat = bank.reshape(len(bank), -1)
+    gram = flat @ flat.T / flat.shape[1]
+    return dict(schema=1, size=len(bank), seed=seed, shape=list(bank.shape[1:]),
+                basis_sha256=_basis_sha256(bank), modes=records,
+                max_abs_gram_error=float(np.max(np.abs(gram - np.eye(len(bank))))))
 
 
 def _numpy_input(csi, shape, dose):
@@ -170,20 +248,30 @@ def _strict_project_tensor(x, candidate, peak_cap, l2_cap):
 
 
 class TrainableCarrier(nn.Module):
-    """Low-dimensional carrier weights and/or a group-sparse STE mask."""
+    """Signed carrier-bank weights and/or a legacy group-sparse STE mask."""
 
     def __init__(self, base, cfg, variant):
         super().__init__()
         if variant not in VARIANTS:
             raise ValueError(f'Unknown carrier variant: {variant}')
-        self.cfg = resolve_learned_config(cfg)
+        if cfg.get('lc_variant', variant) != variant:
+            raise ValueError('Trainable carrier variant disagrees with configuration')
+        self.cfg = resolve_learned_config(dict(cfg, lc_variant=variant) if variant in BANK_VARIANTS else cfg)
         self.variant, self.base = variant, base
         built = _CarrierDraftTrigger(base, self.cfg['lc_carrier_sub_mode'],
                                      self.cfg['lc_carrier_time_mode'], self.cfg['lc_carrier_seed'])
         self.shape = built.shape
         self.register_buffer('p0', torch.from_numpy(built.p0.copy()))
         self.register_buffer('p1', torch.from_numpy(built.p1.copy()))
-        self.weights = nn.Parameter(torch.ones(2, dtype=torch.float64), requires_grad=variant != 'sparse')
+        if variant in BANK_VARIANTS:
+            bank, records = _smooth_carrier_bank(built, self.cfg['lc_bank_size'], self.cfg['lc_bank_seed'])
+            self.bank_diagnostics = _bank_diagnostics(bank, records, self.cfg['lc_bank_seed'])
+            self.register_buffer('carrier_bank', torch.from_numpy(bank))
+            initial_weights = torch.zeros(len(bank), dtype=torch.float64)
+            initial_weights[:2] = 1.
+        else:
+            initial_weights = torch.ones(2, dtype=torch.float64)
+        self.weights = nn.Parameter(initial_weights, requires_grad=variant != 'sparse')
         rng = np.random.default_rng(self.cfg['lc_carrier_seed'])
         self.mask_scores = nn.Parameter(torch.from_numpy(rng.normal(0, .01, size=self.shape[:2])),
                                         requires_grad=variant in ('sparse', 'combined'))
@@ -196,7 +284,10 @@ class TrainableCarrier(nn.Module):
         self.eps = _scalar(self.cfg.get('eps', .185), 'eps')
 
     def pattern_tensor(self):
-        raw = self.weights[0] * self.p0 + self.weights[1] * self.p1
+        if self.variant in BANK_VARIANTS:
+            raw = (self.weights.reshape(-1, 1, 1, 1) * self.carrier_bank).sum(dim=0)
+        else:
+            raw = self.weights[0] * self.p0 + self.weights[1] * self.p1
         if self.variant in ('sparse', 'combined'):
             # Stable CPU/device sort gives deterministic tie handling.
             flat = self.mask_scores.flatten()
@@ -268,8 +359,11 @@ def artifact_dict(module, recipe_sha256, provenance=None):
                   shape=list(module.shape), pattern=module.export_pattern().tolist(),
                   amplitude=module.export_amplitude(), amplitude_initial=module.amplitude_initial,
                   recipe_sha256=recipe_sha256,
-                  operator_config={k: module.cfg[k] for k in _OPERATOR_KEYS},
+                  operator_config={k: module.cfg[k] for k in operator_config_keys(module.cfg)},
                   provenance={} if provenance is None else provenance)
+    if module.variant in BANK_VARIANTS:
+        result.update(raw_weights=module.weights.detach().cpu().tolist(),
+                      bank_diagnostics=module.bank_diagnostics)
     json.dumps(result, allow_nan=False)
     return result
 
@@ -317,7 +411,8 @@ class FrozenLearnedCarrier:
                 or obj.get('recipe_sha256') != self.cfg['lc_recipe_sha256']
                 or obj.get('variant') not in VARIANTS or obj.get('shape') != list(self.shape)):
             raise ValueError('Learned artifact schema, variant, shape or recipe mismatch')
-        if obj.get('operator_config') != {k: self.cfg[k] for k in _OPERATOR_KEYS}:
+        effective_cfg = resolve_learned_config(dict(self.cfg, lc_variant=obj['variant']))
+        if obj.get('operator_config') != {k: effective_cfg[k] for k in operator_config_keys(effective_cfg)}:
             raise ValueError('Learned artifact operator configuration mismatch')
         if self.cfg.get('lc_variant', obj['variant']) != obj['variant']:
             raise ValueError('Learned artifact variant mismatch')
@@ -340,6 +435,31 @@ class FrozenLearnedCarrier:
             maximum = max(1, int(np.ceil(np.prod(self.shape[:2]) * self.cfg['lc_mask_fraction'])))
             if int(groups.sum()) > maximum:
                 raise ValueError('Learned pattern exceeds the declared sparse group fraction')
+        if obj['variant'] in BANK_VARIANTS:
+            bank, records = _smooth_carrier_bank(built, effective_cfg['lc_bank_size'],
+                                                effective_cfg['lc_bank_seed'])
+            diagnostics = _bank_diagnostics(bank, records, effective_cfg['lc_bank_seed'])
+            if obj.get('bank_diagnostics') != diagnostics:
+                raise ValueError('Learned artifact bank diagnostics mismatch')
+            try:
+                native_weights = np.asarray(obj['raw_weights'])
+                if native_weights.dtype.kind not in 'fiu':
+                    raise ValueError('Raw bank weights must be real numeric values')
+                weights = native_weights.astype(np.float64)
+            except (TypeError, ValueError, KeyError) as exc:
+                raise ValueError('Invalid learned artifact raw bank weights') from exc
+            if weights.shape != (len(bank),) or not np.isfinite(weights).all():
+                raise ValueError('Learned artifact raw bank weights must be finite and match bank size')
+            raw = np.sum(weights.reshape(-1, 1, 1, 1) * bank, axis=0)
+            centered = raw - raw.mean()
+            rms = float(np.sqrt(np.mean(centered ** 2)))
+            if not np.isfinite(rms) or rms <= 1e-12:
+                raise ValueError('Learned artifact raw bank weights produce a degenerate pattern')
+            if not np.allclose(centered / rms, pattern, atol=1e-10, rtol=1e-10):
+                raise ValueError('Learned artifact raw bank weights disagree with frozen pattern')
+            self.raw_weights = weights.copy()
+            self.bank_diagnostics = diagnostics
+        self.cfg = effective_cfg
         self._pattern, self.variant, self.amplitude = pattern.copy(), obj['variant'], amplitude
         self.artifact_sha256 = self.cfg['lc_artifact_sha256']
         self.name = f'lc_{self.variant}'
@@ -355,7 +475,7 @@ class FrozenLearnedCarrier:
                     amplitude_initial=self.amplitude_initial, policy=POLICY,
                     artifact_sha256=self.artifact_sha256,
                     recipe_sha256=self.cfg['lc_recipe_sha256'],
-                    **{k: self.cfg[k] for k in _OPERATOR_KEYS})
+                    **{k: self.cfg[k] for k in operator_config_keys(self.cfg)})
 
     def inject(self, csi, dose, eps=None):
         return self.inject_with_audit(csi, dose, eps)[0]

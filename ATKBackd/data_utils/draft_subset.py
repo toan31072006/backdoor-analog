@@ -16,7 +16,7 @@ import numpy as np
 
 DRAFT_PROFILE = 'method_screening_v1'
 DRAFT_PROFILES = (DRAFT_PROFILE, 'method_peak_control_v1',
-                  'learned_carrier_screen_v1')
+                  'learned_carrier_screen_v1', 'carrier_bank_screen_v1')
 _DRAFT_OPTIONS = (
     'draft_train_samples', 'draft_eval_samples', 'draft_subset_seed',
     'draft_eval_source',
@@ -71,6 +71,8 @@ class DraftSubset:
                  profile=DRAFT_PROFILE):
         if profile not in DRAFT_PROFILES:
             raise ValueError(f'unsupported draft_profile: {profile!r}')
+        if profile == 'carrier_bank_screen_v1' and eval_source != 'training_holdout':
+            raise ValueError('Carrier-bank profile requires training_holdout, never official_test')
         parent_n = len(base)
         if len(base.items) != parent_n:
             raise ValueError('draft parent items and dataset length disagree')
@@ -178,6 +180,8 @@ def apply_draft_subset(base, cfg, split):
     eval_source = cfg.get('draft_eval_source', 'training_holdout')
     if eval_source not in ('training_holdout', 'official_test'):
         raise ValueError('draft_eval_source must be training_holdout or official_test')
+    if profile == 'carrier_bank_screen_v1' and eval_source != 'training_holdout':
+        raise ValueError('Carrier-bank profile requires training_holdout, never official_test')
 
     split = _canonical_split(split)
     parent_n = len(base)

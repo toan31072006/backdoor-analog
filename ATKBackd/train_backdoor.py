@@ -14,6 +14,11 @@ from eval import metrics as M
 
 
 def _load_dataset(cfg, split):
+    if cfg.get('draft_profile') == 'carrier_bank_screen_v1':
+        # Refuse an official-test request before constructing/opening a parent
+        # dataset. New carrier fitting must remain TRAIN-only even when this
+        # lower-level loader is used directly by an audit or fitting utility.
+        _validate_training_contract(cfg)
     dataset_name = cfg.get('experiment_name', 'one-person')
     if dataset_name == 'mmfi':
         # DT-Pose names these protocol<N>-s<M>; both come from the config so a
@@ -23,7 +28,7 @@ def _load_dataset(cfg, split):
         draft_requested = (cfg.get('method_draft') is True
                            or cfg.get('draft_profile') in (
                                'method_screening_v1', 'method_peak_control_v1',
-                               'learned_carrier_screen_v1'))
+                               'learned_carrier_screen_v1', 'carrier_bank_screen_v1'))
         if (draft_requested
                 and cfg.get('draft_eval_source', 'training_holdout') == 'training_holdout'):
             # Draft selection uses a disjoint holdout from the official TRAIN
@@ -122,6 +127,12 @@ _RESULT_SCHEMA = 10  # dose-specific no-trigger target baseline at EVERY dose
 _VICTIM_LOSS = 'mpjpe'
 _ATTACK_SPECIFIC_VICTIM_KEYS = {
     'lambda_target', 'lambda_nontarget', 'loss_norm',
+}
+_CARRIER_BANK_OPTIONS = {
+    'lc_bank_size', 'lc_bank_seed', 'lc_surrogate_count',
+    'lc_surrogate_seed_stride', 'lc_lookahead_steps', 'lc_pa_weight',
+    'lc_pck_weight', 'lc_pck_temperature', 'lc_utility_mpjpe_tolerance',
+    'lc_utility_pa_tolerance', 'lc_utility_pck_tolerance',
 }
 
 
@@ -242,10 +253,20 @@ def _validate_training_contract(cfg):
         raise ValueError(
             'attack-specific victim-loss options are not allowed under the '
             f'paper threat model: {stale}. Remove them and retrain with MPJPE.')
+    if cfg.get('draft_profile') == 'carrier_bank_screen_v1':
+        if (cfg.get('experiment_name') != 'mmfi'
+                or cfg.get('method_draft') is not True
+                or cfg.get('draft_eval_source') != 'training_holdout'):
+            raise ValueError('Carrier-bank profile requires an isolated MM-Fi training-holdout draft')
+    if (cfg.get('lc_variant') in ('trainaware', 'bank', 'bank_guard')
+            or _CARRIER_BANK_OPTIONS.intersection(cfg)):
+        if cfg.get('draft_profile') != 'carrier_bank_screen_v1':
+            raise ValueError('New carrier-bank fitting options require carrier_bank_screen_v1')
     if any(key.startswith('lc_') for key in cfg) or cfg.get('trigger') == 'learned_carrier':
         if (cfg.get('experiment_name') != 'mmfi'
                 or cfg.get('method_draft') is not True
-                or cfg.get('draft_profile') != 'learned_carrier_screen_v1'
+                or cfg.get('draft_profile') not in (
+                    'learned_carrier_screen_v1', 'carrier_bank_screen_v1')
                 or cfg.get('draft_eval_source') != 'training_holdout'):
             raise ValueError('Learned-carrier options require the isolated MM-Fi training-holdout draft profile')
         if cfg.get('lc_poison_indices') is not None and cfg.get('lc_variant') != 'selection':
@@ -674,7 +695,7 @@ def train(cfg, ckpt_dir=None):
     is_draft = (cfg.get('method_draft') is True
                 or cfg.get('draft_profile') in (
                     'method_screening_v1', 'method_peak_control_v1',
-                    'learned_carrier_screen_v1'))
+                    'learned_carrier_screen_v1', 'carrier_bank_screen_v1'))
     draft_action_sha = (_draft_reference_action_sha256(cfg, ckpt_dir)
                         if is_draft else None)
 

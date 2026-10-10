@@ -170,6 +170,14 @@ mid-run.
 
 ## Tests
 
+The isolated `carrier_bank_screen_v1` development profile is implemented by
+`ATKBackd/run_carrier_bank_drafts.py`, `ATKBackd/carrier_bank_fit.py`, and
+the bank variants of `ATKBackd/attack/learned_carrier.py`. It freezes an
+attacker-owned trigger before fresh ordinary-ERM victim training and never
+uses the official test for selection. Six-cell export retains every main
+metric, the six-dose record and per-metric Blended deltas. See
+[carrier_bank_drafts.md](ATKBackd/configs/mmfi/carrier_bank_drafts.md).
+
 From `ATKBackd`:
 
 ```bash

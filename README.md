@@ -198,6 +198,16 @@ historical comparison results are untouched.
 See [the protocol and launch commands](ATKBackd/configs/mmfi/learned_carrier_drafts.md).
 The entry point is `remote_linux/09_run_learned_carrier_drafts.sh`.
 
+## Stronger Proposed carrier-bank screen
+
+The new six-arm Proposed development screen keeps Clean, fixed Proposed and
+Blended unchanged, and tests stronger surrogate fitting, an eight-carrier
+bank and clean-utility protection. It uses shared actual peak/L2 ceilings,
+TRAIN-only fitting/holdout and fresh ordinary-MPJPE victims. Every main-metric
+row and per-metric Blended delta is retained; no empirical improvement is
+guaranteed. See [the isolated protocol](ATKBackd/configs/mmfi/carrier_bank_drafts.md)
+and launch with `remote_linux/10_run_carrier_bank_drafts.sh`.
+
 ## Responsible use
 
 This code is intended for authorized academic security research and robustness

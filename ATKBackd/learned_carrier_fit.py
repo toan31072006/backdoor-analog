@@ -22,6 +22,7 @@ from torch.func import functional_call
 
 FIT_SCHEMA = 1
 LEARNED_VARIANTS = {"weights", "sparse", "combined", "gradient", "energy"}
+BANK_LEARNED_VARIANTS = {"trainaware", "bank", "bank_guard"}
 FIT_DEFAULTS = {
     "lc_warmup_epochs": 3, "lc_rounds": 3,
     "lc_inner_steps": 32, "lc_outer_steps": 16,
@@ -439,11 +440,18 @@ def prepare_learned_cell(cfg, folder, recipe_sha256):
     is no silent re-fit followed by reuse of incompatible victim checkpoints.
     """
     variant = cfg.get("lc_variant")
-    if variant not in LEARNED_VARIANTS | {"selection"}:
+    learned_variants = LEARNED_VARIANTS | BANK_LEARNED_VARIANTS
+    if variant not in learned_variants | {"selection"}:
         return dict(cfg)
     if cfg.get("experiment_name") != "mmfi" or cfg.get("draft_eval_source") != "training_holdout":
         raise ValueError("learned fitting requires MMFi with an official-TRAIN draft holdout")
-    cfg = resolve_fit_config(cfg)
+    if variant in BANK_LEARNED_VARIANTS:
+        from carrier_bank_fit import BANK_FIT_DEFAULTS, resolve_bank_fit_config
+        cfg = resolve_bank_fit_config(cfg)
+        fit_setting_keys = BANK_FIT_DEFAULTS
+    else:
+        cfg = resolve_fit_config(cfg)
+        fit_setting_keys = FIT_DEFAULTS
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     prepared_path = folder / "prepared_cfg.json"
@@ -462,7 +470,7 @@ def prepare_learned_cell(cfg, folder, recipe_sha256):
         from train_backdoor import _config_fingerprint, _resolve_training_config
         if _config_fingerprint(_resolve_training_config(out)) != saved.get("cfg_fingerprint"):
             raise ValueError("prepared fitting configuration is altered")
-        if variant in LEARNED_VARIANTS:
+        if variant in learned_variants:
             if not artifact_path.is_file() or _file_sha(artifact_path) != out.get("lc_artifact_sha256"):
                 raise ValueError("frozen learned trigger artifact is missing or altered")
         elif _json_sha(out.get("lc_poison_indices")) != out.get("lc_selection_sha256"):
@@ -518,7 +526,7 @@ def prepare_learned_cell(cfg, folder, recipe_sha256):
         "inner_validation_indices_sha256": _json_sha(val_indices),
         "inner_train_ids_sha256": _json_sha(_metadata_ids(base, fit_indices)),
         "inner_validation_ids_sha256": _json_sha(_metadata_ids(base, val_indices)),
-        "fit_settings": {key: cfg[key] for key in FIT_DEFAULTS},
+        "fit_settings": {key: cfg[key] for key in fit_setting_keys},
         "victim_training": "fresh independent victim; ordinary full-pose MPJPE ERM",
         "scope": "inspired adaptations, not source-paper reproductions; no over-the-air stealth claim",
     }
@@ -551,7 +559,23 @@ def prepare_learned_cell(cfg, folder, recipe_sha256):
         original = build_trigger_by_name("micro_dropper", original_cfg)
         trigger = TrainableCarrier(original, cfg, variant).to(device)
         val_x, val_y = _read_batch(base, val_indices, device)
-        provenance.update(fit_trigger(model, trigger, fit_x, fit_y, val_x, val_y, cfg, rng))
+        if variant in BANK_LEARNED_VARIANTS:
+            from carrier_bank_fit import fit_bank_trigger
+            models = [model]
+            for member in range(1, cfg["lc_surrogate_count"]):
+                member_seed = fit_seed + member * cfg["lc_surrogate_seed_stride"]
+                random.seed(member_seed)
+                np.random.seed(member_seed)
+                torch.manual_seed(member_seed)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(member_seed)
+                models.append(build_model(cfg["model"], num_keypoints=17, num_coor=3,
+                    num_person=cfg.get("num_person", 1),
+                    subcarrier_num=cfg.get("n_sub", 114), dataset="mmfi", pretrained=False).to(device))
+            provenance.update(fit_bank_trigger(models, trigger, fit_x, fit_y,
+                                               val_x, val_y, cfg, rng))
+        else:
+            provenance.update(fit_trigger(model, trigger, fit_x, fit_y, val_x, val_y, cfg, rng))
         artifact_sha = write_artifact(artifact_path, trigger, recipe_sha256, provenance=provenance)
         out.update(trigger="learned_carrier", lc_artifact_path=str(artifact_path.resolve()),
                    lc_artifact_sha256=artifact_sha)
