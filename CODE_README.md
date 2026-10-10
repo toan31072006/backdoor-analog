@@ -178,6 +178,18 @@ uses the official test for selection. Six-cell export retains every main
 metric, the six-dose record and per-metric Blended deltas. See
 [carrier_bank_drafts.md](ATKBackd/configs/mmfi/carrier_bank_drafts.md).
 
+The separate `paired_guard_screen_v1` development profile keeps the existing
+Blended and two-carrier train-aware recipes as controls. The new two-carrier
+candidate uses clean-only surrogate twins forked with matching SGD momentum
+after warmup; both real updates and lookaheads use paired batches. Selection
+checks all seven clean utility metrics against those current-stage twins.
+This adds attacker compute, not victim-training access, and cannot guarantee
+that an independently trained victim preserves every metric. All candidates,
+including any explicitly flagged no-eligible-candidate fallback, are retained.
+See [paired_guard_drafts.md](ATKBackd/configs/mmfi/paired_guard_drafts.md) and
+`remote_linux/11_run_paired_guard_drafts.sh`. This is TRAIN-holdout screening,
+not a new set of official-test paper results.
+
 From `ATKBackd`:
 
 ```bash

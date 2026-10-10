@@ -14,7 +14,7 @@ from eval import metrics as M
 
 
 def _load_dataset(cfg, split):
-    if cfg.get('draft_profile') == 'carrier_bank_screen_v1':
+    if cfg.get('draft_profile') in ('carrier_bank_screen_v1', 'paired_guard_screen_v1'):
         # Refuse an official-test request before constructing/opening a parent
         # dataset. New carrier fitting must remain TRAIN-only even when this
         # lower-level loader is used directly by an audit or fitting utility.
@@ -28,7 +28,8 @@ def _load_dataset(cfg, split):
         draft_requested = (cfg.get('method_draft') is True
                            or cfg.get('draft_profile') in (
                                'method_screening_v1', 'method_peak_control_v1',
-                               'learned_carrier_screen_v1', 'carrier_bank_screen_v1'))
+                               'learned_carrier_screen_v1', 'carrier_bank_screen_v1',
+                               'paired_guard_screen_v1'))
         if (draft_requested
                 and cfg.get('draft_eval_source', 'training_holdout') == 'training_holdout'):
             # Draft selection uses a disjoint holdout from the official TRAIN
@@ -253,20 +254,26 @@ def _validate_training_contract(cfg):
         raise ValueError(
             'attack-specific victim-loss options are not allowed under the '
             f'paper threat model: {stale}. Remove them and retrain with MPJPE.')
-    if cfg.get('draft_profile') == 'carrier_bank_screen_v1':
+    profile = cfg.get('draft_profile')
+    if profile in ('carrier_bank_screen_v1', 'paired_guard_screen_v1'):
         if (cfg.get('experiment_name') != 'mmfi'
                 or cfg.get('method_draft') is not True
                 or cfg.get('draft_eval_source') != 'training_holdout'):
             raise ValueError('Carrier-bank profile requires an isolated MM-Fi training-holdout draft')
-    if (cfg.get('lc_variant') in ('trainaware', 'bank', 'bank_guard')
+    if cfg.get('lc_variant') == 'paired_guard' and profile != 'paired_guard_screen_v1':
+        raise ValueError('Paired guard requires paired_guard_screen_v1')
+    if profile == 'paired_guard_screen_v1' and cfg.get('lc_variant') not in (None, 'trainaware', 'paired_guard'):
+        raise ValueError('Paired-guard profile permits only unchanged controls and paired_guard')
+    if (cfg.get('lc_variant') in ('trainaware', 'bank', 'bank_guard', 'paired_guard')
             or _CARRIER_BANK_OPTIONS.intersection(cfg)):
-        if cfg.get('draft_profile') != 'carrier_bank_screen_v1':
-            raise ValueError('New carrier-bank fitting options require carrier_bank_screen_v1')
+        if profile not in ('carrier_bank_screen_v1', 'paired_guard_screen_v1'):
+            raise ValueError('New carrier-bank fitting options require carrier_bank_screen_v1 or paired_guard_screen_v1')
     if any(key.startswith('lc_') for key in cfg) or cfg.get('trigger') == 'learned_carrier':
         if (cfg.get('experiment_name') != 'mmfi'
                 or cfg.get('method_draft') is not True
                 or cfg.get('draft_profile') not in (
-                    'learned_carrier_screen_v1', 'carrier_bank_screen_v1')
+                    'learned_carrier_screen_v1', 'carrier_bank_screen_v1',
+                    'paired_guard_screen_v1')
                 or cfg.get('draft_eval_source') != 'training_holdout'):
             raise ValueError('Learned-carrier options require the isolated MM-Fi training-holdout draft profile')
         if cfg.get('lc_poison_indices') is not None and cfg.get('lc_variant') != 'selection':
@@ -695,7 +702,8 @@ def train(cfg, ckpt_dir=None):
     is_draft = (cfg.get('method_draft') is True
                 or cfg.get('draft_profile') in (
                     'method_screening_v1', 'method_peak_control_v1',
-                    'learned_carrier_screen_v1', 'carrier_bank_screen_v1'))
+                    'learned_carrier_screen_v1', 'carrier_bank_screen_v1',
+                    'paired_guard_screen_v1'))
     draft_action_sha = (_draft_reference_action_sha256(cfg, ckpt_dir)
                         if is_draft else None)
 

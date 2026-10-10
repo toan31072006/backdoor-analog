@@ -23,7 +23,9 @@ SCHEMA = 1
 STATUS = 'DRAFT_ONLY_NOT_PAPER_RESULTS'
 LEGACY_VARIANTS = ('weights', 'sparse', 'combined', 'gradient', 'energy')
 BANK_VARIANTS = ('trainaware', 'bank', 'bank_guard')
-VARIANTS = (*LEGACY_VARIANTS, *BANK_VARIANTS)
+PAIRED_VARIANTS = ('paired_guard',)
+BANK_OPERATOR_VARIANTS = (*BANK_VARIANTS, *PAIRED_VARIANTS)
+VARIANTS = (*LEGACY_VARIANTS, *BANK_OPERATOR_VARIANTS)
 POLICY = 'original_postclip_linf_relative_l2_v1'
 _OPERATOR_KEYS = ('lc_relative_l2', 'lc_reference_eps', 'lc_mask_fraction',
                   'lc_carrier_sub_mode', 'lc_carrier_time_mode', 'lc_carrier_seed')
@@ -44,7 +46,7 @@ _KNOWN = set(_OPERATOR_KEYS) | {
 
 def operator_config_keys(cfg):
     """Bind bank fields only for new variants; preserve legacy artifact schema."""
-    return (*_OPERATOR_KEYS, *_BANK_KEYS) if cfg.get('lc_variant') in BANK_VARIANTS else _OPERATOR_KEYS
+    return (*_OPERATOR_KEYS, *_BANK_KEYS) if cfg.get('lc_variant') in BANK_OPERATOR_VARIANTS else _OPERATOR_KEYS
 
 
 def _sha256(value, name):
@@ -83,15 +85,15 @@ def resolve_learned_config(cfg):
     variant = resolved.get('lc_variant')
     if variant is not None and variant not in (*VARIANTS, 'selection', 'reference', 'control'):
         raise ValueError(f'Unsupported learned-carrier variant: {variant}')
-    if variant in BANK_VARIANTS:
-        required_size = 2 if variant == 'trainaware' else 8
+    if variant in BANK_OPERATOR_VARIANTS:
+        required_size = 2 if variant in ('trainaware', 'paired_guard') else 8
         size = _integer(resolved.get('lc_bank_size', required_size), 'lc_bank_size', minimum=2)
         if size != required_size:
             raise ValueError(f'lc_bank_size must equal {required_size} for {variant}')
         bank_seed = _integer(resolved.get('lc_bank_seed', 42), 'lc_bank_seed')
         resolved.update(lc_bank_size=size, lc_bank_seed=bank_seed)
     elif any(key in resolved for key in _BANK_KEYS):
-        raise ValueError('Bank configuration requires a trainaware, bank or bank_guard variant')
+        raise ValueError('Bank configuration requires a carrier-bank variant')
     for key in ('lc_recipe_sha256', 'lc_artifact_sha256'):
         if key in resolved:
             _sha256(resolved[key], key)
@@ -256,14 +258,14 @@ class TrainableCarrier(nn.Module):
             raise ValueError(f'Unknown carrier variant: {variant}')
         if cfg.get('lc_variant', variant) != variant:
             raise ValueError('Trainable carrier variant disagrees with configuration')
-        self.cfg = resolve_learned_config(dict(cfg, lc_variant=variant) if variant in BANK_VARIANTS else cfg)
+        self.cfg = resolve_learned_config(dict(cfg, lc_variant=variant) if variant in BANK_OPERATOR_VARIANTS else cfg)
         self.variant, self.base = variant, base
         built = _CarrierDraftTrigger(base, self.cfg['lc_carrier_sub_mode'],
                                      self.cfg['lc_carrier_time_mode'], self.cfg['lc_carrier_seed'])
         self.shape = built.shape
         self.register_buffer('p0', torch.from_numpy(built.p0.copy()))
         self.register_buffer('p1', torch.from_numpy(built.p1.copy()))
-        if variant in BANK_VARIANTS:
+        if variant in BANK_OPERATOR_VARIANTS:
             bank, records = _smooth_carrier_bank(built, self.cfg['lc_bank_size'], self.cfg['lc_bank_seed'])
             self.bank_diagnostics = _bank_diagnostics(bank, records, self.cfg['lc_bank_seed'])
             self.register_buffer('carrier_bank', torch.from_numpy(bank))
@@ -284,7 +286,7 @@ class TrainableCarrier(nn.Module):
         self.eps = _scalar(self.cfg.get('eps', .185), 'eps')
 
     def pattern_tensor(self):
-        if self.variant in BANK_VARIANTS:
+        if self.variant in BANK_OPERATOR_VARIANTS:
             raw = (self.weights.reshape(-1, 1, 1, 1) * self.carrier_bank).sum(dim=0)
         else:
             raw = self.weights[0] * self.p0 + self.weights[1] * self.p1
@@ -361,7 +363,7 @@ def artifact_dict(module, recipe_sha256, provenance=None):
                   recipe_sha256=recipe_sha256,
                   operator_config={k: module.cfg[k] for k in operator_config_keys(module.cfg)},
                   provenance={} if provenance is None else provenance)
-    if module.variant in BANK_VARIANTS:
+    if module.variant in BANK_OPERATOR_VARIANTS:
         result.update(raw_weights=module.weights.detach().cpu().tolist(),
                       bank_diagnostics=module.bank_diagnostics)
     json.dumps(result, allow_nan=False)
@@ -435,7 +437,7 @@ class FrozenLearnedCarrier:
             maximum = max(1, int(np.ceil(np.prod(self.shape[:2]) * self.cfg['lc_mask_fraction'])))
             if int(groups.sum()) > maximum:
                 raise ValueError('Learned pattern exceeds the declared sparse group fraction')
-        if obj['variant'] in BANK_VARIANTS:
+        if obj['variant'] in BANK_OPERATOR_VARIANTS:
             bank, records = _smooth_carrier_bank(built, effective_cfg['lc_bank_size'],
                                                 effective_cfg['lc_bank_seed'])
             diagnostics = _bank_diagnostics(bank, records, effective_cfg['lc_bank_seed'])
