@@ -190,6 +190,13 @@ See [paired_guard_drafts.md](ATKBackd/configs/mmfi/paired_guard_drafts.md) and
 `remote_linux/11_run_paired_guard_drafts.sh`. This is TRAIN-holdout screening,
 not a new set of official-test paper results.
 
+One frozen `lc_paired_guard` artifact can be confirmed without refitting via
+`remote_linux/12_run_paired_guard_full.sh`. This separate seed-42, 50-epoch
+full-MM-Fi TRAIN/TEST runner never imports old victim weights or metrics and
+preserves the source guard/fallback flags. It is a single-candidate confirmation,
+not a baseline comparison. See
+[paired_guard_full.md](ATKBackd/configs/mmfi/paired_guard_full.md).
+
 From `ATKBackd`:
 
 ```bash

@@ -11,9 +11,15 @@ from attack.poison import PoisonedDataset, collate
 from attack.payload import set_skeleton_config
 from models.factory import build_model
 from eval import metrics as M
+from frozen_full_contract import FULL_CONFIRMATION_PROFILE
 
 
 def _load_dataset(cfg, split):
+    if (cfg.get('confirmation_profile') == FULL_CONFIRMATION_PROFILE
+            or 'confirmation_source' in cfg):
+        from frozen_full_contract import validate_frozen_full_source_files
+        _validate_training_contract(cfg)
+        validate_frozen_full_source_files(cfg)
     if cfg.get('draft_profile') in ('carrier_bank_screen_v1', 'paired_guard_screen_v1'):
         # Refuse an official-test request before constructing/opening a parent
         # dataset. New carrier fitting must remain TRAIN-only even when this
@@ -254,6 +260,13 @@ def _validate_training_contract(cfg):
         raise ValueError(
             'attack-specific victim-loss options are not allowed under the '
             f'paper threat model: {stale}. Remove them and retrain with MPJPE.')
+    # Other full-confirmation runners have their own profiles. Only the
+    # frozen-trigger profile (or its source passport) enters this contract.
+    if (cfg.get('confirmation_profile') == FULL_CONFIRMATION_PROFILE
+            or 'confirmation_source' in cfg):
+        from frozen_full_contract import validate_frozen_full_config
+        validate_frozen_full_config(cfg)
+        return
     profile = cfg.get('draft_profile')
     if profile in ('carrier_bank_screen_v1', 'paired_guard_screen_v1'):
         if (cfg.get('experiment_name') != 'mmfi'
@@ -687,6 +700,10 @@ def _training_loader(dataset, cfg):
 def train(cfg, ckpt_dir=None):
     cfg = _resolve_training_config(cfg)
     _validate_training_contract(cfg)
+    if (cfg.get('confirmation_profile') == FULL_CONFIRMATION_PROFILE
+            or 'confirmation_source' in cfg):
+        from frozen_full_contract import validate_frozen_full_source_files
+        validate_frozen_full_source_files(cfg)
     if cfg.get('training_protocol', 'ordinary_erm') != 'ordinary_erm':
         raise ValueError('Staged RF protocols must use train_rf_backdoor.train, not ordinary ERM')
     # A frozen learned key is data, not a victim-trained generator. Bind its
