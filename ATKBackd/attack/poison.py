@@ -11,7 +11,7 @@ class PoisonedDataset(Dataset):
                  pivot=7, theta_max_deg=60.0, dose_mode='linear',
                  axis=(0.0, 0.0, 1.0), fixed_dose=None, seed=0, select='uniform',
                  dataset='person-in-wifi-3d', dose_coupling='paired',
-                 cover_ratio=0.0):
+                 cover_ratio=0.0, explicit_indices=None):
         """
         Args:
             dataset: 'person-in-wifi-3d' or 'mmfi' - configures skeleton structure
@@ -47,6 +47,9 @@ class PoisonedDataset(Dataset):
         self.dose_max = float(dose_max)
         self.dose_coupling = str(dose_coupling)
         self.cover_ratio = float(cover_ratio)
+        self.explicit_indices = explicit_indices is not None
+        if explicit_indices is not None and mode != 'train':
+            raise ValueError('Explicit poison indices are training-only')
         if self.dose_coupling not in ('paired', 'shuffled'):
             raise ValueError('dose_coupling must be paired or shuffled')
         if self.defer_trigger and self.dose_coupling != 'paired':
@@ -70,7 +73,21 @@ class PoisonedDataset(Dataset):
                 raise ValueError(f'rho must be in [0, 1], got {rho}')
             # Algorithm 1 in the paper uses floor(rho * N), not rounding.
             n_pois = int(np.floor(rho * n))
-            idx = self._select_poison(rng, n, n_pois, select)
+            if explicit_indices is None:
+                idx = self._select_poison(rng, n, n_pois, select)
+            else:
+                if (not isinstance(explicit_indices, (list, tuple, np.ndarray))
+                        or len(explicit_indices) != n_pois
+                        or any(isinstance(i, (bool, np.bool_))
+                               or not isinstance(i, (int, np.integer))
+                               or not 0 <= int(i) < n for i in explicit_indices)
+                        or len(set(map(int, explicit_indices))) != n_pois):
+                    raise ValueError('Explicit poison indices must be unique in-range integers of count floor(rho*N)')
+                # Consume the ordinary uniform selection draw, so changing
+                # identities alone keeps precisely the same dose marginals.
+                if n_pois:
+                    rng.choice(n, size=n_pois, replace=False)
+                idx = np.asarray(explicit_indices, dtype=int)
             doses = rng.uniform(dose_min, dose_max, size=len(idx))
             self.poison_plan = tuple(
                 (int(i), float(d)) for i, d in zip(idx.tolist(), doses.tolist()))
@@ -144,6 +161,11 @@ class PoisonedDataset(Dataset):
                           for i, d in self.poison_plan]
             record['coupling_sha256'] = hashlib.sha256(json.dumps(
                 assignment, separators=(',', ':')).encode('utf-8')).hexdigest()
+        if self.explicit_indices:
+            record.update(schema=6, explicit_train_only_selection=True,
+                          selection_indices_sha256=hashlib.sha256(json.dumps(
+                              [i for i, _ in self.poison_plan],
+                              separators=(',', ':')).encode('utf-8')).hexdigest())
         return record
 
     def _select_poison(self, rng, n, n_pois, select):

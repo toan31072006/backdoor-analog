@@ -22,7 +22,8 @@ def _load_dataset(cfg, split):
         base_split = split
         draft_requested = (cfg.get('method_draft') is True
                            or cfg.get('draft_profile') in (
-                               'method_screening_v1', 'method_peak_control_v1'))
+                               'method_screening_v1', 'method_peak_control_v1',
+                               'learned_carrier_screen_v1'))
         if (draft_requested
                 and cfg.get('draft_eval_source', 'training_holdout') == 'training_holdout'):
             # Draft selection uses a disjoint holdout from the official TRAIN
@@ -62,7 +63,12 @@ def build_trigger(cfg):
     trigger = build_trigger_by_name(cfg.get('trigger', 'micro_doppler'), cfg)
     if 'comparison_peak_budget' in cfg:
         from attack.peak_budget import wrap_peak_budget
-        return wrap_peak_budget(trigger, cfg)
+        trigger = wrap_peak_budget(trigger, cfg)
+    if 'lc_relative_l2' in cfg:
+        from attack.learned_carrier import DualBudgetTrigger
+        reference = build_trigger_by_name('micro_dropper', cfg)
+        trigger = DualBudgetTrigger(trigger, reference,
+                                    cfg['lc_reference_eps'], cfg['lc_relative_l2'])
     return trigger
 
 
@@ -191,6 +197,9 @@ def _resolve_training_config(cfg):
     if trigger_name in ('ftrojan', 'fiba'):
         from attack.frequency_baselines import resolve_frequency_config
         resolved = resolve_frequency_config(trigger_name, resolved)
+    if trigger_name == 'learned_carrier' or any(k.startswith('lc_') for k in resolved):
+        from attack.learned_carrier import resolve_learned_config
+        resolved = resolve_learned_config(resolved)
     from attack.peak_budget import resolve_peak_budget_config
     resolved = resolve_peak_budget_config(resolved)
     if trigger_name in ('tsba', 'tsba_adapted'):
@@ -233,6 +242,14 @@ def _validate_training_contract(cfg):
         raise ValueError(
             'attack-specific victim-loss options are not allowed under the '
             f'paper threat model: {stale}. Remove them and retrain with MPJPE.')
+    if any(key.startswith('lc_') for key in cfg) or cfg.get('trigger') == 'learned_carrier':
+        if (cfg.get('experiment_name') != 'mmfi'
+                or cfg.get('method_draft') is not True
+                or cfg.get('draft_profile') != 'learned_carrier_screen_v1'
+                or cfg.get('draft_eval_source') != 'training_holdout'):
+            raise ValueError('Learned-carrier options require the isolated MM-Fi training-holdout draft profile')
+        if cfg.get('lc_poison_indices') is not None and cfg.get('lc_variant') != 'selection':
+            raise ValueError('Explicit learned-carrier poison selection belongs only to the selection ablation')
 
 
 def _result_path(ckpt_dir):
@@ -644,9 +661,20 @@ def train(cfg, ckpt_dir=None):
     _validate_training_contract(cfg)
     if cfg.get('training_protocol', 'ordinary_erm') != 'ordinary_erm':
         raise ValueError('Staged RF protocols must use train_rf_backdoor.train, not ordinary ERM')
+    # A frozen learned key is data, not a victim-trained generator. Bind its
+    # actual bytes BEFORE accepting either a checkpoint or an evaluation cache.
+    if cfg.get('trigger') == 'learned_carrier':
+        artifact = cfg.get('lc_artifact_path')
+        expected = cfg.get('lc_artifact_sha256')
+        if not artifact or not expected:
+            raise ValueError('Freeze and hash the learned trigger before training a fresh victim')
+        actual = hashlib.sha256(Path(artifact).read_bytes()).hexdigest()
+        if actual != expected:
+            raise ValueError('Frozen learned trigger artifact changed; use a NEW directory')
     is_draft = (cfg.get('method_draft') is True
                 or cfg.get('draft_profile') in (
-                    'method_screening_v1', 'method_peak_control_v1'))
+                    'method_screening_v1', 'method_peak_control_v1',
+                    'learned_carrier_screen_v1'))
     draft_action_sha = (_draft_reference_action_sha256(cfg, ckpt_dir)
                         if is_draft else None)
 
@@ -712,6 +740,7 @@ def train(cfg, ckpt_dir=None):
         dataset=dataset_name,
         dose_coupling=cfg.get('dose_coupling', 'paired'),
         cover_ratio=cfg.get('clean_label_cover_ratio', cfg.get('wanet_cover_ratio', 0.0)),
+        explicit_indices=cfg.get('lc_poison_indices'),
     )
     _write_run_metadata(ckpt_dir, cfg, pois)
     if is_draft and ckpt_dir is not None:

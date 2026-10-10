@@ -187,6 +187,17 @@ See [remote_linux/README_VI.md](remote_linux/README_VI.md) for the Vietnamese
 server guide and [CODE_README.md](CODE_README.md) for the detailed implementation
 map.
 
+## Exploratory learned-carrier drafts
+
+The isolated nine-cell suite tests five literature-inspired CSI/HPE directions
+plus a combined carrier/mask arm, against Clean, current Proposed and Blended.
+It uses seed 42, rho=0.1, shared actual peak/L2 ceilings and a disjoint TRAIN
+holdout. These are independent adaptations, not source-paper reproductions;
+historical comparison results are untouched.
+
+See [the protocol and launch commands](ATKBackd/configs/mmfi/learned_carrier_drafts.md).
+The entry point is `remote_linux/09_run_learned_carrier_drafts.sh`.
+
 ## Responsible use
 
 This code is intended for authorized academic security research and robustness
