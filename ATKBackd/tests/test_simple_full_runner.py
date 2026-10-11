@@ -17,8 +17,7 @@ import simple_full_contract as contract
 import train_backdoor as trainer
 
 
-KEYS = ['clean', 'blended', 'proposed', 'additive', 'single',
-        'shared_links', 'frequency_only']
+KEYS = ['additive', 'single', 'shared_links', 'frequency_only']
 GRID = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
 
 
@@ -39,6 +38,11 @@ def stored(output):
 def sources(monkeypatch):
     values = {'fixture.py': 'a' * 64}
     monkeypatch.setattr(runner, '_source_provenance', lambda: dict(values))
+    # Real frozen-source integrity is covered by test_simple_reference.py.
+    # These tests isolate inert planning and candidate cache contracts.
+    monkeypatch.setattr(runner, '_reference_bundle', lambda cfg: {
+        'provenance': {'fixture_reference_sha256': 'c' * 64}})
+    monkeypatch.setattr(runner, 'validate_candidate_compatibility', lambda *a, **k: None)
     return values
 
 
@@ -47,8 +51,8 @@ def matrix(tmp_path, sources):
     return runner.build_matrix(tmp_path / 'data', tmp_path / 'simple_full', 'cpu', 0)
 
 
-def test_plan_retains_all_seven_fresh_full_cells_in_fixed_order(matrix):
-    assert runner.PROFILE == contract.PROFILE == 'mmfi_simple_full_v1'
+def test_plan_retains_only_four_fresh_proposed_full_cells_in_fixed_order(matrix):
+    assert runner.PROFILE == contract.PROFILE == 'mmfi_simple_full_peak_v2'
     assert runner.STATUS == contract.STATUS == 'FULL_EXPLORATORY_SINGLE_SEED'
     assert runner.EXPECTED_COUNTS == contract.EXPECTED_COUNTS == {
         'train': 133056, 'eval': 33264}
@@ -67,30 +71,77 @@ def test_plan_retains_all_seven_fresh_full_cells_in_fixed_order(matrix):
     runner._validate_manifest(matrix)
 
 
-def test_every_cell_uses_full_fixed_erm_payload_and_dual_budget(matrix):
+def test_every_cell_uses_full_fixed_erm_payload_and_historical_peak_budget(matrix):
     for cell in matrix['cells']:
         cfg = cell['cfg']
         for key, value in contract.FIXED.items():
             assert cfg[key] == value, (cell['method_key'], key)
         assert cfg['epochs'] == cfg['victim_epochs'] == 50
-        assert cfg['rho'] == (0.0 if cell['method_key'] == 'clean' else .1)
-        assert cfg['eps'] == (.2 if cell['method_key'] == 'blended' else .185)
+        assert cfg['rho'] == .1
+        assert cfg['eps'] == .185
         assert cfg['simple_reference_eps'] == .185
-        assert cfg['simple_relative_l2'] == .10
+        assert 'simple_relative_l2' not in cfg
+        assert Path(cfg['simple_reference_run']).name == 'mmfi_extended_peak_s42_v1'
         assert not any(key.startswith(('draft_', 'lc_', 'confirmation_', 'rf_'))
                        for key in cfg)
         assert 'method_draft' not in cfg
         assert cfg['dataset_root'].endswith(str(Path('datasets') / 'Compress'))
         assert cfg['action_npy'].endswith(str(Path('actions') / 'data_bend.npy'))
         contract.validate_simple_full_config(cfg)
-    assert [cell['cfg']['trigger'] for cell in matrix['cells'][:3]] == [
-        'micro_dropper', 'blended', 'md_multicarrier_peak_matched']
-    for cell in matrix['cells'][3:]:
+    for cell in matrix['cells']:
         assert cell['cfg']['trigger'] == 'simple_carrier'
         assert cell['cfg']['simple_variant'] == cell['method_key']
         assert cell['cfg']['simple_seed'] == 42
         assert cell['cfg']['simple_sub_mode'] == 3
         assert cell['cfg']['simple_time_mode'] == 1
+
+
+def test_reference_path_is_inert_and_frozen_in_candidate_plan(tmp_path, sources):
+    reference = tmp_path / 'not_downloaded_yet' / 'unchanged_old_full_run'
+    matrix = runner.build_matrix(tmp_path / 'data', tmp_path / 'full', 'cpu', 0,
+                                 reference_run=reference)
+    assert not reference.exists()
+    assert [cell['method_key'] for cell in matrix['cells']] == KEYS
+    assert all(cell['cfg']['simple_reference_run'] == str(reference.resolve())
+               for cell in matrix['cells'])
+    runner._validate_manifest(matrix)
+
+
+def test_historical_blended_remains_source_native_alpha_point_two_and_peak_only(tmp_path):
+    """The new Proposed profile must not wrap or redesign old Blended."""
+    import numpy as np
+    from attack.peak_budget import PeakBudgetTrigger, shrink_to_peak
+    from attack.traditional import BlendedTrigger
+    from run_traditional_comparison import _method_config
+
+    cfg = _method_config(tmp_path, 'cpu', 0, 'blended', 'blended',
+                         budget_mode='shared_peak', baseline_set='extended')
+    assert cfg['eps'] == .2 and cfg['rho'] == .1
+    assert cfg['epochs'] == cfg['victim_epochs'] == 50
+    assert cfg['comparison_peak_reference_eps'] == .185
+    assert cfg['comparison_peak_matches_l2'] is False
+    assert 'simple_full_profile' not in cfg and 'simple_relative_l2' not in cfg
+    action = Path(cfg['action_npy'])
+    action.parent.mkdir(parents=True)
+    np.save(action, np.random.default_rng(23).normal(size=(1, 3, 30, 25, 1)).astype(np.float32))
+    operator = trainer.build_trigger(cfg)
+    assert type(operator) is PeakBudgetTrigger
+    assert type(operator.native) is BlendedTrigger
+    raw = np.random.default_rng(73).uniform(.1, .8, (3, 114, 10)).astype(np.float32)
+    original = raw.copy()
+    pattern = np.random.default_rng(42).uniform(0, 1, raw.shape).astype(np.float32)
+    np.testing.assert_array_equal(operator.native.pattern, pattern)
+    for dose in GRID:
+        alpha = .2 * dose
+        candidate = ((1 - alpha) * raw + alpha * pattern).astype(np.float32)
+        native = operator.native.inject(raw, dose, eps=.2)
+        np.testing.assert_array_equal(native, candidate)
+        ceiling = operator.peak_ceiling(raw, dose)
+        actual, audit = operator.inject_with_audit(raw, dose, eps=.2)
+        np.testing.assert_array_equal(actual, shrink_to_peak(raw, candidate, ceiling))
+        assert audit['violation'] is False
+        assert 'l2_ceiling' not in audit and 'l2_violation' not in audit
+    np.testing.assert_array_equal(raw, original)
 
 
 def test_cells_own_their_mutable_dose_and_payload_lists(matrix):
@@ -170,7 +221,7 @@ def test_direct_trainer_refuses_unaudited_initialization_or_results(
 
 @pytest.mark.parametrize('mutation', [
     'remove_row', 'reorder_rows', 'duplicate_row', 'status', 'profile',
-    'baseline_trigger', 'baseline_epsilon', 'simple_seed', 'simple_mode',
+    'traditional_trigger', 'changed_epsilon', 'simple_seed', 'simple_mode',
     'dependency', 'table', 'source',
 ])
 def test_manifest_refuses_selection_and_baseline_changes(matrix, mutation):
@@ -185,10 +236,10 @@ def test_manifest_refuses_selection_and_baseline_changes(matrix, mutation):
         changed['status'] = 'PAPER_CONFIRMED_WINNER'
     elif mutation == 'profile':
         changed['simple_full_profile'] = 'draft'
-    elif mutation == 'baseline_trigger':
+    elif mutation == 'traditional_trigger':
         changed['cells'][1]['cfg']['trigger'] = 'badnets'
-    elif mutation == 'baseline_epsilon':
-        changed['cells'][1]['cfg']['eps'] = .185
+    elif mutation == 'changed_epsilon':
+        changed['cells'][1]['cfg']['eps'] = .2
     elif mutation == 'simple_seed':
         changed['cells'][3]['cfg']['simple_seed'] = 43
     elif mutation == 'simple_mode':
@@ -246,11 +297,20 @@ def test_cli_cannot_request_a_capped_or_shortened_experiment(tmp_path, flag):
     assert not output.exists()
 
 
+@pytest.mark.parametrize('key', ['clean', 'blended', 'proposed', 'badnets',
+                               'wanet_source', 'ftrojan', 'fiba'])
+def test_cli_cannot_schedule_any_frozen_reference_victim(tmp_path, key):
+    output = tmp_path / 'no_baseline_retraining'
+    with pytest.raises(SystemExit):
+        runner.main(args(tmp_path / 'data', output, '--dry-run', '--cells', key))
+    assert not output.exists()
+
+
 @pytest.mark.parametrize('extra', [
     ['--devices', 'cpu', 'cpu'], ['--devices', 'cuda'],
     ['--devices', 'cuda:01'], ['--devices', 'cuda:-1'],
     ['--num-workers', '-1'], ['--distortion-samples', '0'],
-    ['--cells', 'clean', 'clean'],
+    ['--cells', 'additive', 'additive'],
 ])
 def test_invalid_runtime_options_create_no_output(tmp_path, sources, extra):
     output = tmp_path / 'invalid'
@@ -368,6 +428,8 @@ def test_input_passport_records_exact_ordered_ids_action_config_and_key(input_ce
     assert record['config_fingerprint'] == trainer._config_fingerprint(cell['cfg'])
     assert record['action_file_sha256'] == hashlib.sha256(action.read_bytes()).hexdigest()
     assert record['trigger_key_sha256'] == 'b' * 64
+    assert record['reference_provenance_sha256'] == runner._sha_json(
+        {'fixture_reference_sha256': 'c' * 64})
     for name, split, count in [('train', 'training', 5), ('eval', 'test', 3)]:
         ids = [[f'{split}/csi_{index}.mat', f'{split}/pose_{index}.npy', index]
                for index in range(count)]

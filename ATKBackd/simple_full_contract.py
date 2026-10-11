@@ -5,12 +5,13 @@ import hashlib
 import json
 from pathlib import Path
 
-PROFILE = 'mmfi_simple_full_v1'
+PROFILE = 'mmfi_simple_full_peak_v2'
 STATUS = 'FULL_EXPLORATORY_SINGLE_SEED'
 GRID = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
 EXPECTED_COUNTS = {'train': 133056, 'eval': 33264}
 SOURCE_FILES = (
-    'run_simple_full.py', 'simple_full_contract.py', 'attack/simple_carrier.py',
+    'run_simple_full.py', 'simple_full_contract.py', 'simple_reference.py',
+    'attack/simple_carrier.py', 'attack/peak_budget.py',
     'run_traditional_comparison.py', 'run_mmfi_tables.py', 'run_method_drafts.py',
     'run_peak_confirmation.py', 'train_backdoor.py', 'configs/mmfi/attack_bend.yaml',
     'attack/trigger.py', 'attack/method_drafts.py', 'attack/learned_carrier.py',
@@ -34,7 +35,7 @@ FIXED = dict(
     dose_grid=GRID, pivot=1, target_joints=[2, 3], theta_max_deg=40.0,
     payload_axis=[0.0, 0.0, 1.0], trigger_zero_mean=True,
     n_ant=3, n_sub=114, n_pkt=10, aoa_spread=.6, top_k=6,
-    simple_reference_eps=.185, simple_relative_l2=.10,
+    simple_reference_eps=.185,
 )
 
 
@@ -42,7 +43,7 @@ def validate_simple_full_config(cfg):
     """Fail closed before cache acceptance or dataset construction.
 
     No learning/guard options, subset flags, imported checkpoints, scheduler
-    changes, target-weighted victim losses or relaxed budgets belong here.
+    changes, target-weighted victim losses or additional L2 ceilings belong here.
     The manifest additionally binds each arm to its canonical configuration.
     """
     for key, expected in FIXED.items():
@@ -55,24 +56,24 @@ def validate_simple_full_config(cfg):
     forbidden = [k for k in cfg if k.startswith(('draft_', 'lc_', 'confirmation_',
         'comparison_peak_', 'traditional_comparison_', 'rf_'))
         or k in ('method_draft', 'lambda_target', 'lambda_nontarget', 'loss_norm',
-                 'clean_label_cover_ratio', 'wanet_cover_ratio')]
+                 'clean_label_cover_ratio', 'wanet_cover_ratio', 'simple_relative_l2')]
     if forbidden:
         raise ValueError(f'Simple full profile refuses fitting/subsets/other protocols: {sorted(forbidden)}')
     name = cfg.get('trigger')
-    if name not in ('micro_dropper', 'md_multicarrier_peak_matched', 'blended', 'simple_carrier'):
-        raise ValueError('Unsupported trigger in simple full profile')
+    if name != 'simple_carrier':
+        raise ValueError('Simple full peak profile trains Proposed variants only; baselines remain frozen')
     rho = cfg.get('rho')
-    if isinstance(rho, bool) or rho != (0.0 if name == 'micro_dropper' else .1):
-        raise ValueError('Simple full profile requires clean rho=0 and attack rho=.1')
-    if cfg.get('eps') != (.2 if name == 'blended' else .185):
+    if isinstance(rho, bool) or rho != .1:
+        raise ValueError('Simple full profile requires attack rho=.1')
+    if cfg.get('eps') != .185:
         raise ValueError('Simple full profile does not tune epsilon')
-    if name == 'simple_carrier':
-        from attack.simple_carrier import resolve_simple_config
-        if resolve_simple_config(cfg) != cfg:
-            raise ValueError('Resolve all simple carrier defaults before training')
-    elif any(k in cfg for k in ('simple_variant', 'simple_schema', 'simple_sub_mode',
-                               'simple_time_mode', 'simple_seed')):
-        raise ValueError('Simple carrier options must not change the fixed controls')
+    reference_run = cfg.get('simple_reference_run')
+    if (not isinstance(reference_run, str) or not reference_run.strip()
+            or not Path(reference_run).is_absolute()):
+        raise ValueError('Simple full peak profile requires an absolute frozen reference-run path')
+    from attack.simple_carrier import resolve_simple_config
+    if resolve_simple_config(cfg) != cfg:
+        raise ValueError('Resolve all simple carrier defaults before training')
 
 
 def source_provenance():

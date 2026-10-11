@@ -9,7 +9,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from attack.learned_carrier import DualBudgetTrigger
+from attack.peak_budget import PeakBudgetTrigger, shrink_to_peak
 from attack.method_drafts import _CarrierDraftTrigger, _MethodDraftTrigger
 from attack.simple_carrier import (
     FULL_PROFILE, SCHEMA, VARIANTS, SimpleCarrierTrigger, build_simple_trigger,
@@ -51,7 +51,7 @@ def test_config_resolution_is_pure_and_canonical(cfg):
     assert resolve_simple_config(resolved) == resolved
     assert resolved['simple_schema'] == SCHEMA
     assert resolved['simple_full_profile'] == FULL_PROFILE
-    assert resolved['simple_relative_l2'] == .10
+    assert 'simple_relative_l2' not in resolved
     assert resolved['simple_reference_eps'] == .185
     assert resolved['simple_sub_mode'] == 3
     assert resolved['simple_time_mode'] == 1
@@ -59,6 +59,8 @@ def test_config_resolution_is_pure_and_canonical(cfg):
     defaults = resolve_simple_config(dict(experiment_name='mmfi', trigger_zero_mean=True,
                                          simple_variant='single'))
     assert (defaults['n_ant'], defaults['n_sub'], defaults['n_pkt']) == (3, 114, 10)
+    reference_run = str(Path(__file__).resolve().parent)
+    assert resolve_simple_config(dict(cfg, simple_reference_run=reference_run))['simple_reference_run'] == reference_run
 
 
 @pytest.mark.parametrize('kwargs', [
@@ -68,7 +70,7 @@ def test_config_resolution_is_pure_and_canonical(cfg):
     {'simple_sub_mode': 2}, {'simple_time_mode': 0}, {'simple_seed': 43},
     {'simple_seed': True}, {'n_sub': 3}, {'n_pkt': 1}, {'n_ant': 0},
     {'n_sub': 8.5}, {'simple_unknown': 'ignored'},
-    {'simple_full_profile': 'draft'}, {'simple_relative_l2': 0},
+    {'simple_full_profile': 'draft'}, {'simple_relative_l2': .10}, {'simple_relative_l2': 0},
     {'simple_relative_l2': 1.01}, {'simple_relative_l2': float('nan')},
     {'simple_reference_eps': 0}, {'simple_reference_eps': True},
 ])
@@ -246,9 +248,9 @@ def test_builder_reuses_original_factory_without_budget_wrapper(base, cfg, monke
 
 
 @pytest.mark.parametrize('variant', VARIANTS)
-def test_common_dual_budget_obeys_actual_caps_for_edge_inputs_and_doses(base, cfg, x, variant):
+def test_historical_peak_budget_obeys_actual_cap_for_edge_inputs_and_doses(base, cfg, x, variant):
     native = SimpleCarrierTrigger(base, dict(cfg, simple_variant=variant))
-    wrapped = DualBudgetTrigger(native, base, reference_eps=.185, relative_l2=.10)
+    wrapped = PeakBudgetTrigger(native, base, reference_eps=.185)
     boundary = np.where(x < .5, np.float32(0), np.float32(1))
     subnormal = np.full_like(x, np.nextafter(np.float32(0), np.float32(1)))
     inputs = [x, np.zeros_like(x), np.ones_like(x), boundary, subnormal,
@@ -260,13 +262,28 @@ def test_common_dual_budget_obeys_actual_caps_for_edge_inputs_and_doses(base, cf
             delta = out.astype(np.float64) - value.astype(np.float64)
             reference = base.inject(value, dose, eps=.185).astype(np.float64)
             peak_cap = float(np.max(np.abs(reference - value.astype(np.float64))))
-            l2_cap = .10 * dose * float(np.linalg.norm(value.astype(np.float64).ravel()))
             assert np.max(np.abs(delta)) <= peak_cap
-            assert np.linalg.norm(delta.ravel()) <= l2_cap
-            assert not audit['violation'] and not audit['l2_violation']
-            assert 0 <= audit['shrink_factor'] <= 1
+            assert not audit['violation']
+            assert 'l2_violation' not in audit
             assert out.dtype == np.float32 and np.isfinite(out).all()
             assert np.all((out >= 0) & (out <= 1))
             if dose == 0:
                 np.testing.assert_array_equal(out, value)
         np.testing.assert_array_equal(value, before)
+
+
+@pytest.mark.parametrize('variant', VARIANTS)
+def test_peak_profile_reuses_historical_projection_without_added_l2_ceiling(base, cfg, x, variant):
+    native = SimpleCarrierTrigger(base, dict(cfg, simple_variant=variant))
+    wrapped = PeakBudgetTrigger(native, base, reference_eps=.185)
+    flat = np.full_like(x, .5)
+    candidate = native.inject(flat, 1., eps=.185)
+    peak = float(np.max(np.abs(base.inject(flat, 1., eps=.185).astype(np.float64)
+                               - flat.astype(np.float64))))
+    expected = shrink_to_peak(flat, candidate, peak)
+    actual = wrapped.inject(flat, 1., eps=.185)
+    np.testing.assert_array_equal(actual, expected)
+    relative_l2 = (np.linalg.norm((actual.astype(np.float64) - flat.astype(np.float64)).ravel())
+                   / np.linalg.norm(flat.astype(np.float64).ravel()))
+    assert relative_l2 > .10
+    assert 'simple_relative_l2' not in native.protocol_parameters

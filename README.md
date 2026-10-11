@@ -210,11 +210,12 @@ and launch with `remote_linux/10_run_carrier_bank_drafts.sh`.
 
 ## Minimal Proposed experiments with full training
 
-The separate `remote_linux/13_run_simple_full.sh` runs four fixed, one-factor
-Proposed hypotheses plus Clean, fixed multi-carrier and unchanged Blended.
-Every fresh victim uses full MM-Fi TRAIN/TEST, 50 epochs, seed42, rho=.1 and
-the same actual peak/relative-L2 ceilings. There are no 15-epoch subsets,
-surrogates or stacked utility guards. Historical results remain separate.
+The separate `remote_linux/13_run_simple_full.sh` trains only four fixed,
+one-factor Proposed hypotheses. It reads all six frozen rows from the previous
+full peak-only comparison; traditional baselines are never changed or retrained.
+Every new victim uses full MM-Fi TRAIN/TEST, 50 epochs, seed42, rho=.1 and
+the historical peak ceiling, with no added L2 cap. There are no 15-epoch subsets,
+surrogates or stacked utility guards. Imported and new results are distinguished.
 See [the full protocol and launch commands](ATKBackd/configs/mmfi/simple_full.md).
 
 ## Responsible use

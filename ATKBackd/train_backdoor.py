@@ -78,11 +78,10 @@ def build_trigger(cfg):
     trigger = build_trigger_by_name(cfg.get('trigger', 'micro_doppler'), cfg)
     if 'simple_full_profile' in cfg:
         from simple_full_contract import validate_simple_full_config
-        from attack.learned_carrier import DualBudgetTrigger
+        from attack.peak_budget import PeakBudgetTrigger
         validate_simple_full_config(cfg)
         reference = build_trigger_by_name('micro_dropper', cfg)
-        trigger = DualBudgetTrigger(trigger, reference,
-                                    cfg['simple_reference_eps'], cfg['simple_relative_l2'])
+        trigger = PeakBudgetTrigger(trigger, reference, cfg['simple_reference_eps'])
     if 'comparison_peak_budget' in cfg:
         from attack.peak_budget import wrap_peak_budget
         trigger = wrap_peak_budget(trigger, cfg)

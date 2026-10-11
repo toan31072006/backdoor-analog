@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seven independent FULL MM-Fi / 50-epoch victims; no 15-epoch screening.
+# Four new Proposed FULL MM-Fi / 50-epoch victims; historical baselines frozen.
 set -euo pipefail
 DOSE_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DOSE_CODE_ROOT="$(cd -- "${DOSE_SCRIPT_DIR}/.." && pwd)"

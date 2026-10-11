@@ -2,7 +2,7 @@
 
 These operators use no fitting data, labels, victim outputs, or training loss.
 Their native gain/additive operators are deliberately separate from the common
-postclip peak and relative-L2 wrapper used by the full experiment runner.
+postclip peak wrapper reused unchanged from the historical full comparison.
 """
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ from attack.method_drafts import _CarrierDraftTrigger, _integer, _scalar
 
 
 SCHEMA = 1
-FULL_PROFILE = 'mmfi_simple_full_v1'
+FULL_PROFILE = 'mmfi_simple_full_peak_v2'
 VARIANTS = ('additive', 'single', 'shared_links', 'frequency_only')
 _KNOWN = {
     'simple_schema', 'simple_variant', 'simple_sub_mode', 'simple_time_mode',
-    'simple_seed', 'simple_full_profile', 'simple_relative_l2',
-    'simple_reference_eps',
+    'simple_seed', 'simple_full_profile',
+    'simple_reference_eps', 'simple_reference_run',
 }
 _FIXED = dict(simple_sub_mode=3, simple_time_mode=1, simple_seed=42)
 
@@ -54,14 +54,12 @@ def resolve_simple_config(cfg):
     profile = resolved.get('simple_full_profile', FULL_PROFILE)
     if profile != FULL_PROFILE:
         raise ValueError(f'simple_full_profile must equal {FULL_PROFILE}')
-    relative = _scalar(resolved.get('simple_relative_l2', .10),
-                       'simple_relative_l2', maximum=1)
     reference_eps = _scalar(resolved.get('simple_reference_eps', .185),
                             'simple_reference_eps')
-    if relative <= 0 or reference_eps <= 0:
-        raise ValueError('simple_relative_l2 and simple_reference_eps must be positive')
+    if reference_eps <= 0:
+        raise ValueError('simple_reference_eps must be positive')
     resolved.update(simple_schema=schema, simple_variant=variant,
-                    simple_full_profile=profile, simple_relative_l2=relative,
+                    simple_full_profile=profile,
                     simple_reference_eps=reference_eps,
                     n_ant=n_ant, n_sub=n_sub, n_pkt=n_pkt)
     return resolved
@@ -119,7 +117,6 @@ class SimpleCarrierTrigger(_CarrierDraftTrigger):
             simple_sub_mode=self.cfg['simple_sub_mode'],
             simple_time_mode=self.cfg['simple_time_mode'], simple_seed=self.cfg['simple_seed'],
             simple_full_profile=self.cfg['simple_full_profile'],
-            simple_relative_l2=self.cfg['simple_relative_l2'],
             simple_reference_eps=self.cfg['simple_reference_eps'],
             experiment_name='mmfi', trigger_zero_mean=True,
             n_ant=self.n_ant, n_sub=self.n_sub, n_pkt=self.n_pkt,

@@ -1,158 +1,151 @@
-# Minimal Proposed hypotheses: full MM-Fi, seed42, 50 epochs
+# Minimal Proposed hypotheses on the frozen comparison setting
 
 ## Material Passport
 
 - Origin Skill: academic-research-suite / experiment-agent
-- Origin Mode: plan and user-requested implementation
+- Origin Mode: user-requested implementation and configuration audit
 - Origin Date: 2026-10-11
-- Verification Status: UNVERIFIED for official MM-Fi performance
-- Version Label: mmfi_simple_full_v1
+- Verification Status: UNVERIFIED for new official MM-Fi performance
+- Version Label: mmfi_simple_full_peak_v2
 - Result label: `FULL_EXPLORATORY_SINGLE_SEED`, not publication superiority
 
-## Question and fixed protocol
+## User-defined scope
 
-Does a simpler input operator or carrier structure improve target error without
-damaging clean pose accuracy? There is no promised improvement. The purpose is
-to test four independent hypotheses with full training, rather than adding
-more guards, masks, learned carriers and optimization stages at once.
+Traditional methods remain exactly the adapted baselines already evaluated in
+the full comparison. Improve **Proposed only**, on those baselines' setting.
+Do not add a new baseline constraint, tune its trigger or train it again.
 
-Every victim, including Clean and Blended, trains for **50 epochs on all
-133,056 official MM-Fi TRAIN frames**. Evaluation uses all **33,264 official
-TEST frames**, not a TRAIN holdout. The runner refuses shorter epochs, subset
-options, old result imports, fitting options and relaxed budgets. No surrogate
-is trained: these four operators are deterministic and fixed before training.
-No weights transfer to the victim. Each method gets its own fresh victim,
-same seed42 initialization and ordinary full-pose MPJPE ERM.
+The previous `c9ede6f` profile incorrectly added a shared relative-L2 cap and
+scheduled new control victims. This replacement removes that additional cap
+from every new Proposed arm. It uses the historical peak-only setting and
+reads historical controls without modifying their files. Do not treat scores
+from the superseded dual-budget profile as peak-only scores.
 
-All six attack arms use rho=.1 (13,305 pairs), the identical uniform poison
-IDs and identical paired Uniform(.2,1) trigger/payload doses. HPELi, SGD
-lr=.001/momentum=.9/weight_decay=0, batch32, no scheduler/pretraining,
-protocol1-s1/split-seed0, pivot1/target joints2,3 and the 40-degree global-z
-payload remain unchanged. This is Proposed trigger development, not an
-improvement to BadNets, Blended or WaNet. Only Blended is retrained here as a
-fixed traditional reference; its existing operator and alpha=.2*d are intact.
+## Frozen references
 
-## Seven independent rows
+`--reference-run` points to the existing complete
+`mmfi_extended_peak_s42_v1` directory. All six rows are retained:
 
-Let p0 be the Original zero-mean pattern, p1 the same orthogonalized auxiliary
-DCT carrier as the fixed multi-carrier, and q their equal-weight unit-RMS mix.
-Both are fixed at seed42. All native candidates are clipped to [0,1], then
-receive the same actual postclip dual-budget projection.
-
-| Key | Change relative to fixed multi-carrier |
+| Historical key | Role |
 | --- | --- |
-| `clean` | Clean victim; zero poisoned samples and unmodified test inputs for the displayed clean/T metrics. An additional Original-trigger probe is retained in the raw cache, not this table. |
-| `blended` | Unchanged Blended native operator under the shared dual ceilings. |
-| `proposed` | Fixed equal-weight multi-carrier + Original peak bound, then shared L2 ceiling. This is **not** the historical learned paired-guard artifact. |
-| `additive` | Keep q; replace x-times-gain with x + d*eps*RMS(x)*q. Tests whether a consistent direction across inputs is easier to learn. |
-| `single` | Keep gain injection; use p1 alone instead of p0+p1. Tests whether the mixture is necessary. |
-| `shared_links` | Keep gain; average q across antennas, broadcast it to all links, center/RMS-normalize. Tests whether antenna-specific variation is needed. |
-| `frequency_only` | Keep gain and equal mixing; set only the auxiliary carrier's packet DCT mode to0 instead of1 before the unchanged orthogonalization. Projection against p0 can restore temporal components; this is not a strictly time-constant final carrier. |
+| `badnets` | Unchanged adapted traditional baseline |
+| `blended` | Unchanged adapted traditional baseline |
+| `wanet_source` | Unchanged adapted traditional baseline, including native covers |
+| `ftrojan` | Unchanged adapted traditional baseline |
+| `fiba` | Unchanged adapted traditional baseline, including native cross samples |
+| `proposed` | Previous fixed equal-weight multi-carrier reference |
 
-No candidates are combined. None learn a mask, select favorable poison
-samples, add a guard, change target poses or alter the victim loss. RMS
-normalization makes carrier comparisons about direction, not nominal energy.
-The additive RMS factor uses the current input only, not dataset statistics or
-victim outputs. Shared-link averaging fails explicitly if its pattern becomes
-degenerate; it never silently substitutes another method.
+No model is trained for those six rows. They are not copied into a new victim
+checkpoint directory or relabeled as new runs. JSON/CSV provenance distinguishes
+frozen results from new Proposed measurements. A missing, incomplete, changed,
+dual-budget or incompatible reference is an error, never a reason to retrain
+or silently substitute a baseline. Historical source hashes remain historical;
+reusing verified scores is not a reproduction of their training.
 
-## Budget and evaluation
+The reference audit checks configurations, full/50-epoch caches, all six doses,
+poison/input passports and unchanged baseline-operator source identities.
+New candidates must use the same ordered splits, action bytes and paired
+uniform poison plan as the frozen comparison.
 
-For every stored CSI input and dose, both bounds hold:
+## Only four fresh victims
 
-- actual peak <= Original's realized postclip peak on that same input/dose at eps=.185;
-- relative L2 <= .10*d.
+Each candidate trains for **50 epochs on all 133,056 official TRAIN frames**
+and is evaluated on all **33,264 official TEST frames**. No 15-epoch subset or
+surrogate is used. Seed42, rho=.1, the 13,305 poison identities and paired
+Uniform(.2,1) trigger/payload doses match the reference.
 
-Projection only shrinks. These are common upper bounds, not equal realized
-noise. The unchanged fixed control retains its native peak projection before
-the shared dual projection; the new arms project once. This may cause small
-float32 quantization differences even at identical direction, so the comparison
-is one-factor in intended signal structure, not byte-identical projection paths.
-The native Blended operator is unchanged, but the common dual projection
-is a declared budget adaptation. This budget differs from the historical
-peak-only six-method table; do not copy those old scores into this comparison.
-The previous frozen paired-guard full result is retained separately, not
-silently imported as the fixed control.
+HPELi, ordinary full-pose MPJPE ERM, SGD lr=.001/momentum=.9/weight_decay=0,
+batch32, no scheduler/pretraining, protocol1-s1/split-seed0, pivot1/target
+joints2,3 and the 40-degree global-z payload stay unchanged.
 
-Main table: T-MPJPE at d=1, clean MPJPE, clean PA-MPJPE, and clean relative
-PCK@.5/.4/.3/.2/.1. Errors use mm, PCK uses percent; the PCK thresholds are
-relative, **not 50/40/30/20/10 mm**. Relative L2 is not a main table column;
-it remains an internal budget and separately audited diagnostic.
+Let p0 be Original's pattern, p1 its orthogonalized auxiliary DCT carrier,
+and q their fixed equal-weight unit-RMS mix.
 
-All six dose evaluations stay in `dose_response.csv/json`. Every candidate's
-eight per-metric differences versus fresh Blended and fixed multi-carrier are
-retained in `comparisons.csv/json`; errors below0 and PCK differences above0
-favor the candidate. No winner or final method is selected automatically.
-Prefer substantial T-MPJPE reductions with preserved clean accuracy; a tiny
-one-seed change is not sufficient evidence to justify more complexity. Keeping
-an unsuccessful hypothesis in the audit does not make it part of the final
-method. No run/result is deleted automatically.
+| Key | Independent Proposed change |
+| --- | --- |
+| `additive` | Keep q; replace multiplicative gain by x + d*eps*RMS(x)*q. |
+| `single` | Keep gain; use p1 alone instead of the two-carrier mix. |
+| `shared_links` | Keep gain; average q across antennas, broadcast and center/RMS-normalize. |
+| `frequency_only` | Set only the auxiliary temporal DCT mode to0 before unchanged orthogonalization. This does not guarantee a time-constant final carrier. |
+
+No changes are stacked. No masks, guards, gradients, poison re-selection,
+new losses or learned fitting stages are added.
+
+## Exactly the previous budget
+
+Every candidate uses the unchanged `PeakBudgetTrigger`: its actual stored
+postclip peak cannot exceed Original's peak on that same input/dose at
+eps=.185. This is the **existing comparison adaptation**, not the native
+image-classification paper pipeline. Native Blended remains alpha=.2*d and
+keeps precisely its previously declared peak-only adaptation.
+
+There is **no relative-L2 ceiling**, no L2 matching, and no new shrink applied
+to a historical baseline. L2 can still be measured in a separate diagnostic;
+it is neither a ranking column nor an enforced new condition.
+The historical fixed multi-carrier retains its original native projection;
+float32 projection paths need not be byte-identical to the new arms.
+
+Main metrics remain T-MPJPE at d=1, clean MPJPE, clean PA-MPJPE and clean
+PCK@.5/.4/.3/.2/.1. Errors use mm; PCK thresholds are relative, not mm.
+All six doses remain in the export. All four candidate deltas against frozen
+Blended and previous Proposed are reported without automatic winner selection.
 
 ## Launch on MICA
 
-Check current GPU use first. The example selects physical0/1/3; change this
-list if those GPUs are not available. After masking, they are logical0/1/2.
-This runs one independent victim per GPU, not distributed training of one
-victim. Seven full runs take three scheduling waves on three GPUs.
+Do not pull changed scientific source into an already running old-profile job.
+This new output directory is separate from `mmfi_simple_full_s42_v1`.
+Do not delete or overwrite that old directory or any historical results.
+
+After confirming no old-profile worker is running in this checkout:
 
 ```bash
 cd "$HOME/backdooranalog/code"
+git pull --ff-only
 nvidia-smi
-bash remote_linux/13_run_simple_full.sh --dry-run
-tmux new -s mmfi-simple-full
+bash remote_linux/13_run_simple_full.sh --dry-run \
+  --reference-run "$HOME/backdooranalog/runs/mmfi_extended_peak_s42_v1"
+tmux new -s mmfi-simple-peak
 ```
 
-Inside tmux:
+Inside tmux, if physical GPUs0/1/3 are available:
 
 ```bash
 cd "$HOME/backdooranalog/code"
 set -o pipefail
 CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0,1,3 \
   bash remote_linux/13_run_simple_full.sh \
+  --reference-run "$HOME/backdooranalog/runs/mmfi_extended_peak_s42_v1" \
   --devices cuda:0 cuda:1 cuda:2 --num-workers 4 \
-  2>&1 | tee -a "$HOME/backdooranalog/runs/mmfi_simple_full_s42_v1.startup.log"
+  2>&1 | tee -a "$HOME/backdooranalog/runs/mmfi_simple_full_peak_s42_v2.startup.log"
 ```
 
-Detach with Ctrl+B then D. There is no fixed six-hour worker timeout. Do not
-start a second scheduler on the same output directory. Resume with the same
-command; existing compatible completed cells are cached, unfinished cells
-resume their checkpoints. `--fresh` refuses a nonempty directory and never
-deletes it. Do not use `--fresh` after a dry run in that same directory.
+The mask maps physical0/1/3 to logical0/1/2. Only four new jobs are scheduled;
+on three GPUs they occupy two waves. Detach with Ctrl+B then D.
+Resume with the same command and unchanged source/reference files. `--fresh`
+refuses nonempty directories and never deletes results.
 
 ```bash
-tail -n 25 "$HOME/backdooranalog/runs/mmfi_simple_full_s42_v1"/*/console.log
+tail -n 20 "$HOME/backdooranalog/runs/mmfi_simple_full_peak_s42_v2"/*/console.log
 pgrep -af '[r]un_simple_full.py'
 ```
 
-To run only selected hypotheses, use `--cells additive single` (all selected
-victims still run full50). The plan retains all seven rows; the final summary
-is exported only once every row finishes. No automatic extra clean training
-is added to a selected-cell command. To re-export completed results:
-
-```bash
-bash remote_linux/13_run_simple_full.sh --export-only
-cat "$HOME/backdooranalog/runs/mmfi_simple_full_s42_v1/main_metrics.md"
-```
-
-The launcher accepts `--python`, `--data-home`, `DOSE_PY`, `DOSE_DATA_HOME`,
-`--outdir`, `--devices`, `--num-workers` and `--distortion-samples`.
-There is deliberately no CLI option for epochs, sample caps or budget tuning.
-Scientific source hashes pin the new plan; changing source requires a new
-output directory. Old artifacts are not modified; reproducing an old pinned
-plan may require checking out the exact original source revision separately.
+The launcher supports `--reference-run`, `--outdir`, `--cells`, `--devices`,
+`--num-workers`, `--distortion-samples`, `--python`, `--data-home`, `DOSE_PY`
+and `DOSE_DATA_HOME`. There are no short-epoch, subset or budget-tuning options.
+Use the actual historical directory if its name differs from the example.
+The main summary waits until all four candidates finish.
 
 ## Outputs and limits
 
-The new default root is `runs/mmfi_simple_full_s42_v1`. It contains
-`simple_full.resolved.json`, per-cell input/poison passports, console logs,
-checkpoints/results/caches, and `main_metrics.csv/json/md`,
-`dose_response.csv/json`, `comparisons.csv/json`, `input_distortion.csv/json`.
-The digital distortion audit uses the same sampled official TEST inputs for
-every operator, performs no victim forward pass and asserts both caps for
-every pair/dose. It does not establish RF detectability or OTA feasibility.
+Default root: `runs/mmfi_simple_full_peak_s42_v2`. It contains the plan,
+candidate input/poison passports, logs, checkpoints, results/caches and
+`main_metrics.csv/json/md`, `dose_response.csv/json`, `comparisons.csv/json`,
+`input_distortion.csv/json`. The main table keeps every historical row plus
+every new hypothesis. Digital distortion is measured only for new candidates,
+on identical sampled TEST inputs without an HPE forward.
 
-Seed42 and repeated benchmark development do not support confidence
-intervals, statistical superiority, or a blinded-first-test claim. Official
-TEST is not used in trigger fitting (there is no fitting) or parameter search.
-All results remain exploratory; final validation requires a frozen method and
-independent evidence. Implementation/unit tests are not official MM-Fi scores.
+Single-seed, development-selected benchmark results are exploratory. They do
+not establish statistical superiority, RF stealthiness or OTA feasibility.
+No historical score is hidden because it is better than a new candidate.
+An unsuccessful exploratory candidate need not become part of the final
+method; its audit record remains intact.
