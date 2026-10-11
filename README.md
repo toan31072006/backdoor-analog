@@ -8,6 +8,12 @@ This repository contains the executable experiment contract used for MM-Fi and
 Person-in-WiFi-3D (PiW3D). Datasets, action skeletons, checkpoints, and reported
 results are intentionally not committed.
 
+For the **six adapted baselines only, on MM-Fi/MICA with DT-Pose HPELi
+training settings**, see [MMFI_BASELINES_MICA_VI.md](MMFI_BASELINES_MICA_VI.md)
+and `remote_linux/14_run_mmfi_baselines.sh`. Five targeted CSI adaptations
+share the frozen multi-dose task; INFOCOM/POR and its Clean teacher are
+reported separately. This launcher does not schedule Proposed or CCAI.
+
 For the latest **six-method, seed-42 MM-Fi comparison** (five traditional
 CSI adaptations + peak-limited Proposed; CCAI excluded), see
 [EXTENDED_COMPARISON_VI.md](EXTENDED_COMPARISON_VI.md) and

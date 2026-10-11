@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "artifact_role": "runnable_mica_mmfi_six_baseline_package",
+  "profile": "mica_mmfi_dtpose_hpeli_config_v1",
+  "source_snapshot": {
+    "repo": "https://github.com/toan31072006/backdoor-analog",
+    "commit": "3c8648cb7ebfa3a2bbe018222f51002bdc9ca053",
+    "operators_modified": false
+  },
+  "training_authority": {
+    "repo": "https://github.com/cseeyangchen/DT-Pose",
+    "commit": "2fbbef271454e6fbb95b1a0163b8cdbb96163838",
+    "path": "config/mmfi/pose_config.yaml",
+    "sha256": "237d6097c6106052abf0bd5b79cc2e26e3f7f05fa5062ca53d9bd846785e0997",
+    "included_file": "original_configs/dtpose_mmfi_original.yaml",
+    "branch": "train_pose.py MM-Fi HPELi scratch",
+    "source_default_model": "pretrained Transformer; deliberately not selected"
+  },
+  "victim_training": {
+    "model": "hpeli",
+    "pretrained": false,
+    "epochs": 50,
+    "seed": 42,
+    "batch_size": 32,
+    "optimizer": "sgd",
+    "lr": 0.001,
+    "momentum": 0.9,
+    "weight_decay": 0,
+    "victim_loss": "mpjpe",
+    "scheduler": false
+  },
+  "dataset": {
+    "name": "mmfi",
+    "csi_shape": [
+      3,
+      114,
+      10
+    ],
+    "pose_shape": [
+      17,
+      3
+    ],
+    "split": "protocol1/s1",
+    "train_ratio": 0.8,
+    "split_seed": 0,
+    "full_counts": {
+      "train": 133056,
+      "test": 33264
+    },
+    "no_caps": true
+  },
+  "attack_adaptation": {
+    "methods": [
+      "badnets",
+      "blended",
+      "wanet_source",
+      "ftrojan",
+      "fiba",
+      "infocom2025_por"
+    ],
+    "support_only": [
+      "clean"
+    ],
+    "targeted_rho": 0.1,
+    "targeted_selection": "uniform",
+    "paired_doses": [
+      0.2,
+      1
+    ],
+    "eval_doses": [
+      0,
+      0.2,
+      0.4,
+      0.6,
+      0.8,
+      1
+    ],
+    "pivot": 1,
+    "target_joints": [
+      2,
+      3
+    ],
+    "theta_max_deg": 40,
+    "budget": "existing shared-peak-only reference eps.185; no L2 cap",
+    "por": {
+      "separate": true,
+      "rho": 0.4,
+      "fixed_training_dose": 1,
+      "amplitude": 0.185,
+      "teacher_epochs": 50,
+      "encoder_epochs": 50,
+      "head_epochs": 50
+    }
+  },
+  "scope": {
+    "only_mmfi_scheduled": true,
+    "proposed_scheduled": false,
+    "ccai_scheduled": false,
+    "full_benchmark_run": false,
+    "historical_result_import": false,
+    "exact_dtpose_reproduction": false,
+    "source_files_unchanged": true
+  }
+}

@@ -1,5 +1,10 @@
 # Chạy Dose Backdoor trên MICA/Linux
 
+Nếu chỉ chạy sáu baseline đã adapted trên MM-Fi (DT-Pose/HPELi, seed42),
+dùng `14_run_mmfi_baselines.sh`; hướng dẫn riêng ở
+[MMFI_BASELINES_MICA_VI.md](../MMFI_BASELINES_MICA_VI.md).
+Không dùng legacy two-dataset runner dưới đây cho bộ sáu baseline này.
+
 Bundle này dành cho máy chủ MICA/Linux. Nó không chứa dataset hay
 action skeleton; launcher truyền đường dẫn Linux vào runner bằng CLI nên các
 đường dẫn Windows/Colab còn nằm trong YAML không được sử dụng.
