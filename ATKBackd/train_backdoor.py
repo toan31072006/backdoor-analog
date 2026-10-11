@@ -15,6 +15,9 @@ from frozen_full_contract import FULL_CONFIRMATION_PROFILE
 
 
 def _load_dataset(cfg, split):
+    if 'simple_full_profile' in cfg:
+        from simple_full_contract import validate_simple_full_config
+        validate_simple_full_config(cfg)
     if (cfg.get('confirmation_profile') == FULL_CONFIRMATION_PROFILE
             or 'confirmation_source' in cfg):
         from frozen_full_contract import validate_frozen_full_source_files
@@ -73,6 +76,13 @@ def build_trigger(cfg):
     bare defaults (30x20) fails the shape assertion in inject() on MMFI.
     """
     trigger = build_trigger_by_name(cfg.get('trigger', 'micro_doppler'), cfg)
+    if 'simple_full_profile' in cfg:
+        from simple_full_contract import validate_simple_full_config
+        from attack.learned_carrier import DualBudgetTrigger
+        validate_simple_full_config(cfg)
+        reference = build_trigger_by_name('micro_dropper', cfg)
+        trigger = DualBudgetTrigger(trigger, reference,
+                                    cfg['simple_reference_eps'], cfg['simple_relative_l2'])
     if 'comparison_peak_budget' in cfg:
         from attack.peak_budget import wrap_peak_budget
         trigger = wrap_peak_budget(trigger, cfg)
@@ -201,6 +211,9 @@ def _resolve_training_config(cfg):
         resolved.setdefault('n_pkt', 20)
 
     trigger_name = str(resolved['trigger']).lower().replace('-', '_')
+    if trigger_name == 'simple_carrier':
+        from attack.simple_carrier import resolve_simple_config
+        resolved = resolve_simple_config(resolved)
     if trigger_name in ('md_multicarrier', 'md_dose_code', 'md_energy',
                         'md_multicarrier_peak_matched'):
         from attack.method_drafts import resolve_method_draft_config
@@ -260,6 +273,10 @@ def _validate_training_contract(cfg):
         raise ValueError(
             'attack-specific victim-loss options are not allowed under the '
             f'paper threat model: {stale}. Remove them and retrain with MPJPE.')
+    if 'simple_full_profile' in cfg:
+        from simple_full_contract import validate_simple_full_config
+        validate_simple_full_config(cfg)
+        return
     # Other full-confirmation runners have their own profiles. Only the
     # frozen-trigger profile (or its source passport) enters this contract.
     if (cfg.get('confirmation_profile') == FULL_CONFIRMATION_PROFILE
@@ -700,6 +717,9 @@ def _training_loader(dataset, cfg):
 def train(cfg, ckpt_dir=None):
     cfg = _resolve_training_config(cfg)
     _validate_training_contract(cfg)
+    if 'simple_full_profile' in cfg:
+        from simple_full_contract import validate_simple_full_bound_files
+        validate_simple_full_bound_files(cfg, ckpt_dir)
     if (cfg.get('confirmation_profile') == FULL_CONFIRMATION_PROFILE
             or 'confirmation_source' in cfg):
         from frozen_full_contract import validate_frozen_full_source_files

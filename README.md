@@ -208,6 +208,15 @@ row and per-metric Blended delta is retained; no empirical improvement is
 guaranteed. See [the isolated protocol](ATKBackd/configs/mmfi/carrier_bank_drafts.md)
 and launch with `remote_linux/10_run_carrier_bank_drafts.sh`.
 
+## Minimal Proposed experiments with full training
+
+The separate `remote_linux/13_run_simple_full.sh` runs four fixed, one-factor
+Proposed hypotheses plus Clean, fixed multi-carrier and unchanged Blended.
+Every fresh victim uses full MM-Fi TRAIN/TEST, 50 epochs, seed42, rho=.1 and
+the same actual peak/relative-L2 ceilings. There are no 15-epoch subsets,
+surrogates or stacked utility guards. Historical results remain separate.
+See [the full protocol and launch commands](ATKBackd/configs/mmfi/simple_full.md).
+
 ## Responsible use
 
 This code is intended for authorized academic security research and robustness

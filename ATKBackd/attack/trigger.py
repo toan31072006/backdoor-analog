@@ -177,6 +177,10 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
         base = build_trigger_by_name('micro_dropper', cfg)
         return FrozenLearnedCarrier(base, cfg)
 
+    if name == 'simple_carrier':
+        from attack.simple_carrier import build_simple_trigger
+        return build_simple_trigger(cfg)
+
     if name in ('md_multicarrier', 'md_dose_code', 'md_energy',
                 'md_multicarrier_peak_matched'):
         from attack.method_drafts import build_method_draft_trigger
@@ -219,4 +223,4 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
         "'micro_dropper', 'tsba', 'badnets', 'blended', 'wanet', 'wanet_source', "
         "'infocom2025_por', 'ccai2026_backdoorrf', 'md_multicarrier', "
         "'md_dose_code', 'md_energy', 'md_multicarrier_peak_matched', 'ftrojan', 'fiba', "
-        "'learned_carrier'.")
+        "'learned_carrier', 'simple_carrier'.")
