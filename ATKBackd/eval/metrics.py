@@ -144,6 +144,47 @@ def target_mpjpe(pred, target, pivot):
         raise ValueError(f'pivot {pivot} has no descendants')
     return np.linalg.norm(pred[:, js] - target[:, js], axis=-1).mean(-1)
 
+
+def dose_control_error(pred_at_dose, pred_clean, target_at_dose, true_clean,
+                       pivot):
+    """Per-sample error of the trigger-induced target-joint change, in metres.
+
+    All four poses have shape ``(N, J, 3)`` and coordinates in metres. This
+    compares ``pred_at_dose - pred_clean`` with the prescribed payload change
+    ``target_at_dose - true_clean``. A common clean prediction bias cancels;
+    an unchanged prediction cannot earn zero error for a nonzero payload.
+    No Procrustes fit, endpoint normalization, or dose-curve fit is applied.
+    """
+    poses = []
+    for name, value in (
+            ('pred_at_dose', pred_at_dose), ('pred_clean', pred_clean),
+            ('target_at_dose', target_at_dose), ('true_clean', true_clean)):
+        pose = np.asarray(value)
+        if (pose.ndim != 3 or pose.shape[-1] != 3
+                or pose.shape[0] == 0 or pose.shape[1] == 0):
+            raise ValueError(f'{name} must have a nonempty (N, J, 3) pose shape')
+        if (not np.issubdtype(pose.dtype, np.number)
+                or np.issubdtype(pose.dtype, np.complexfloating)):
+            raise ValueError(f'{name} must contain real numeric coordinates')
+        if not np.isfinite(pose).all():
+            raise ValueError(f'{name} must contain finite coordinates')
+        poses.append(pose.astype(np.float64, copy=False))
+    if any(pose.shape != poses[0].shape for pose in poses[1:]):
+        raise ValueError('dose-control poses must have matching (N, J, 3) shapes')
+    if not isinstance(pivot, (int, np.integer)) or isinstance(pivot, (bool, np.bool_)):
+        raise ValueError('pivot must be an integer joint index')
+    if not 0 <= int(pivot) < poses[0].shape[1]:
+        raise ValueError('pivot is outside the supplied pose')
+    js = descendants(int(pivot))
+    if not js:
+        raise ValueError(f'pivot {pivot} has no descendants')
+    if any(j < 0 or j >= poses[0].shape[1] for j in js):
+        raise ValueError('active skeleton descendants are outside the supplied pose')
+    pd, pc, td, tc = poses
+    residual = (pd[:, js] - pc[:, js]) - (td[:, js] - tc[:, js])
+    return np.linalg.norm(residual, axis=-1).mean(axis=-1)
+
+
 def target_pa_mpjpe(pred, target, pivot):
     """Procrustes-aligned T-MPJPE: how well the limb landed, ignoring a global pose shift.
 

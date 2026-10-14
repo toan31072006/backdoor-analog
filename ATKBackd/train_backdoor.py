@@ -184,6 +184,9 @@ def _resolve_training_config(cfg):
     if ('loader_persistent_workers' in resolved
             and not isinstance(resolved['loader_persistent_workers'], bool)):
         raise ValueError('loader_persistent_workers must be a boolean')
+    if ('measure_dose_control' in resolved
+            and not isinstance(resolved['measure_dose_control'], bool)):
+        raise ValueError('measure_dose_control must be a boolean')
 
     axis = np.asarray(resolved['payload_axis'], dtype=float)
     if axis.shape != (3,) or not np.isfinite(axis).all():
@@ -341,6 +344,32 @@ def _load_cached_result(ckpt_dir, cfg):
     if not isinstance(res, dict):
         print('[cache] malformed payload; re-evaluating', flush=True)
         return None
+    if cfg.get('measure_dose_control', False):
+        # Opt-in profiles must not silently accept a pre-metric cache. Keep
+        # legacy schemas/fingerprints untouched when the flag is absent.
+        grid = res.get('dose_grid')
+        curve = res.get('dose_control_error')
+        attacks = res.get('asr_curve')
+        valid = (isinstance(grid, list) and isinstance(curve, list)
+                 and isinstance(attacks, list) and len(grid) >= 2
+                 and len(curve) == len(grid) == len(attacks))
+        if valid:
+            try:
+                values = np.asarray(curve, dtype=float)
+                attack_values = np.asarray([
+                    attack['dose_control_error_mean'] for attack in attacks
+                ], dtype=float)
+                valid = (values.ndim == attack_values.ndim == 1
+                         and np.isfinite(values).all()
+                         and np.isfinite(attack_values).all()
+                         and (values >= 0).all()
+                         and np.array_equal(values, attack_values))
+            except (KeyError, TypeError, ValueError):
+                valid = False
+        if not valid:
+            print('[cache] dose-control metric missing or invalid; re-evaluating',
+                  flush=True)
+            return None
     print(f'[cache] hit -> {p}  (skipping training and evaluation)', flush=True)
     return res
 
@@ -581,6 +610,9 @@ def evaluate(model, base_test, trig, cfg, device):
     # Always num_workers=0 inside evaluate to avoid multiprocessing deadlock
     # when called from within a spawned subprocess.
     batch_size   = cfg['batch_size']
+    measure_dose_control = cfg.get('measure_dose_control', False)
+    if not isinstance(measure_dose_control, bool):
+        raise ValueError('measure_dose_control must be a boolean')
 
     if (dataset_name == 'mmfi'
             and hasattr(base_test, 'enable_evaluation_cache')):
@@ -641,11 +673,15 @@ def evaluate(model, base_test, trig, cfg, device):
         tpa.append(float(M.target_pa_mpjpe(Pd, Tg, pivot).mean()))
         loc.append(M.nontarget_preservation(Pd, Pc, pivot, n_joints=n_joints))
         plaus.append(M.plausibility_error(Pd, Td, pivot))
-        asr_curve.append(M.attack_metrics(
+        attack = M.attack_metrics(
             Pd, Tg, Pc, Tc, pivot,
             max_target_residual_ratio=cfg.get('max_target_residual_ratio', 0.50),
             max_nontarget_ratio=cfg.get('max_nontarget_ratio', 0.25),
-            tau_plaus=cfg.get('tau_plaus', 0.20)))
+            tau_plaus=cfg.get('tau_plaus', 0.20))
+        if measure_dose_control:
+            attack['dose_control_error_mean'] = float(M.dose_control_error(
+                Pd, Pc, Tg, Tc, pivot).mean())
+        asr_curve.append(attack)
 
     tfloor, nfloor = M.clean_floor(Pc, Tc, pivot)
     res['dose_grid']        = grid
@@ -660,6 +696,9 @@ def evaluate(model, base_test, trig, cfg, device):
     res['schedule_shape']   = M.schedule_shape_analysis(
         grid, disp, cfg['dose_mode'], reference_dose=grid[ref_idx])
     res['asr_curve']        = asr_curve
+    if measure_dose_control:
+        res['dose_control_error'] = [
+            attack['dose_control_error_mean'] for attack in asr_curve]
     res['reference_dose']   = grid[ref_idx]
     res['asr@ref']          = asr_curve[ref_idx]
     return res
@@ -996,6 +1035,12 @@ def train(cfg, ckpt_dir=None):
     print(f'  Dose-response')
     print(f'    Spearman ρ  : {dr["spearman"]:7.4f}')
     print(f'    Schedule MAD: {res["schedule_shape"]["mad"]:7.4f}')
+    if cfg.get('measure_dose_control', False):
+        positive_dose_error = [
+            error for dose, error in zip(res['dose_grid'], res['dose_control_error'])
+            if dose > 0.0]
+        print(f'    Dose-control error (mean d>0): '
+              f'{np.mean(positive_dose_error)*MM:.2f} mm')
     print(f'  Poison  : {res["n_poison"]}/{res["n_total"]} ({res["poison_select"]})')
     print(f'{"─"*56}\n', flush=True)
 
