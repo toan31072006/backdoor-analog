@@ -230,6 +230,9 @@ def _resolve_training_config(cfg):
     if trigger_name in ('ftrojan', 'fiba'):
         from attack.frequency_baselines import resolve_frequency_config
         resolved = resolve_frequency_config(trigger_name, resolved)
+    if trigger_name in ('sig_source', 'bpp_source'):
+        from attack.static_source_baselines import resolve_static_source_config
+        resolved = resolve_static_source_config(trigger_name, resolved)
     if trigger_name == 'learned_carrier' or any(k.startswith('lc_') for k in resolved):
         from attack.learned_carrier import resolve_learned_config
         resolved = resolve_learned_config(resolved)

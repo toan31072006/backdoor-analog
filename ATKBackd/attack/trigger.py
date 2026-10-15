@@ -206,6 +206,16 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
         from attack.frequency_baselines import build_frequency_trigger
         return build_frequency_trigger(name, cfg)
 
+    if name in ('sig_source', 'bpp_source'):
+        if cfg.get('experiment_name') != 'mmfi':
+            raise ValueError('Static source CSI adapters currently require MM-Fi amplitudes')
+        from attack.static_source_baselines import build_static_source_trigger
+        training_data = None
+        if name == 'bpp_source':
+            from train_backdoor import _load_dataset
+            training_data = _load_dataset(cfg, 'training')
+        return build_static_source_trigger(name, cfg, training_data=training_data)
+
     if name in ('infocom2025_por', 'ccai2026_backdoorrf'):
         from attack.rf_adapters import build_rf_trigger
         return build_rf_trigger(name, cfg)
@@ -223,4 +233,4 @@ def build_trigger_by_name(trigger_name: str, cfg: dict):
         "'micro_dropper', 'tsba', 'badnets', 'blended', 'wanet', 'wanet_source', "
         "'infocom2025_por', 'ccai2026_backdoorrf', 'md_multicarrier', "
         "'md_dose_code', 'md_energy', 'md_multicarrier_peak_matched', 'ftrojan', 'fiba', "
-        "'learned_carrier', 'simple_carrier'.")
+        "'learned_carrier', 'simple_carrier', 'sig_source', 'bpp_source'.")
