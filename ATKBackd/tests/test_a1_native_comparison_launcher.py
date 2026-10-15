@@ -40,33 +40,28 @@ def test_native_launcher_quotes_paths_and_has_no_hidden_training_flags():
 
 def test_native_docs_freeze_a1_and_explain_native_comparison():
     doc = DOC.read_text(encoding='utf-8')
-    assert 'mmfi_a1_native_comparison_v1' in doc
-    assert 'mmfi_a1_native_comparison_s42_v1' in doc
+    assert 'mmfi_a1_native_comparison_v2' in doc
+    assert 'mmfi_a1_native_comparison_s42_v2' in doc
     assert 'mmfi_proposed_factorial_ablation_s42_v1/full' in doc
     assert 'mmfi-a1-compare-s42' in doc
     assert 'rho=0.1' in doc and '50 epochs' in doc
-    assert all(key in doc for key in (
-        'badnets', 'wanet_source', 'ftrojan', 'fiba', 'sig_source', 'bpp_source'))
+    assert all(key in doc for key in ('badnets', 'wanet_source', 'ftrojan', 'fiba'))
     assert '133056' in doc and '33264' in doc
     assert '--a1-reference' in doc
     assert 'Không train lại A1' in doc
     assert 'Không match peak thực tế hoặc L2' in doc
     assert 'num_workers=0' in doc
     assert 'Target-PCK' in doc and 'không phải 20 mm' in doc
-    assert '20/255' in doc and 'frequency=6' in doc
-    assert 'BackdoorBench' in doc and 'code bên thứ ba' in doc
-    assert 'lượng tử hóa 32' in doc and 'không dithering' in doc
-    assert 'CE/residual' in doc and 'PGD/SupCon' in doc
+    assert 'BackdoorBench' in doc
     assert 'CUDA_VISIBLE_DEVICES=0,2,3' in doc
     assert '--devices cuda:0 cuda:1 cuda:2' in doc
     assert '--devices cuda:0 cuda:1 cuda:3' not in doc
     assert '--summary-only' in doc and '--fresh' in doc
-    assert 'sáu cache baseline hợp lệ' in doc
-    assert 'summary bảy hàng' in doc
+    assert 'bốn cache baseline hợp lệ' in doc
+    assert 'summary năm hàng' in doc
     assert 'scp "mica-server:' in doc
     assert 'Blended không thuộc lượt comparison' in doc
-    assert 'aliasing' in doc and 'không phải 6 Hz' in doc
-    assert '**có hoàn lại**' in doc and '`random.sample`' in doc
+    assert 'bỏ hai ứng viên SIG và BppAttack' in doc
     assert b'\r' not in DOC.read_bytes()
 
 
@@ -116,10 +111,10 @@ def test_native_dry_run_no_data_gpu_or_reference_needed(tmp_path, through_launch
     assert not reference.exists()
     manifest = json.loads((outdir / 'a1_native_comparison.resolved.json').read_text(
         encoding='utf-8'))
-    assert manifest['traditional_comparison_profile'] == 'mmfi_a1_native_comparison_v1'
+    assert manifest['traditional_comparison_profile'] == 'mmfi_a1_native_comparison_v2'
     assert manifest['seed'] == 42
     assert [cell['method_key'] for cell in manifest['cells']] == [
-        'badnets', 'wanet_source', 'ftrojan', 'fiba', 'sig_source', 'bpp_source']
+        'badnets', 'wanet_source', 'ftrojan', 'fiba']
     assert all(cell['cfg']['rho'] == 0.1 for cell in manifest['cells'])
     assert all(cell['cfg']['epochs'] == 50 for cell in manifest['cells'])
     assert not list(outdir.rglob('eval_cache.json'))

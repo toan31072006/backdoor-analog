@@ -18,7 +18,7 @@ import run_proposed_ablation as ablation
 import train_backdoor as trainer
 
 
-KEYS = ['badnets', 'wanet_source', 'ftrojan', 'fiba', 'sig_source', 'bpp_source']
+KEYS = ['badnets', 'wanet_source', 'ftrojan', 'fiba']
 
 
 def _forbidden(*args, **kwargs):
@@ -37,10 +37,11 @@ def matrix(tmp_path, sources):
     return runner.build_matrix(tmp_path / 'data', tmp_path / 'out', 'cpu', 4)
 
 
-def test_six_baselines_only_a1_never_scheduled(matrix):
+def test_selected_baselines_only_a1_never_scheduled(matrix):
     assert [cell['method_key'] for cell in matrix['cells']] == KEYS
     assert all(cell['dependencies'] == [] for cell in matrix['cells'])
-    assert 'blended' not in KEYS and not any(c['method_key'] in ('a1', 'full', 'proposed') for c in matrix['cells'])
+    assert not {'blended', 'sig_source', 'bpp_source'}.intersection(KEYS)
+    assert not any(c['method_key'] in ('a1', 'full', 'proposed') for c in matrix['cells'])
     assert matrix['metrics_contract']['reuse_a1'] is True
     assert matrix['metrics_contract']['train_a1'] is False
     assert matrix['metrics_contract']['comparison_scope'] == 'selected_native_csi_pose_adaptations'
@@ -83,11 +84,6 @@ def test_source_knobs_and_cover_counts_are_not_optimized(matrix):
     assert cfgs['fiba']['fiba_alpha'] == 0.15 and cfgs['fiba']['fiba_beta'] == 0.1
     assert cfgs['fiba']['clean_label_cover_ratio'] == 0.1
     assert cfgs['ftrojan']['ftrojan_magnitude_255'] == 20.0
-    assert cfgs['sig_source']['sig_delta_255'] == 20.0
-    assert cfgs['sig_source']['sig_frequency'] == 6
-    assert cfgs['bpp_source']['bpp_levels'] == 32
-    assert cfgs['bpp_source']['bpp_dithering'] is False
-    assert cfgs['bpp_source']['clean_label_cover_ratio'] == 0.2
     for key, cfg in cfgs.items():
         assert cfg['num_workers'] == (0 if key in runner.STOCHASTIC_CELLS else 4)
 
@@ -184,8 +180,10 @@ def test_worker_executes_only_requested_planned_baseline(matrix, tmp_path, monke
     path.write_text(json.dumps(matrix), encoding='utf-8')
     seen = []
     monkeypatch.setattr(runner, '_run_cell', lambda c: seen.append(c['method_key']))
-    assert runner.main(['--_cell', 'sig_source', '--_manifest', str(path)]) == 0
-    assert seen == ['sig_source']
+    assert runner.main(['--_cell', 'fiba', '--_manifest', str(path)]) == 0
+    assert seen == ['fiba']
+    with pytest.raises(ValueError, match='unplanned'):
+        runner.main(['--_cell', 'sig_source', '--_manifest', str(path)])
     with pytest.raises(ValueError, match='unplanned'):
         runner.main(['--_cell', 'full', '--_manifest', str(path)])
 
@@ -263,7 +261,7 @@ def test_limitations_do_not_claim_equal_noise_or_general_superiority():
     assert 'no claim of superiority over all backdoor attacks' in notice
     assert 'Target-PCK' in notice and 'workers=0' in notice
     assert 'Blended is omitted' in notice and 'previous results are retained' in notice
-    assert 'aliases negative f=4' in notice and 'with replacement' in notice
+    assert 'SIG' not in notice and 'Bpp' not in notice
 
 
 def test_markdown_has_only_agreed_three_main_metrics(tmp_path, matrix, monkeypatch):
@@ -277,11 +275,11 @@ def test_markdown_has_only_agreed_three_main_metrics(tmp_path, matrix, monkeypat
     runner.export_summary(matrix, tmp_path)
     text = (tmp_path / 'a1_native_comparison.md').read_text(encoding='utf-8')
     assert '| Method | T-MPJPE@1 (mm) | Clean MPJPE (mm) | Clean PA-MPJPE (mm) |' in text
-    assert '| BppAttack-CSI (author-code quantization variant) |' in text and '| Proposed A1 (reused) |' in text
+    assert '| FIBA-CSI |' in text and '| Proposed A1 (reused) |' in text
     assert '| Blended' not in text
     assert 'Target-PCK is not implemented' in text
     with (tmp_path / 'a1_native_comparison.csv').open(encoding='utf-8', newline='') as stream:
-        assert len(list(csv.DictReader(stream))) == 7
+        assert len(list(csv.DictReader(stream))) == len(KEYS) + 1
 
 
 def test_summary_only_alias():
@@ -289,7 +287,7 @@ def test_summary_only_alias():
     assert runner.parse_args(['--export-only']).export_only is True
 
 
-def test_three_slots_queue_six_baselines_without_a1(matrix, tmp_path, monkeypatch):
+def test_three_slots_queue_selected_baselines_without_a1(matrix, tmp_path, monkeypatch):
     import run_mmfi_tables as scheduler
     launches = []
     class CompletedChild:
@@ -304,11 +302,11 @@ def test_three_slots_queue_six_baselines_without_a1(matrix, tmp_path, monkeypatc
     runner.run_matrix(matrix, tmp_path / 'manifest.json',
         ['cuda:0', 'cuda:1', 'cuda:2'], worker_script=Path(runner.__file__))
     assert [cmd[cmd.index('--_cell') + 1] for cmd in launches] == KEYS
-    assert [c['cfg']['device'] for c in matrix['cells']] == ['cuda:0', 'cuda:1', 'cuda:2'] * 2
+    assert [c['cfg']['device'] for c in matrix['cells']] == ['cuda:0', 'cuda:1', 'cuda:2', 'cuda:0']
     assert all(Path(cmd[2]).name == 'run_a1_native_comparison.py' for cmd in launches)
 
 
-def test_actual_six_baseline_cpu_training_and_audited_reference_export(tmp_path, sources, monkeypatch):
+def test_actual_selected_baseline_cpu_training_and_audited_reference_export(tmp_path, sources, monkeypatch):
     """Only integration plumbing: 50 synthetic frames, NOT MM-Fi results."""
     import a1_frozen_reference as frozen
     import run_traditional_comparison as traditional
@@ -370,12 +368,12 @@ def test_actual_six_baseline_cpu_training_and_audited_reference_export(tmp_path,
             assert checkpoint['cfg']['measure_dose_control'] is True
             poison = json.loads((folder / 'poison_manifest.json').read_text(encoding='utf-8'))
             poison_plans.append(poison['samples'])
-            expected_covers = 10 if cell['method_key'] in ('wanet_source', 'bpp_source') else 5 if cell['method_key'] == 'fiba' else 0
+            expected_covers = 10 if cell['method_key'] == 'wanet_source' else 5 if cell['method_key'] == 'fiba' else 0
             assert poison.get('n_cover', 0) == expected_covers
             if expected_covers:
                 assert checkpoint['trigger']['cover_draws'] == expected_covers * 50
                 assert 'trigger_optimizer' not in checkpoint
-        assert len(model_initializations) == 6
+        assert len(model_initializations) == len(KEYS)
         assert all(plan == poison_plans[0] for plan in poison_plans)
         for initialized in model_initializations[1:]:
             for key in initialized:
@@ -403,7 +401,7 @@ def test_actual_six_baseline_cpu_training_and_audited_reference_export(tmp_path,
         # loader is replaced because frozen production A1 bytes are not fixtures.
         monkeypatch.setattr(frozen, 'load_a1_reference', lambda path: copy.deepcopy(reference))
         report = runner.export_summary(matrix, output)
-        assert len(report['rows']) == 7 and len(report['dose_response']) == 42
+        assert len(report['rows']) == len(KEYS) + 1 and len(report['dose_response']) == (len(KEYS) + 1) * 6
         assert report['rows'][-1]['result_origin'] == 'frozen_ablation_reference'
         assert report['rows'][-1]['method_key'] == 'a1'
         assert len({r['poison_plan_sha256'] for r in report['rows']}) == 1

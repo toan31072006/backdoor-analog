@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Six freshly trained native CSI/HPE baselines; reuse the audited immutable A1.
+# Selected freshly trained native CSI/HPE baselines; reuse immutable A1.
 # Device arguments are PyTorch LOGICAL IDs after CUDA_VISIBLE_DEVICES remapping.
 set -euo pipefail
 DOSE_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
