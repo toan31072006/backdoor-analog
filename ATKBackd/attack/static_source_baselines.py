@@ -1,20 +1,21 @@
-"""Independent source-equation SIG/Bpp input operators for normalized MM-Fi CSI.
+"""BackdoorBench-default SIG/Bpp input operators for normalized MM-Fi CSI.
 
 These are pose/dose task adaptations, NOT unchanged paper reproductions. SIG's
 paper poisons only the target class without changing labels; our caller uses
-the shared dirty-label pose targets instead. Its sine amplitude20/255,f6 comes
-from the paper's GTSRB experiment; the pinned third-party BackdoorBench code
-uses zero-based columns and a default amplitude40, not20. On the ten-packet
+the shared dirty-label pose targets instead. We use the pinned BackdoorBench
+default sine amplitude40/255 and f6 on zero-based columns. On the ten-packet
 MM-Fi grid, f=6 aliases the negative f=4 sequence; it is not a frequency in Hz.
 
-Bpp uses the author's README32-level/no-dither code variant. That public code
-trains with ordinary CE and transferred quantization-residual negatives, unlike
-the paper's description of PGD/supervised-contrastive training. The caller
-replaces classification with the SAME ordinary HPE loss used for every arm.
+Bpp uses the pinned BackdoorBench 8-level/no-dither/10%-negative variant. Its
+public train_step uses ordinary CE and transferred quantization-residual
+negatives, unlike the paper's description of PGD/supervised-contrastive
+training. The caller replaces classification with the SAME ordinary HPE loss.
 This module adds no learned trigger, extra loss, victim feedback or tuning.
 Donors are drawn independently with replacement per cover from unaugmented
 TRAIN CSI, rather than random.sample without replacement within a source batch
-from a prebuilt multi-pass augmented image residual bank.
+from a prebuilt multi-pass augmented image residual bank. Cover recipient
+identities are fixed by the common poison plan across epochs, whereas the
+BackdoorBench Bpp training loop selects recipient slots afresh per minibatch.
 CSI links replace channels; subcarriers/packets replace height/width. Floating
 normalized CSI replaces uint8 image storage. Dose interpolation is an explicit
 task extension, not a native controllable-dose claim from either source.
@@ -47,21 +48,20 @@ SOURCES = {
             'config/attack/sig/default.yaml': 'db275d32f4dcd262202d1caeeecd756b5b93d2b560e6a06a744549573ab3ba2d',
             'LICENSE': 'c67d7a90ddf78746757ebff6fcde6ef57cf57c6c9321faa5ffd275565f8f816e',
         },
-        'variant': 'paper GTSRB amplitude20/f6; public-code zero-based columns; dirty-label pose/dose task adaptation; f6 aliases negative f4 on the ten-packet digital grid, not Hz',
+        'variant': 'BackdoorBench default amplitude40/f6 and zero-based columns; dirty-label pose/dose task adaptation; f6 aliases negative f4 on the ten-packet digital grid, not Hz',
     },
     'bpp_source': {
-        'repository': 'https://github.com/RU-System-Software-and-Security/BppAttack',
-        'commit': 'f6b6580d53b2f2bca8e92cfe83aae7d68332ff4c',
+        'repository': 'https://github.com/SCLBD/BackdoorBench',
+        'commit': 'f02e3534645f0ee63d6848653062cd6c0d6c400d',
         'paper': 'https://openaccess.thecvf.com/content/CVPR2022/html/Wang_BppAttack_Stealthy_and_Efficient_Trojan_Attacks_Against_Deep_Neural_Networks_CVPR_2022_paper.html',
-        'license': 'MIT (author source; independent formula implementation here)',
-        'provenance': 'author README/code quantization variant; NOT complete paper PGD/SupCon reproduction',
+        'license': 'CC-BY-NC-4.0 (BackdoorBench; independent formula implementation here)',
+        'provenance': 'third-party BackdoorBench implementation; NOT complete paper PGD/SupCon reproduction',
         'files': {
-            'bppattack.py': '4462724222ddaa48eb61bfad95f1edbedda644897df236f6765aca4fb4e8da22',
-            'config.py': '58d03c5dbeae09770d25298b34484f4838e3da4531973c43a321aa4406e9c34f',
-            'README.md': '75ad49097f1e358fe6888350ccee57811a74eb40b96f3fc656401e0b748cc7d5',
-            'LICENSE': 'a603b347eec46e36f2d3d8f240ada8d747befc16db92e77a2a9dfb430c4d6257',
+            'attack/bpp.py': '8d792596bd45829324930b7a3648aaa622a5a60068d443496e0f5ec736079cd1',
+            'config/attack/bpp/default.yaml': '2c5b528b77488ebfc916ef8f386506beb960f8f6c8e6608b65aa180f7482bc8c',
+            'LICENSE': 'c67d7a90ddf78746757ebff6fcde6ef57cf57c6c9321faa5ffd275565f8f816e',
         },
-        'variant': 'README32 levels; no dithering;20% clean-label residual negatives; pose/dose task adaptation; lazy unaugmented TRAIN donors with replacement instead of source augmented residual-bank batch sampling',
+        'variant': 'BackdoorBench default 8 levels; no dithering;10% clean-label residual negatives; pose/dose task adaptation; fixed cover recipients across epochs; lazy unaugmented TRAIN donors with replacement instead of source per-batch recipient selection and augmented residual-bank sampling',
     },
 }
 
@@ -95,17 +95,17 @@ def resolve_static_source_config(name, cfg):
         name + '_source_sha256': _digest(source['files']),
         name + '_adapter_sha256': hashlib.sha256(
             Path(__file__).read_bytes().replace(b'\r\n', b'\n')).hexdigest(),
-        name + '_implementation': 'independent-source-equation-native-csi-v1',
+        name + '_implementation': 'independent-source-equation-native-csi-v2-bdb-defaults',
         name + '_source_variant': source['variant'],
     })
     if name == 'sig_source':
-        _freeze(result, {'sig_delta_255': 20.0, 'sig_frequency': 6,
+        _freeze(result, {'sig_delta_255': 40.0, 'sig_frequency': 6,
                          'sig_axis': 'packet', 'sig_index_origin': 0,
                          'clean_label_cover_ratio': 0.0})
     else:
-        _freeze(result, {'bpp_levels': 32, 'bpp_dithering': False,
-                         'bpp_negative_ratio': .2, 'bpp_donor_policy': DONOR_POLICY,
-                         'clean_label_cover_ratio': .2, 'num_workers': 0})
+        _freeze(result, {'bpp_levels': 8, 'bpp_dithering': False,
+                         'bpp_negative_ratio': .1, 'bpp_donor_policy': DONOR_POLICY,
+                         'clean_label_cover_ratio': .1, 'num_workers': 0})
     return result
 
 
@@ -118,12 +118,12 @@ def _task_input(trigger, csi, dose, eps):
 
 class SIGSourceCSITrigger(_AmplitudeTrigger):
     baseline_name = 'SIG-CSI (pose/dose-adapted)'
-    dose_semantics = 'add d*(20/255)*sin(2*pi*j*6/n_pkt), then clip; eps interface-only'
+    dose_semantics = 'add d*(40/255)*sin(2*pi*j*6/n_pkt), then clip; eps interface-only'
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         packet = np.arange(self.n_pkt, dtype=np.float64)
-        sine = (20.0 / 255.0) * np.sin(2 * np.pi * packet * 6 / self.n_pkt)
+        sine = (40.0 / 255.0) * np.sin(2 * np.pi * packet * 6 / self.n_pkt)
         self.pattern = np.broadcast_to(sine, self.shape).copy()
 
     def inject(self, csi, dose, eps=.185):
@@ -138,8 +138,8 @@ class SIGSourceCSITrigger(_AmplitudeTrigger):
 
 
 class BppSourceCSITrigger(_AmplitudeTrigger):
-    baseline_name = 'BppAttack-CSI (author-code quantization variant)'
-    dose_semantics = 'x+d*(round(31*x)/31-x); eps interface-only'
+    baseline_name = 'BppAttack-CSI (BackdoorBench quantization variant)'
+    dose_semantics = 'x+d*(round(7*x)/7-x); eps interface-only'
     requires_stochastic_trigger_state = True
 
     def __init__(self, *, training_data, **kwargs):
@@ -154,13 +154,13 @@ class BppSourceCSITrigger(_AmplitudeTrigger):
         # Keep only the supplied TRAIN dataset, not TEST residuals or a large
         # GPU residual bank. A donor is loaded only when a cover is requested.
         self.training_data = training_data
-        self.levels = 32
+        self.levels = 8
         identities = [{key: str(item[key]) for key in ('csi', 'kpt', 'frame_idx')
                        if key in item} for item in training_data.items]
         if any('csi' not in item for item in identities):
             raise ValueError('Bpp TRAIN donor identities must contain csi')
         self.donor_identities_sha256 = _digest(identities)
-        self._fixed_key = _digest({'levels': 32, 'dithering': False,
+        self._fixed_key = _digest({'levels': 8, 'dithering': False,
             'shape': self.shape, 'seed': self.seed,
             'donor_policy': DONOR_POLICY,
             'donor_identities_sha256': self.donor_identities_sha256})
@@ -169,7 +169,7 @@ class BppSourceCSITrigger(_AmplitudeTrigger):
 
     @staticmethod
     def _quantize(value):
-        return np.rint(value.astype(np.float64) * 31.0) / 31.0
+        return np.rint(value.astype(np.float64) * 7.0) / 7.0
 
     def inject(self, csi, dose, eps=.185):
         value = _task_input(self, csi, dose, eps)

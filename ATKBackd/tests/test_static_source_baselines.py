@@ -27,32 +27,32 @@ class TrainingData:
         return self.inputs[int(index)].copy()
 
 
-def test_sig_paper20_f6_public_zero_based_columns_broadcast_without_learning():
+def test_sig_backdoorbench_default40_f6_zero_based_columns_without_learning():
     trigger = SIGSourceCSITrigger(n_ant=2, n_sub=7, n_pkt=19)
     x = np.full(trigger.shape, .5, np.float32)
     for d in [0, .2, .4, .6, .8, 1]:
-        expected = np.clip(x.astype(float) + d * (20/255) *
+        expected = np.clip(x.astype(float) + d * (40/255) *
             np.sin(2*np.pi*np.arange(19)*6/19)[None, None, :], 0, 1).astype(np.float32)
         np.testing.assert_array_equal(trigger.inject(x, d), expected)
     assert np.all(trigger.pattern[..., 0] == 0)
     assert not hasattr(trigger, 'noise_inject')
 
 
-def test_bpp_readme32_quantization_native_endpoint_and_linear_dose():
+def test_bpp_backdoorbench_default8_quantization_endpoint_and_linear_dose():
     data = TrainingData()
     trigger = BppSourceCSITrigger(training_data=data)
     x = data.inputs[0]
-    quantized = np.round(x.astype(float)*31)/31
+    quantized = np.round(x.astype(float)*7)/7
     for d in [0, .2, .4, .6, .8, 1]:
         expected = (x.astype(float)+d*(quantized-x)).astype(np.float32)
         np.testing.assert_array_equal(trigger.inject(x, d), expected)
     assert data.loads == []  # poison operator never needs a donor or victim
-    assert trigger.levels == 32
+    assert trigger.levels == 8
 
 
 def test_sig_ten_packet_source_parameter_is_a_discrete_alias_not_hz():
     trigger = SIGSourceCSITrigger(n_pkt=10)
-    aliased = -(20/255) * np.sin(2*np.pi*np.arange(10)*4/10)
+    aliased = -(40/255) * np.sin(2*np.pi*np.arange(10)*4/10)
     np.testing.assert_allclose(trigger.pattern[0, 0], aliased, rtol=0, atol=1e-15)
     assert 'not Hz' in SOURCES['sig_source']['variant']
 
@@ -113,7 +113,7 @@ def test_bpp_negative_exact_source_residual_from_lazy_train_donor_and_clipping()
     for _ in range(6):
         actual = trigger.noise_inject(recipient, seed=42)
         donor = data.inputs[data.loads[-1]].astype(float)
-        expected = np.clip(recipient.astype(float) + np.round(donor*31)/31-donor,
+        expected = np.clip(recipient.astype(float) + np.round(donor*7)/7-donor,
                            0, 1).astype(np.float32)
         np.testing.assert_array_equal(actual, expected)
     assert len(set(data.loads)) > 1
@@ -173,11 +173,11 @@ def test_resolver_source_metadata_lf_hash_and_idempotence(name):
 
 
 @pytest.mark.parametrize('name,patch', [
-    ('sig_source', {'sig_delta_255': 40}), ('sig_source', {'sig_frequency': 12}),
+    ('sig_source', {'sig_delta_255': 20}), ('sig_source', {'sig_frequency': 12}),
     ('sig_source', {'sig_axis': 'subcarrier'}), ('sig_source', {'sig_index_origin': 1}),
     ('sig_source', {'sig_index_origin': False}), ('sig_source', {'clean_label_cover_ratio': .2}),
-    ('bpp_source', {'bpp_levels': 8}), ('bpp_source', {'bpp_dithering': True}),
-    ('bpp_source', {'bpp_dithering': 0}), ('bpp_source', {'bpp_negative_ratio': 0}),
+    ('bpp_source', {'bpp_levels': 32}), ('bpp_source', {'bpp_dithering': True}),
+    ('bpp_source', {'bpp_dithering': 0}), ('bpp_source', {'bpp_negative_ratio': .2}),
     ('bpp_source', {'num_workers': 4}), ('bpp_source', {'clean_label_cover_ratio': 0}),
     ('bpp_source', {'bpp_donor_policy': 'TEST'}),
 ])
@@ -204,6 +204,12 @@ def test_builder_is_native_and_has_no_projection_model_feedback_or_test_loading(
 def test_source_record_discloses_provenance_and_paper_code_disagreement():
     assert 'NOT original SIG author code' in SOURCES['sig_source']['provenance']
     assert 'NOT complete paper' in SOURCES['bpp_source']['provenance']
-    assert 'README32' in SOURCES['bpp_source']['variant']
-    assert 'bppattack.py' in SOURCES['bpp_source']['files']
+    assert SOURCES['sig_source']['repository'] == SOURCES['bpp_source']['repository'] == (
+        'https://github.com/SCLBD/BackdoorBench')
+    assert SOURCES['sig_source']['commit'] == SOURCES['bpp_source']['commit'] == (
+        'f02e3534645f0ee63d6848653062cd6c0d6c400d')
+    assert 'default 8 levels' in SOURCES['bpp_source']['variant']
+    assert 'attack/bpp.py' in SOURCES['bpp_source']['files']
+    assert 'config/attack/bpp/default.yaml' in SOURCES['bpp_source']['files']
     assert 'utils/bd_img_transform/sig.py' in SOURCES['sig_source']['files']
+    assert 'config/attack/sig/default.yaml' in SOURCES['sig_source']['files']

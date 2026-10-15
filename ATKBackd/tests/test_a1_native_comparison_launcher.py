@@ -40,28 +40,36 @@ def test_native_launcher_quotes_paths_and_has_no_hidden_training_flags():
 
 def test_native_docs_freeze_a1_and_explain_native_comparison():
     doc = DOC.read_text(encoding='utf-8')
-    assert 'mmfi_a1_native_comparison_v2' in doc
-    assert 'mmfi_a1_native_comparison_s42_v2' in doc
+    assert 'mmfi_a1_native_comparison_v3' in doc
+    assert 'mmfi_a1_native_comparison_s42_v3' in doc
     assert 'mmfi_proposed_factorial_ablation_s42_v1/full' in doc
     assert 'mmfi-a1-compare-s42' in doc
     assert 'rho=0.1' in doc and '50 epochs' in doc
-    assert all(key in doc for key in ('badnets', 'wanet_source', 'ftrojan', 'fiba'))
+    assert all(key in doc for key in ('badnets', 'wanet_source', 'ftrojan', 'fiba',
+                                      'sig_source', 'bpp_source'))
     assert '133056' in doc and '33264' in doc
     assert '--a1-reference' in doc
     assert 'Không train lại A1' in doc
     assert 'Không match peak thực tế hoặc L2' in doc
     assert 'num_workers=0' in doc
+    assert 'dirty-label pose adaptation' in doc
+    assert 'không phải tái hiện đầy đủ' in doc
+    assert 'delta=40' in doc and 'f=6' in doc
+    assert 'squeeze_num=8' in doc and 'neg_ratio=0.1' in doc
+    assert 'không vendored' in doc
+    assert 'cố định 10% recipient cover' in doc
+    assert 'chọn lại vị trí mẫu negative recipient' in doc
     assert 'Target-PCK' in doc and 'không phải 20 mm' in doc
     assert 'BackdoorBench' in doc
     assert 'CUDA_VISIBLE_DEVICES=0,2,3' in doc
     assert '--devices cuda:0 cuda:1 cuda:2' in doc
     assert '--devices cuda:0 cuda:1 cuda:3' not in doc
     assert '--summary-only' in doc and '--fresh' in doc
-    assert 'bốn cache baseline hợp lệ' in doc
-    assert 'summary năm hàng' in doc
+    assert 'sáu cache baseline hợp lệ' in doc
+    assert 'summary bảy hàng' in doc
     assert 'scp "mica-server:' in doc
     assert 'Blended không thuộc lượt comparison' in doc
-    assert 'bỏ hai ứng viên SIG và BppAttack' in doc
+    assert 'mmfi_a1_native_comparison_s42_v2' not in doc
     assert b'\r' not in DOC.read_bytes()
 
 
@@ -111,11 +119,17 @@ def test_native_dry_run_no_data_gpu_or_reference_needed(tmp_path, through_launch
     assert not reference.exists()
     manifest = json.loads((outdir / 'a1_native_comparison.resolved.json').read_text(
         encoding='utf-8'))
-    assert manifest['traditional_comparison_profile'] == 'mmfi_a1_native_comparison_v2'
+    assert manifest['traditional_comparison_profile'] == 'mmfi_a1_native_comparison_v3'
     assert manifest['seed'] == 42
     assert [cell['method_key'] for cell in manifest['cells']] == [
-        'badnets', 'wanet_source', 'ftrojan', 'fiba']
+        'badnets', 'wanet_source', 'ftrojan', 'fiba', 'sig_source', 'bpp_source']
     assert all(cell['cfg']['rho'] == 0.1 for cell in manifest['cells'])
     assert all(cell['cfg']['epochs'] == 50 for cell in manifest['cells'])
+    configs = {cell['method_key']: cell['cfg'] for cell in manifest['cells']}
+    assert configs['sig_source']['sig_delta_255'] == 40.0
+    assert configs['sig_source']['sig_frequency'] == 6
+    assert configs['bpp_source']['bpp_levels'] == 8
+    assert configs['bpp_source']['bpp_negative_ratio'] == 0.1
+    assert configs['bpp_source']['clean_label_cover_ratio'] == 0.1
     assert not list(outdir.rglob('eval_cache.json'))
     assert not list(outdir.rglob('checkpoint.pt'))

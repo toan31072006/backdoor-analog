@@ -1,4 +1,4 @@
-"""Selected frozen, dose-adapted CSI baselines against the existing A1 victim.
+"""Six frozen, dose-adapted CSI baselines against the existing A1 victim.
 
 This is a native-operator, common-task comparison, NOT an equal-noise-budget
 ranking. It never schedules Proposed or rewrites its historical cache. This
@@ -29,17 +29,19 @@ from run_traditional_comparison import (
 )
 
 HERE = Path(__file__).resolve().parent
-PROFILE = 'mmfi_a1_native_comparison_v2'
+PROFILE = 'mmfi_a1_native_comparison_v3'
 STATUS = 'NATIVE_SOURCE_ADAPTED_MMFI_COMPARISON_SINGLE_SEED'
-FOLDER = 'mmfi_a1_native_comparison_s42_v2'
+FOLDER = 'mmfi_a1_native_comparison_s42_v3'
 MANIFEST = 'a1_native_comparison.resolved.json'
 METHODS = (
     ('badnets', 'BadNets-CSI'),
     ('wanet_source', 'WaNet-CSI'),
     ('ftrojan', 'FTrojan-CSI'),
     ('fiba', 'FIBA-CSI'),
+    ('sig_source', 'SIG-CSI (BackdoorBench-default, pose/dose-adapted)'),
+    ('bpp_source', 'BppAttack-CSI (BackdoorBench-default, pose/dose-adapted)'),
 )
-STOCHASTIC_CELLS = {'wanet_source', 'fiba'}
+STOCHASTIC_CELLS = {'wanet_source', 'fiba', 'bpp_source'}
 SUMMARY_COLUMNS = (
     'method_key', 'method', 'result_origin', 'seed', 'epochs', 'rho',
     'train_samples', 'eval_samples', 'n_poison', 'n_cover',
@@ -62,7 +64,7 @@ def _source_provenance():
         'run_mmfi_tables.py', 'run_method_drafts.py', 'run_peak_confirmation.py',
         'train_backdoor.py', 'configs/mmfi/attack_bend.yaml', 'mmfi_tables.py',
         'attack/trigger.py', 'attack/traditional.py', 'attack/wanet_source.py',
-        'attack/frequency_baselines.py',
+        'attack/frequency_baselines.py', 'attack/static_source_baselines.py',
         'attack/method_drafts.py', 'attack/poison.py', 'attack/payload.py',
         'attack/skeleton_mmfi.py', 'data_utils/feeder.py',
         'data_utils/draft_subset.py', 'eval/metrics.py', 'models/factory.py',
@@ -93,6 +95,12 @@ def _method_config(data_home, device, num_workers, key):
     elif key == 'fiba':
         cfg.update(fiba_alpha=0.15, fiba_beta=0.1, fiba_cross_ratio=1.0,
                    clean_label_cover_ratio=0.1, num_workers=0)
+    elif key == 'sig_source':
+        cfg.update(sig_delta_255=40.0, sig_frequency=6,
+                   clean_label_cover_ratio=0.0)
+    elif key == 'bpp_source':
+        cfg.update(bpp_levels=8, bpp_dithering=False, bpp_negative_ratio=0.1,
+                   clean_label_cover_ratio=0.1, num_workers=0)
     cfg = _resolve_training_config(cfg)
     _validate_training_contract(cfg)
     if any(k.startswith('comparison_peak_') for k in cfg):
@@ -105,6 +113,7 @@ def build_matrix(data_home, outdir, device='cuda:0', num_workers=4, *,
     """Resolve scientific settings without opening the dataset/reference/CUDA."""
     from train_backdoor import _CHECKPOINT_SCHEMA, _RESULT_SCHEMA
     from attack.frequency_baselines import SOURCES as FREQUENCY_SOURCES
+    from attack.static_source_baselines import SOURCES as STATIC_SOURCES
     if isinstance(num_workers, bool) or not isinstance(num_workers, int) or num_workers < 0:
         raise ValueError('num_workers must be a nonnegative integer')
     data_home, outdir = Path(data_home).resolve(), Path(outdir).resolve()
@@ -121,7 +130,8 @@ def build_matrix(data_home, outdir, device='cuda:0', num_workers=4, *,
         sources=dict(source_sha256=_source_provenance(),
             references=dict(backdoorbench={key: copy.deepcopy(value)
                 for key, value in SOURCE_REFERENCES.items() if not key.startswith('blended')},
-                frequency=copy.deepcopy(FREQUENCY_SOURCES)),
+                frequency=copy.deepcopy(FREQUENCY_SOURCES),
+                static=copy.deepcopy(STATIC_SOURCES)),
             baseline_config='configs/mmfi/attack_bend.yaml'),
         metrics_contract=dict(profile=PROFILE,
             comparison_scope='selected_native_csi_pose_adaptations',
@@ -136,7 +146,7 @@ def build_matrix(data_home, outdir, device='cuda:0', num_workers=4, *,
             budget_mode='native', shared_peak_ceiling=False, matches_noise_budget=False,
             dose_training='same paired U(0.2,1) trigger and pose-target doses',
             poison_plan='identical ordered indices and dose values; 13305 poison examples',
-            cover_ratios=dict(wanet_source=0.2, fiba=0.1),
+            cover_ratios=dict(wanet_source=0.2, fiba=0.1, bpp_source=0.1),
             loader_policy='A1 persistent-worker default for static operators; source stochastic covers require workers=0',
             excluded_methods=dict(
                 blended='excluded from this selected method set at user request; historical results retained; no superiority over it is claimed',
@@ -182,8 +192,12 @@ def _limitations():
         'Blended is omitted from this selected comparison at user request; its previous results are retained and no superiority over it is claimed.',
         'Operators are dose-adapted to rectangular amplitude CSI and common pose targets, not unchanged source classification pipelines.',
         'BadNets uses the pinned third-party BackdoorBench masked-patch operator with a declared 3x3 CSI patch; this is not a claim about the original authors\' universal hyperparameters.',
-        'WaNet retains 20% and FIBA 10% extra clean-label covers; modified-input counts differ.',
-        'WaNet/FIBA use workers=0 for checkpointed fresh cover RNG; static operators retain the A1 worker policy. Identical minibatch RNG trajectories are not claimed.',
+        'WaNet retains 20%, FIBA 10% and BppAttack 10% extra clean-label covers; modified-input counts differ.',
+        'WaNet/FIBA/BppAttack use workers=0 for checkpointed fresh cover RNG; SIG and other static operators retain the A1 worker policy. Identical minibatch RNG trajectories are not claimed.',
+        'SIG uses the pinned BackdoorBench default sine amplitude 40/255 with frequency parameter 6, but dirty-label pose targets replace the original label-consistent classifier attack.',
+        'On the ten-packet CSI grid, SIG frequency parameter 6 aliases negative 4; no equivalent physical RF frequency in Hz is claimed.',
+        'BppAttack uses the pinned BackdoorBench quantization variant: 8 levels, no dithering and 10% clean-label residual negatives. This does not reproduce the full paper PGD/SupCon training; common HPE MPJPE replaces classification CE.',
+        'BppAttack fixes cover recipient identities across epochs to the common plan; BackdoorBench resamples recipient slots per minibatch. Residual donors are sampled lazily with replacement from unaugmented TRAIN CSI rather than without replacement within source augmented image-residual batches.',
         'A1 is reused with its original configuration, inputs, poison audit and artifact hashes; it is not retrained, reoptimized or reclassified as a fresh result.',
         'Only clean PCK@0.2 is retained as a CSV utility diagnostic; it is not Target-PCK or ASR.',
         'Single seed and development-selected Proposed; no uncertainty, blinded-test status or statistical superiority is estimated.',
