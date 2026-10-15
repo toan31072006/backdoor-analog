@@ -1,8 +1,10 @@
-"""Full MM-Fi ablation of the frozen best fixed multicarrier method.
+"""Full MM-Fi ablations of fixed multicarrier Proposed variants.
 
-Four fresh victims: Full, shuffled dose pairing, Original single carrier, and
-unbounded multicarrier. No traditional baseline is changed or retrained here.
-The default is one seed (42), rho=.4, 50 epochs, complete protocol1-s1 splits.
+The legacy profiles retain their original four/three arms at rho=.4. With
+--factorial, a separate rho=.1 profile crosses coupling and auxiliary-carrier
+removal in four native, non-peak-projected arms. No traditional baseline is
+changed or retrained. All profiles use seed 42 by default, 50 epochs and full
+protocol1-s1 splits.
 """
 from __future__ import annotations
 
@@ -28,6 +30,8 @@ from run_peak_confirmation import _base_config as _confirmation_config, _pair_id
 
 HERE = Path(__file__).resolve().parent
 PROFILE = 'mmfi_proposed_ablation_v1'
+NO_PEAK_PROFILE = 'mmfi_proposed_no_peak_ablation_v1'
+FACTORIAL_PROFILE = 'mmfi_proposed_factorial_ablation_v1'
 STATUS = 'FULL_MMFI_ABLATION_SINGLE_SEED'
 EXPECTED_COUNTS = {'train': 133056, 'eval': 33264}
 METHODS = (
@@ -35,6 +39,14 @@ METHODS = (
     ('w_o_coupling', 'w/o Dose coupling', 'md_multicarrier_peak_matched', 'shuffled'),
     ('w_o_auxiliary', 'w/o Auxiliary carrier (Original unit-RMS carrier)', 'micro_dropper', 'paired'),
     ('w_o_peak', 'w/o Peak bound', 'md_multicarrier', 'paired'),
+)
+NO_PEAK_METHODS = (
+    ('full', 'Full: multicarrier (no peak bound)', 'md_multicarrier', 'paired'),
+    ('w_o_coupling', 'w/o Dose coupling', 'md_multicarrier', 'shuffled'),
+    ('w_o_auxiliary', 'w/o Auxiliary carrier (Original unit-RMS carrier)', 'micro_dropper', 'paired'),
+)
+FACTORIAL_METHODS = NO_PEAK_METHODS + (
+    ('w_o_both', 'w/o Coupling and Auxiliary carrier', 'micro_dropper', 'shuffled'),
 )
 SUMMARY_COLUMNS = (
     'status', 'method_key', 'method', 'seed', 'epochs', 'rho', 'train_samples',
@@ -68,17 +80,29 @@ def _integer(value, name, minimum=0):
     return value
 
 
-def _configs(data_home, device, num_workers, seed):
+def _profile_settings(*, no_peak=False, factorial=False):
+    if not isinstance(no_peak, bool) or not isinstance(factorial, bool):
+        raise ValueError('no_peak and factorial must be booleans')
+    if factorial:
+        return FACTORIAL_PROFILE, FACTORIAL_METHODS, 0.1, True
+    if no_peak:
+        return NO_PEAK_PROFILE, NO_PEAK_METHODS, 0.4, True
+    return PROFILE, METHODS, 0.4, False
+
+
+def _configs(data_home, device, num_workers, seed, *, no_peak=False, factorial=False):
     from train_backdoor import _resolve_training_config, _validate_training_contract
+    profile, methods, rho, _ = _profile_settings(no_peak=no_peak, factorial=factorial)
     base = _confirmation_config(Path(data_home), device, num_workers)
-    base.update(seed=seed, confirmation_profile=PROFILE,
+    base.update(seed=seed, rho=rho, confirmation_profile=profile,
                 measure_dose_control=True)
     configs = []
-    for _, _, trigger, coupling in METHODS:
+    for _, _, trigger, coupling in methods:
         raw = dict(copy.deepcopy(base), trigger=trigger, dose_coupling=coupling)
         if trigger != 'micro_dropper':
-            # Freeze the actual trigger from the best seed-42 confirmation;
-            # future --seed values change victim/poison RNG, not the carrier.
+            # Keep the auxiliary carrier RNG at 42. The Original base pattern
+            # still follows the experiment seed, so --seed also changes p0;
+            # this is not an entirely frozen trigger across future seeds.
             raw.update(method_carrier_sub_mode=3, method_carrier_time_mode=1,
                        method_carrier_seed=42)
         cfg = _resolve_training_config(raw)
@@ -88,34 +112,41 @@ def _configs(data_home, device, num_workers, seed):
 
 
 def build_matrix(data_home, outdir, device='cuda:0', num_workers=4, *,
-                 seed=42, distortion_samples=256):
+                 seed=42, distortion_samples=256, no_peak=False, factorial=False):
     from train_backdoor import _CHECKPOINT_SCHEMA, _RESULT_SCHEMA
     _integer(seed, 'seed')
     _integer(num_workers, 'num_workers')
     _integer(distortion_samples, 'distortion_samples', 1)
+    profile, methods, rho, no_peak = _profile_settings(no_peak=no_peak, factorial=factorial)
     data_home, outdir = Path(data_home).resolve(), Path(outdir).resolve()
     cells = []
-    for (key, label, _, _), cfg in zip(METHODS, _configs(data_home, device, num_workers, seed)):
+    configs = _configs(data_home, device, num_workers, seed,
+                       no_peak=no_peak, factorial=factorial)
+    for (key, label, _, _), cfg in zip(methods, configs):
         folder = outdir / key
         cells.append(dict(method_key=key, label=label, group='proposed_ablation',
             tables=[], dependencies=[], cfg=cfg, ckpt_dir=str(folder),
             eval_cache=str(folder / 'eval_cache.json')))
     matrix = dict(schema=1, dataset='mmfi', seed=seed,
-        confirmation_profile=PROFILE, status=STATUS, fresh_results_only=True,
+        confirmation_profile=profile, status=STATUS, fresh_results_only=True,
         created_utc=datetime.now(timezone.utc).isoformat(), cells=cells,
         sources=dict(source_sha256=_source_provenance(),
             baseline_config='configs/mmfi/attack_bend.yaml',
-            implementation='Frozen peak-confirmation operators; no traditional baseline changes'),
-        metrics_contract=dict(confirmation_profile=PROFILE,
+            implementation=('Frozen native multicarrier without peak projection; no traditional baseline changes'
+                            if no_peak else 'Frozen peak-confirmation operators; no traditional baseline changes')),
+        metrics_contract=dict(confirmation_profile=profile,
             checkpoint_schema=_CHECKPOINT_SCHEMA, result_schema=_RESULT_SCHEMA,
             evaluation_role='full_official_test', official_test_used=True,
-            full_split_counts=EXPECTED_COUNTS, epochs=50, rho=0.4,
+            full_split_counts=EXPECTED_COUNTS, epochs=50, rho=rho,
             target_joints=[2, 3], dose_grid=list(GRID), seeds=[seed],
             frozen_carrier_seed=42, uncertainty='single seed: not estimated',
+            trigger_seed_policy='Original base pattern follows experiment seed; auxiliary carrier RNG seed stays 42; the complete trigger is not frozen across seeds',
             dose_control_definition='mean_j ||(pred_d-pred_0)-(target_d-true_0)||2 over target joints; then mean samples and positive doses',
             dose_control_units='cached metres; exported millimetres',
             auxiliary_removal='Original unit-RMS p0 replaces unit-RMS (p0+p1)/sqrt(2); not unscaled p0/sqrt(2)',
-            peak_bound='Full/shuffled/Original <= the same per-input/dose Original realized Linf; w/o Peak is explicitly unconstrained',
+            peak_bound=('No peak projection or peak ceiling is imposed on any arm; Original is a distortion reference only'
+                        if no_peak else 'Full/shuffled/Original <= the same per-input/dose Original realized Linf; w/o Peak is explicitly unconstrained'),
+            peak_bound_required_keys=[] if no_peak else ['full', 'w_o_coupling', 'w_o_auxiliary'],
             matches_l2_budget=False, main_asr=False,
             distortion_samples=distortion_samples,
             distortion='pooled digital model-input energies; per-sample Linf audit; no RF/OTA stealthiness claim'))
@@ -124,7 +155,8 @@ def build_matrix(data_home, outdir, device='cuda:0', num_workers=4, *,
 
 
 def _validate_manifest(matrix):
-    if (matrix.get('schema') != 1 or matrix.get('confirmation_profile') != PROFILE or matrix.get('status') != STATUS
+    profile = matrix.get('confirmation_profile')
+    if (matrix.get('schema') != 1 or profile not in (PROFILE, NO_PEAK_PROFILE, FACTORIAL_PROFILE) or matrix.get('status') != STATUS
             or matrix.get('dataset') != 'mmfi' or matrix.get('DRAFT_ONLY')
             or matrix.get('fresh_results_only') is not True or 'draft_profile' in matrix):
         raise ValueError('Manifest is not the full Proposed ablation')
@@ -132,14 +164,17 @@ def _validate_manifest(matrix):
     if matrix.get('plan_sha256') != _plan_fingerprint(matrix):
         raise ValueError('Ablation plan fingerprint differs from its contents')
     cells = matrix['cells']
-    if [c['method_key'] for c in cells] != [row[0] for row in METHODS]:
-        raise ValueError('Ablation must retain all four cells in fixed order')
+    no_peak, factorial = profile != PROFILE, profile == FACTORIAL_PROFILE
+    _, methods, _, _ = _profile_settings(no_peak=no_peak, factorial=factorial)
+    if [c['method_key'] for c in cells] != [row[0] for row in methods]:
+        raise ValueError(f'Ablation must retain all {len(methods)} cells in fixed order')
     first = cells[0]
     data_home = Path(first['cfg']['dataset_root']).parent.parent
     outdir = Path(first['ckpt_dir']).parent
     expected = build_matrix(data_home, outdir, first['cfg']['device'],
         first['cfg']['num_workers'], seed=seed,
-        distortion_samples=matrix['metrics_contract']['distortion_samples'])
+        distortion_samples=matrix['metrics_contract']['distortion_samples'],
+        no_peak=no_peak, factorial=factorial)
     # Source identity is checked separately, including for worker processes.
     # Comparing canonical configs/contracts rejects editable-hash tampering.
     if matrix['metrics_contract'] != expected['metrics_contract']:
@@ -157,7 +192,7 @@ def _validate_manifest(matrix):
 def _collect_input_record(cell):
     from train_backdoor import _load_dataset, _config_fingerprint
     cfg = cell['cfg']
-    record = dict(schema=1, profile=PROFILE,
+    record = dict(schema=1, profile=cfg['confirmation_profile'],
         config_fingerprint=_config_fingerprint(cfg),
         action_file_sha256=_file_sha(cfg['action_npy']))
     seen = []
@@ -209,11 +244,12 @@ def audit_common_inputs(matrix):
     from mmfi_tables import config_fingerprint
     records, plans, assignments, identity, common_plan = {}, {}, {}, None, None
     seed = matrix['seed']
+    rho = matrix['metrics_contract']['rho']
     for cell in matrix['cells']:
         key, cfg = cell['method_key'], cell['cfg']
         folder = Path(cell['ckpt_dir'])
         record = json.loads((folder / 'ablation_inputs.json').read_text(encoding='utf-8'))
-        if (record.get('schema') != 1 or record.get('profile') != PROFILE
+        if (record.get('schema') != 1 or record.get('profile') != matrix['confirmation_profile']
                 or record.get('config_fingerprint') != config_fingerprint(cfg)):
             raise ValueError(f'{key}: invalid full input audit')
         for name in ('train', 'eval'):
@@ -243,12 +279,12 @@ def audit_common_inputs(matrix):
                 raise ValueError(f'{key}: invalid poison sample')
             plan.append([i, d])
             payload.append(pd)
-        expected_count = math.floor(0.4 * EXPECTED_COUNTS['train'])
+        expected_count = math.floor(rho * EXPECTED_COUNTS['train'])
         digest = _sha_json(plan)
         required = dict(config_fingerprint=config_fingerprint(cfg),
             n_total=EXPECTED_COUNTS['train'], n_poison=expected_count,
             seed=seed, selection='uniform', dose_min=0.2, dose_max=1.0,
-            rho_requested=0.4, pivot=1, target_joints=[2, 3],
+            rho_requested=rho, pivot=1, target_joints=[2, 3],
             theta_max_deg=40.0, payload_axis=[0.0, 0.0, 1.0],
             dose_mode='linear', poison_plan_sha256=digest)
         if (any(poison.get(k) != v for k, v in required.items())
@@ -294,6 +330,7 @@ def build_summary(matrix):
     if matrix['sources']['source_sha256'] != _source_provenance():
         raise ValueError('Ablation source changed after plan creation')
     audit = audit_common_inputs(matrix)
+    rho = matrix['metrics_contract']['rho']
     rows, doses, provenance = [], [], []
     for cell in matrix['cells']:
         res, source = _verified_cache(cell)
@@ -302,7 +339,7 @@ def build_summary(matrix):
                 or res.get('attacker_access') != 'data_only'
                 or res.get('dose_coupling') != cfg['dose_coupling']
                 or res.get('n_total') != EXPECTED_COUNTS['train']
-                or res.get('n_poison') != math.floor(0.4 * EXPECTED_COUNTS['train'])
+                or res.get('n_poison') != math.floor(rho * EXPECTED_COUNTS['train'])
                 or res.get('poison_plan_sha256') != audit['poison_plan_sha256'][key]):
             raise ValueError(f'{key}: result disagrees with full input/poison audit')
         series, _ = dose_rows(cell, res)
@@ -310,7 +347,7 @@ def build_summary(matrix):
             raise ValueError(f'{key}: incomplete six-dose evaluation')
         dce = _dose_errors(res)
         row = metric_row(cell, res)
-        row.update(status=STATUS, epochs=50, rho=0.4,
+        row.update(status=STATUS, epochs=50, rho=rho,
             train_samples=EXPECTED_COUNTS['train'], eval_samples=EXPECTED_COUNTS['eval'],
             t1_mpjpe_mm=row.pop('tmpjpe_mm'),
             mean_dose_control_error_mm=sum(dce[1:]) / 5,
@@ -322,16 +359,20 @@ def build_summary(matrix):
         rows.append({name: row[name] for name in SUMMARY_COLUMNS})
         doses.extend(dict(r, dose_control_error_mm=error) for r, error in zip(series, dce))
         provenance.append(source)
-    return dict(status='proposed_ablation_complete', profile=PROFILE,
+    no_peak = matrix['confirmation_profile'] != PROFILE
+    peak_limitation = (
+        'Peak projection is absent from every arm; equal epsilon does not mean equal realized Linf or L2. Original is only a distortion reference.'
+        if no_peak else 'w/o Peak bound is an explicitly different-budget diagnostic, not a fair same-budget ranking.')
+    return dict(status='proposed_ablation_complete', profile=matrix['confirmation_profile'],
         seed=matrix['seed'], plan_sha256=matrix['plan_sha256'], rows=rows,
         dose_response=doses, metrics_contract=matrix['metrics_contract'],
         sources=matrix['sources'], audit=audit, provenance=provenance,
         limitations=[
             'Single seed; no uncertainty or statistical superiority is estimated.',
-            'All four victims are trained afresh; no historical result import or victim-weight transfer.',
+            f'All {len(matrix["cells"])} victims are trained afresh; no historical result import or victim-weight transfer.',
             'The frozen method was selected during previous development, not a blinded first test.',
             'Auxiliary removal uses the Original unit-RMS carrier; carrier allocation changes, actual L2 is not matched.',
-            'w/o Peak bound is an explicitly different-budget diagnostic, not a fair same-budget ranking.',
+            peak_limitation,
             'Digital input distortion does not establish RF stealthiness or over-the-air feasibility.',
             'Split hashes cover ordered file/frame IDs and action-file bytes, not every CSI/pose file.',
         ])
@@ -354,6 +395,7 @@ def build_distortion(matrix, audit):
     original = build_trigger(dict(cfg, trigger='micro_dropper'))
     original_sha = trigger_state_sha256(original)
     rows, paired = [], []
+    bounded_keys = matrix['metrics_contract']['peak_bound_required_keys']
     for cell in matrix['cells']:
         trigger = build_trigger(dict(cell['cfg'], device='cpu', num_workers=0))
         state_sha = trigger_state_sha256(trigger)
@@ -369,7 +411,7 @@ def build_distortion(matrix, audit):
                     raise ValueError('Invalid tensor in digital distortion audit')
                 m, r = distortion_stats(clean, hit), distortion_stats(clean, reference)
                 excess = m['max_abs'] - r['max_abs']
-                if cell['method_key'] != 'w_o_peak' and excess > 0:
+                if cell['method_key'] in bounded_keys and excess > 0:
                     raise ValueError(f"{cell['method_key']}: per-sample peak exceeds Original")
                 measurements.append(m)
                 references.append(r)
@@ -383,7 +425,7 @@ def build_distortion(matrix, audit):
                 relative_l2=m['relative_l2'], rmse=m['rms'], linf=m['max_abs'],
                 snr_db=snr if math.isfinite(snr) else None,
                 snr_db_is_infinite=snr == float('inf'), original_linf=r['max_abs'],
-                peak_bound_required=cell['method_key'] != 'w_o_peak',
+                peak_bound_required=cell['method_key'] in bounded_keys,
                 paired_linf_violations=sum(p['linf_excess'] > 0 for p in pairs),
                 max_paired_linf_excess=max(p['linf_excess'] for p in pairs),
                 cfg_fingerprint=config_fingerprint(cell['cfg']),
@@ -394,11 +436,12 @@ def build_distortion(matrix, audit):
     if (trigger_state_sha256(original) != original_sha
             or _file_sha(cfg['action_npy']) != audit['action_file_sha256']):
         raise ValueError('Original/action reference changed during distortion measurement')
-    report = dict(profile=PROFILE, plan_sha256=matrix['plan_sha256'],
+    report = dict(profile=matrix['confirmation_profile'], plan_sha256=matrix['plan_sha256'],
         common_pair_ids=ids, rows=rows, paired_samples=paired,
         units='dimensionless normalized digital CSI; SNR dB',
         aggregation='pooled signal/error energy; Linf is a global maximum',
         matches_l2_budget=False, original_trigger_state_sha256=original_sha,
+        original_reference_only=matrix['confirmation_profile'] != PROFILE,
         detection_test_performed=False, ota_test_performed=False)
     json.dumps(report, allow_nan=False)
     return report
@@ -416,21 +459,33 @@ def export_summary(matrix, outdir):
     outdir = Path(outdir)
     _atomic_json(outdir / 'ablation_summary.json', report)
     _write_csv(outdir / 'ablation_summary.csv', report['rows'], SUMMARY_COLUMNS)
-    _atomic_json(outdir / 'dose_response.json', dict(profile=PROFILE,
+    _atomic_json(outdir / 'dose_response.json', dict(profile=matrix['confirmation_profile'],
         plan_sha256=matrix['plan_sha256'], rows=report['dose_response']))
     _write_csv(outdir / 'dose_response.csv', report['dose_response'], DOSE_COLUMNS)
     _atomic_json(outdir / 'input_distortion.json', distortion)
     _write_csv(outdir / 'input_distortion.csv', distortion['rows'], DISTORTION_COLUMNS)
-    lines = ['# Full MM-Fi Proposed ablation', '',
-        f"Seed {matrix['seed']}; 50 epochs; rho=.4; four fresh victims; full protocol1-s1.", '',
+    no_peak = matrix['confirmation_profile'] != PROFILE
+    factorial = matrix['confirmation_profile'] == FACTORIAL_PROFILE
+    rho = matrix['metrics_contract']['rho']
+    title = '# Full MM-Fi Proposed ablation' + (' (no peak bound)' if no_peak else '')
+    if factorial:
+        title += ' — coupling x auxiliary factorial'
+    lines = [title, '',
+        f"Seed {matrix['seed']}; 50 epochs; rho={rho:g}; {len(matrix['cells'])} fresh victims; full protocol1-s1.", '',
         '| Variant | T-MPJPE@1 (mm) | Dose-control error (mm) | Clean MPJPE (mm) |',
         '| --- | ---: | ---: | ---: |']
     for row in report['rows']:
         lines.append(f"| {row['method']} | {row['t1_mpjpe_mm']:.3f} | "
                      f"{row['mean_dose_control_error_mm']:.3f} | {row['clean_mpjpe_mm']:.3f} |")
+    budget_notes = (
+        ['No peak projection is applied to any arm; Original is a distortion reference, not a ceiling.',
+         'w/o Auxiliary carrier uses the Original unit-RMS pattern; epsilon is shared but realized Linf and L2 are not matched.']
+        if no_peak else
+        ['w/o Auxiliary carrier uses the Original unit-RMS pattern. Peak ceiling is unchanged but realized L2 is not matched.',
+         'w/o Peak bound has a different realized budget; inspect input_distortion.csv before interpreting its target-error gain.'])
     lines.extend(['', 'Dose-control error averages target-joint displacement-vector error over samples and five positive doses, not normalized schedule MAD.',
-        'w/o Auxiliary carrier uses the Original unit-RMS pattern. Peak ceiling is unchanged but realized L2 is not matched.',
-        'w/o Peak bound has a different realized budget; inspect input_distortion.csv before interpreting its target-error gain.',
+        'Clean PA-MPJPE and Clean PCK@0.2 are retained in CSV/JSON. Clean PCK uses untriggered inputs and true poses, not attack success; its threshold is 0.2 times the reference joint distance (5,12), not 20 mm.',
+        *budget_notes,
         'All six doses are evaluated with each same trained victim; no dose-specific retraining.',
         f"Status: `{report['status']}`; Plan SHA256: `{matrix['plan_sha256']}`.", '',
         'Limitations:', *[f'- {item}' for item in report['limitations']]])
@@ -447,7 +502,7 @@ def export_summary(matrix, outdir):
         axis.set(xlabel='Test dose', ylabel=title)
         axis.grid(alpha=.25)
     axes[0].legend(fontsize=7)
-    fig.suptitle(f"Full MM-Fi ablation; seed {matrix['seed']}; rho=.4")
+    fig.suptitle(f"Full MM-Fi ablation; seed {matrix['seed']}; rho={rho:g}")
     fig.tight_layout()
     fig.savefig(outdir / 'dose_response.png', dpi=160)
     plt.close(fig)
@@ -459,6 +514,10 @@ def parse_args(argv=None):
     parser.add_argument('--data-home', type=Path)
     parser.add_argument('--outdir', type=Path)
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--no-peak', action='store_true',
+                        help='Use the three-arm native multicarrier Proposed without peak projection')
+    parser.add_argument('--factorial', action='store_true',
+                        help='Use four native no-peak arms at rho=0.1: coupling x auxiliary carrier')
     parser.add_argument('--devices', nargs='+', default=['cuda:0', 'cuda:1', 'cuda:2'])
     parser.add_argument('--num-workers', type=int, default=4)
     parser.add_argument('--distortion-samples', type=int, default=256)
@@ -490,14 +549,17 @@ def main(argv=None):
     if (not args.devices or len(set(args.devices)) != len(args.devices)
             or any(d != 'cpu' and re.fullmatch(r'cuda:(0|[1-9][0-9]*)', d) is None for d in args.devices)):
         raise ValueError('--devices must list distinct logical cuda:N devices, or cpu')
+    folder = ('mmfi_proposed_factorial_ablation' if args.factorial else
+              'mmfi_proposed_no_peak_ablation' if args.no_peak else 'mmfi_proposed_ablation')
     outdir = (args.outdir or args.data_home / 'runs' /
-              f'mmfi_proposed_ablation_s{args.seed}_v1').resolve()
+              f'{folder}_s{args.seed}_v1').resolve()
     if args.fresh and outdir.exists() and any(outdir.iterdir()):
         raise FileExistsError('--fresh refuses a non-empty output directory; use a NEW path')
     with _cell_lock(outdir):
         path = outdir / 'proposed_ablation.resolved.json'
         requested = build_matrix(args.data_home, outdir, args.devices[0],
-            args.num_workers, seed=args.seed, distortion_samples=args.distortion_samples)
+            args.num_workers, seed=args.seed, distortion_samples=args.distortion_samples,
+            no_peak=args.no_peak, factorial=args.factorial)
         _validate_manifest(requested)
         if path.exists():
             matrix = json.loads(path.read_text(encoding='utf-8'))
@@ -512,13 +574,14 @@ def main(argv=None):
             matrix = requested
         _atomic_json(path, matrix)
         if args.dry_run:
-            print(f'[{STATUS}] DRY RUN: seed {args.seed}; rho=.4; 50 epochs; four full independent cells; NO data/GPU/training.\n{path}', flush=True)
+            rho = matrix['metrics_contract']['rho']
+            print(f'[{STATUS}] DRY RUN: seed {args.seed}; rho={rho:g}; 50 epochs; {len(matrix["cells"])} full independent cells; profile={matrix["confirmation_profile"]}; NO data/GPU/training.\n{path}', flush=True)
             return 0
         if not args.summary_only:
             _check_inputs(matrix, args.devices)
             run_matrix(matrix, path, args.devices, worker_script=Path(__file__))
         if any(not _complete(cell) for cell in matrix['cells']):
-            raise ValueError('All four full cells must finish before exporting the ablation summary')
+            raise ValueError(f'All {len(matrix["cells"])} full cells must finish before exporting the ablation summary')
         export_summary(matrix, outdir)
         print(f'[ablation] Complete -> {outdir / "ablation_summary.md"}', flush=True)
         return 0
