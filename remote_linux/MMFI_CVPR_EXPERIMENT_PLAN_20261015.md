@@ -13,6 +13,39 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
+### Cập nhật hiện hành: ba bảng chính, ba seed (2026-10-16)
+
+Người dùng đã chốt triển khai **chỉ T1, T2, T3 trên MM-Fi**, seeds **42, 43, 44**;
+đồng ý push sau khi kiểm thử. Người dùng tự pull và khởi chạy trên MICA; chưa có
+kết quả seed 43/44 chỉ vì code được chuẩn bị. Các trạng thái thiếu triển khai
+ở các mục lịch sử bên dưới không thay thế quyết định mới nhất này.
+
+- **T1:** Clean reference + sáu baseline native của comparison v3 + Proposed A1.
+  Không thêm Blended/POR hay đổi tham số baseline. Cột chính: **T-MPJPE ↓,
+  Target-PCK ↑, Clean MPJPE ↓, Clean PA-MPJPE ↓**. Dose 1 và threshold 0.2
+  được định nghĩa trong caption/protocol, không nối vào tên cột.
+- **T2:** ma trận sáu hàng dose, ba cột rho=.1/.2/.4; mỗi ô T-MPJPE.
+  Kèm summary Clean MPJPE và mean-positive DCE cho từng rho. Không train riêng
+  theo từng dose; mỗi victim được đánh giá đủ sáu dose.
+- **T3:** A1--Full (auxiliary ✓, coupling ✓), A2 (✓, ×), A3 (×, ✓),
+  A4 (×, ×). Ba cột kết quả: **T-MPJPE ↓, DCE ↓, Clean MPJPE ↓**.
+  Giữ đúng bốn nhánh factorial đã chạy, không tối ưu Proposed tiếp.
+- Mỗi ô tính metric trên full TEST trong từng seed, rồi **mean ± sample SD
+  (ddof=1)** trên ba giá trị seed. DCE summary lấy năm dose dương trong từng
+  seed trước; không đưa d=0 vào mean hoặc dùng các frame làm lần lặp seed.
+- Dùng chung đúng A1 giữa T1/T2(rho=.1)/T3 trong mỗi seed. Tổng cộng 13 scientific
+  victims/seed. Mặc định reuse 13 seed-42 victims sau kiểm tra config/cache/
+  checkpoint/poison/input identities; chỉ train **26 victims mới** cho 43/44.
+  Không sửa thư mục lịch sử, không tự retrain seed 42 khi reference thiếu.
+- Launcher mới: `23_run_a1_three_tables.sh`; hướng dẫn:
+  `A1_THREE_TABLES_VI.md`; output riêng:
+  `runs/mmfi_a1_three_tables_s42_43_44_v1`. Chỉ xuất complete sau đủ 39 cells.
+- Khóa target joints [2,3], PCK scale từ clean GT (5,12), threshold .2, full
+  protocol1-s1/split seed 0, SGD recipe 50 epochs đã chốt. Native noise/cover
+  không được gọi equal-budget; method vẫn là development-selected.
+- T4 giữ cho supplementary; **không chạy thêm T4/T5/T6/T7 trong batch này**.
+  Diagnostics/no-trigger controls vẫn được giữ, không thêm cột metric linh tinh.
+
 **Mở note này trước khi định chạy, sửa runner, đóng gói hoặc gọi một bảng là hoàn chỉnh.** Bảng ở Mục 5 là kế hoạch thực nghiệm người dùng đã chốt; note không tự cấp quyền khởi chạy hay push. Trước mỗi job, đối chiếu và ghi rõ: ID bảng; các phương pháp và clean/control reference; dataset/split; seed/rho/dose/epochs; định nghĩa và hướng của từng metric; code đánh giá metric đã có chưa; checkpoint/artifact nào được reuse và fingerprint có khớp không. Nếu thiếu hàng hoặc metric bắt buộc, dừng để thống nhất thay đổi hoặc gắn nhãn **exploratory/incomplete**, không gọi là bảng chính của bài.
 
 **Sửa danh sách T1 theo chỉ đạo mới của người dùng (2026-10-16): không chạy Blended.** T1 hiện gồm **6 baseline** BadNets-CSI, WaNet-CSI, FTrojan-CSI, FIBA-CSI, SIG-CSI, BppAttack-CSI; thêm Proposed và **Clean reference**. Bốn metric chính vẫn là **T-MPJPE@d=1 ↓, Target-PCK@0.2 tại d=1 ↑, Clean MPJPE ↓, Clean PA-MPJPE ↓**. Clean PCK không phải Target-PCK; không thay thế một cột bằng cột kia. Kết quả Blended cũ được giữ riêng, nhưng không thuộc T1 hiện tại và không tuyên bố Proposed hơn Blended. Nếu người dùng đổi danh sách tiếp, ghi phiên bản kế hoạch mới trước khi chạy.
@@ -119,9 +152,9 @@ Trung bình theo mẫu/khớp; cột summary trung bình **5 dose dương**. Kh�
 
 | ID | Câu hỏi | Hàng / biến can thiệp | Metric hiển thị chính |
 | --- | --- | --- | --- |
-| T1 Comparison | Method đạt pose attacker mà giữ utility sạch tốt đến đâu? | BadNets-CSI, WaNet-CSI, FTrojan-CSI, FIBA-CSI, SIG-CSI, BppAttack-CSI, Proposed; Clean reference không xếp hạng attack. Không có Blended theo chỉ đạo 2026-10-16. | T-MPJPE@1 ↓; Target-PCK@.2@1 ↑; Clean MPJPE ↓; Clean PA-MPJPE ↓ |
-| T2 Dose × Poison | Điều khiển dose và đánh đổi poison có ổn định không? | Hàng rho=.1,.2,.4; đủ cột d=0,.2,.4,.6,.8,1 (người dùng chốt lại 2026-10-16) | Mỗi ô T-MPJPE ↓; thêm Clean MPJPE và mean-positive DCE cuối mỗi hàng; kèm full curves |
-| T3 Ablation | Coupling và carrier phụ đóng góp độc lập/tương tác thế nào? | Full; w/o Coupling; w/o Auxiliary; w/o Both — cùng không peak | T-MPJPE@1 ↓; mean-positive DCE ↓; Clean MPJPE ↓ |
+| T1 Comparison | Method đạt pose attacker mà giữ utility sạch tốt đến đâu? | BadNets-CSI, WaNet-CSI, FTrojan-CSI, FIBA-CSI, SIG-CSI, BppAttack-CSI, Proposed A1; Clean reference không xếp hạng attack. Không có Blended. | T-MPJPE ↓; Target-PCK ↑; Clean MPJPE ↓; Clean PA-MPJPE ↓; định nghĩa dose/ngưỡng ở Mục 4 |
+| T2 Dose × Poison | Điều khiển dose và đánh đổi poison có ổn định không? | Sáu hàng d=0,.2,.4,.6,.8,1; ba cột rho=.1,.2,.4 | Mỗi ô T-MPJPE ↓; kèm Clean MPJPE và mean-positive DCE theo rho; full curves lưu artifact |
+| T3 Ablation | Coupling và carrier phụ đóng góp độc lập/tương tác thế nào? | A1--Full (✓,✓); A2 (✓,×); A3 (×,✓); A4 (×,×) theo thứ tự auxiliary/coupling | T-MPJPE ↓; mean-positive DCE ↓; Clean MPJPE ↓ |
 | T4 Stealthiness | Có ít nhiễu và khó phân biệt clean/trigger không? | Cùng targeted methods, cùng d=1/rho và cùng input identities | Relative L2 ↓; AUROC-input và AUROC-feature (gần .5 khó phân biệt); TPR@calibrated-5%-FPR ở panel/phụ lục |
 | T5 Defense resistance | Sau defense model có trở lại dự đoán đúng thay vì chỉ bị phá hỏng không? | No defense; clean fine-tuning; fine-pruning phù hợp HPE; CSI preprocessing ở panel riêng | T-MPJPE@1; Target-PCK; Clean MPJPE; triggered-to-true MPJPE |
 | T6 MM-Fi generalization | Kết quả có phụ thuộc một victim/split dễ không? | Backbone chính + backbone thứ hai đã reproduce sạch; split chuẩn + held-out subject/environment đã audit | T-MPJPE@1 ↓; Target-PCK ↑; Clean MPJPE ↓, trình bày từng setting riêng |
