@@ -1,0 +1,2 @@
+# Detector dependency; existing NumPy/SciPy/Torch environment is retained.
+scikit-learn==1.6.1

@@ -21,6 +21,10 @@
 
 **Bổ sung T1 từ checkpoint (2026-10-16):** người dùng đã xác nhận 8/8 checkpoint còn trên MICA. Evaluator `eval_a1_target_pck.py` / launcher `19_eval_a1_target_pck.sh` đọc 6 baseline v3 + A1 `full` + Clean cũ, evaluate full TEST tại d=1, tính Target-PCK và no-trigger controls. Chỉ xuất complete sau khi tái tính T-MPJPE/Clean MPJPE/PA-MPJPE khớp cache trong 0.05 mm. Output riêng `target_pck_eval/`, giữ cache/checkpoint cũ. Clean cũ cùng recipe nhưng thiếu pair-ID hash tại thời điểm train; evaluator kiểm tra recipe, ordered split hiện tại và replay utility, đồng thời công bố giới hạn này. Xem `A1_TARGET_PCK_EVAL_VI.md`. Chưa có kết quả TEST mới cho đến khi người dùng chạy evaluator trên MICA.
 
+**T1 đã hoàn tất và kiểm tra ZIP (2026-10-16):** 8/8 replay đạt; CSV/JSON và Target-PCK tái tính từ 33264 mẫu/8 NPZ khớp. A1: T-MPJPE@1=155.397937 mm, Target-PCK@.2=51.937530%, Clean MPJPE=174.684435 mm, Clean PA-MPJPE=104.599647 mm. Bảng trình bày Clean reference đầu, targeted methods theo T-MPJPE giảm dần. Chỉ seed 42, không suy thành mean/SD ba seed.
+
+**Lượt tiếp theo được người dùng yêu cầu (2026-10-16): T2 và T4, seed 42.** T2 reuse A1 rho=.1 và coupling control từ factorial; chỉ train hai victim mới rho=.2/.4 theo cùng A1 recipe, đủ 50 epochs/full split. Theo bổ sung mới nhất của người dùng, bảng T2 chính hiển thị **đủ cả sáu dose**, thêm Clean MPJPE và mean-positive DCE cuối mỗi hàng. T4 reuse toàn bộ 7 targeted checkpoints T1; đo full TEST paired distortion và hai detector fit trên clean TRAIN, calibration theo sequence tách biệt. Hướng dẫn/lệnh trong `A1_T2_T4_VI.md`; chưa có số T2/T4 mới cho đến khi chạy trên MICA.
+
 ## 1. Quyết định chính
 
 Không chốt chất lượng bài bằng số bảng. Kế hoạch gồm **7 nhóm thực nghiệm có câu hỏi riêng**, có thể trình bày thành 7 bảng, hoặc gộp một phần vào figure/phụ lục khi viết bài. Đây là thiết kế đề xuất cho bài này, không phải một quota hay bảo đảm được nhận ở CVPR.
@@ -116,7 +120,7 @@ Trung bình theo mẫu/khớp; cột summary trung bình **5 dose dương**. Kh�
 | ID | Câu hỏi | Hàng / biến can thiệp | Metric hiển thị chính |
 | --- | --- | --- | --- |
 | T1 Comparison | Method đạt pose attacker mà giữ utility sạch tốt đến đâu? | BadNets-CSI, WaNet-CSI, FTrojan-CSI, FIBA-CSI, SIG-CSI, BppAttack-CSI, Proposed; Clean reference không xếp hạng attack. Không có Blended theo chỉ đạo 2026-10-16. | T-MPJPE@1 ↓; Target-PCK@.2@1 ↑; Clean MPJPE ↓; Clean PA-MPJPE ↓ |
-| T2 Dose × Poison | Điều khiển dose và đánh đổi poison có ổn định không? | Hàng rho=.1,.2,.4; cột d=.2,.6,1 trong main, đủ 6 dose trong dữ liệu/plot | Mỗi ô T-MPJPE ↓; thêm Clean MPJPE ở cuối mỗi hàng; DCE ở plot kèm theo |
+| T2 Dose × Poison | Điều khiển dose và đánh đổi poison có ổn định không? | Hàng rho=.1,.2,.4; đủ cột d=0,.2,.4,.6,.8,1 (người dùng chốt lại 2026-10-16) | Mỗi ô T-MPJPE ↓; thêm Clean MPJPE và mean-positive DCE cuối mỗi hàng; kèm full curves |
 | T3 Ablation | Coupling và carrier phụ đóng góp độc lập/tương tác thế nào? | Full; w/o Coupling; w/o Auxiliary; w/o Both — cùng không peak | T-MPJPE@1 ↓; mean-positive DCE ↓; Clean MPJPE ↓ |
 | T4 Stealthiness | Có ít nhiễu và khó phân biệt clean/trigger không? | Cùng targeted methods, cùng d=1/rho và cùng input identities | Relative L2 ↓; AUROC-input và AUROC-feature (gần .5 khó phân biệt); TPR@calibrated-5%-FPR ở panel/phụ lục |
 | T5 Defense resistance | Sau defense model có trở lại dự đoán đúng thay vì chỉ bị phá hỏng không? | No defense; clean fine-tuning; fine-pruning phù hợp HPE; CSI preprocessing ở panel riêng | T-MPJPE@1; Target-PCK; Clean MPJPE; triggered-to-true MPJPE |
