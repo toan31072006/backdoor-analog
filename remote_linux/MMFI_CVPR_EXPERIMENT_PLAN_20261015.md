@@ -13,6 +13,43 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
+### Bổ sung mới nhất: T5 local, không đổi batch T1–T3 (2026-10-18)
+
+Người dùng đã đồng ý **tạo code, kiểm thử và push GitHub** bộ defense **FT, FP, NAD,
+FT-SAM**, kèm No defense. Chỉ đạo hiện hành: kiểm tra seed 42/43 của T1–T3 trước;
+ưu tiên hoàn tất seed 43 với tối đa 2 job nếu còn thiếu, **defense để sau**.
+Chưa khởi chạy thí nghiệm mới trên máy Vân/MICA từ workspace hiện tại.
+Đây là batch T5 riêng, không bổ sung vào hoặc sửa manifest/source/checkpoint của
+T1–T3 đang chạy. Các mục lịch sử dưới đây vẫn giữ nguyên để truy vết.
+
+- Theo chỉ đạo bổ sung cùng ngày: **chỉ adapt defense và chỉ đánh giá trên Proposed
+  A1**, không cải tiến defense, không chạy lại baseline truyền thống. Reuse A1
+  checkpoint 50 epoch/rho=.1 của từng seed; không train victim lại hoặc sửa trigger.
+- Pilot seed 42 trước; code hỗ trợ 43/44 sau. Mỗi seed có 5 hàng No-defense/repair,
+  4 repair pipelines; đủ ba seed (15 hàng) mới báo mean ± sample SD. Clean MPJPE
+  trên A1 vẫn bắt buộc; không repair thêm clean model. Không thêm Blended/POR.
+- Chung tối đa 5% original clean TRAIN/seed, tách khoảng 80/20 theo sequence
+  thành repair-fit/repair-selection. Selection chỉ held out khỏi repair fitting;
+  original victim có thể đã thấy dữ liệu ấy. Không dùng `validation` hiện tại vì
+  nó trùng official TEST; không chọn defense bằng attack score/TEST.
+- T5 dùng full TEST, T-MPJPE, Target-PCK, Clean MPJPE và Triggered GT-MPJPE
+  trên joints [2,3]. Defense tốt làm target matching kém đi nhưng lấy lại pose thật;
+  model hỏng không được tính là defense thành công. Sáu-dose DCE giữ diagnostic.
+- Profile **mmfi_a1_defenses_source_default_adapt_v1** giữ số mặc định/source
+  schedule: FT/FP/SAM 100 epochs, NAD 10+10, SGD .01/.9/WD=.0005, batch256,
+  NAD betas [500,1000,1000], SAM radius2.0/adaptive. Chỉ adapt pose loss/layer,
+  bank dữ liệu, FP clean-selection và Windows workers0. Mọi nhánh giữ final
+  checkpoint, không clean-best fallback. Không gọi đây là source classification
+  reproduction hoặc config tối ưu MM-Fi. Pin code/default-YAML hashes và giữ
+  output T5 riêng; không đổi worker/manifest T1–T3.
+- Runner mới `ATKBackd/run_a1_defenses.py`; hướng dẫn `A1_DEFENSES_VI.md`;
+  nguồn `ATKBackd/defend/a1_defense_sources.json`. Code/test local không phải
+  kết quả full MM-Fi/GPU hay thí nghiệm paper đã hoàn tất. Chưa chạy T4/T6/T7.
+- `check_a1_three_tables.py --outdir EXISTING_RUN --seeds 42 43` chỉ đọc và
+  kiểm tra các artifact đã có; không train, không sửa checkpoint/manifest,
+  không launch defense hay tự chuyển sang seed 44. Đếm đủ file không tự là
+  kết quả đã verify; checker phải xác minh binding/cache/checkpoint/inputs.
+
 ### Cập nhật hiện hành: ba bảng chính, ba seed (2026-10-16)
 
 Người dùng đã chốt triển khai **chỉ T1, T2, T3 trên MM-Fi**, seeds **42, 43, 44**;

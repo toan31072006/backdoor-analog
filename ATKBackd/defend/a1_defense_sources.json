@@ -1,0 +1,172 @@
+{
+  "schema_version": "a1_defense_sources_v1",
+  "upstream_repo": "https://github.com/SCLBD/BackdoorBench",
+  "commit": "f02e3534645f0ee63d6848653062cd6c0d6c400d",
+  "reference_branch": "main",
+  "verified_on": "2026-10-18",
+  "verification": "Commit resolved with git ls-remote; SHA256 and byte lengths computed from raw HTTP response bytes at the pinned commit, not from reformatted text.",
+  "profile_status": "SOURCE_DEFAULTS_TASK_ADAPTED_NOT_FULL_RUN_VALIDATED",
+  "implementation_relationship": "Independent CSI/HPE mechanism adaptations, not an unchanged or byte-identical reproduction of BackdoorBench classification pipelines. This manifest vendors no upstream source code.",
+  "files": [
+    {
+      "path": "defense/ft.py",
+      "sha256": "4494ec687600cfd527a33814d5d0fc9903fe7b11c0ecce703bfd5c997ce221e0",
+      "size_bytes": 12564,
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/defense/ft.py"
+    },
+    {
+      "path": "defense/fp.py",
+      "sha256": "b34544dddd14a0e24847b6b5167d909f7f91340d18741a22468ea6d775861bf5",
+      "size_bytes": 20707,
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/defense/fp.py"
+    },
+    {
+      "path": "defense/nad.py",
+      "sha256": "367ef581e66438c04d2c803e45b0bd7a90b2613f589efe738b360bc3196c1d38",
+      "size_bytes": 38050,
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/defense/nad.py"
+    },
+    {
+      "path": "defense/ft-sam.py",
+      "sha256": "f612b0cf9e61052e15a764de55988f05a36a61ab8e83f58d5ebf44697521ca83",
+      "size_bytes": 20691,
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/defense/ft-sam.py"
+    },
+    {
+      "path": "utils/defense_utils/sam/sam.py",
+      "sha256": "7537f9bdf26367b023e3e7ad42dd5cfd08973248c3cfa359a87ccd31148150d5",
+      "size_bytes": 6969,
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/utils/defense_utils/sam/sam.py"
+    },
+    {
+      "path": "config/defense/ft/config.yaml",
+      "sha256": "1ee244af45f796eed38c793166b60c3a8094306fcf18b31e2f949982a1391dbb",
+      "size_bytes": 379,
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/config/defense/ft/config.yaml"
+    },
+    {
+      "path": "config/defense/fp/config.yaml",
+      "sha256": "6b38b0f458c4fa00d0d1e5f2aa431131875cdb0962ebcaaa1e25d4de009d4338",
+      "size_bytes": 518,
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/config/defense/fp/config.yaml"
+    },
+    {
+      "path": "config/defense/nad/config.yaml",
+      "sha256": "736a6d0ebee8fd8cf4f7388f3246d81a4f6a664b83aab9b58c41c873a96756ab",
+      "size_bytes": 493,
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/config/defense/nad/config.yaml"
+    },
+    {
+      "path": "config/defense/ft-sam/config.yaml",
+      "sha256": "ba3ff3e829ac5075494ad32bdb675fe2deec6d74940dbc16a74fa37747f8bde6",
+      "size_bytes": 437,
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/config/defense/ft-sam/config.yaml"
+    },
+    {
+      "path": "utils/aggregate_block/train_settings_generate.py",
+      "sha256": "8bb2f082d6aa4a9fa3ab5c7a629023b125d7bdaf0b984148845e58cc65f531b7",
+      "size_bytes": 3688,
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/utils/aggregate_block/train_settings_generate.py"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "c67d7a90ddf78746757ebff6fcde6ef57cf57c6c9321faa5ffd275565f8f816e",
+      "size_bytes": 34214,
+      "url": "https://raw.githubusercontent.com/SCLBD/BackdoorBench/f02e3534645f0ee63d6848653062cd6c0d6c400d/LICENSE"
+    }
+  ],
+  "upstream_defaults": {
+    "common": {
+      "dataset": "cifar10",
+      "model": "preactresnet18",
+      "epochs": 100,
+      "batch_size": 256,
+      "lr": 0.01,
+      "optimizer": "sgd",
+      "sgd_momentum": 0.9,
+      "wd": 0.0005,
+      "lr_scheduler": "CosineAnnealingLR",
+      "cosine_t_max": 100,
+      "ratio": 0.05,
+      "num_workers": 4,
+      "checkpoint_selection": "Final live model, not minimum-clean-loss or original-model fallback"
+    },
+    "fp": {
+      "acc_ratio": 0.1,
+      "once_prune_ratio": 0.01,
+      "ranking": "Mean signed input activation of a linear head",
+      "grid": "range(0, feature_count, ceil(feature_count * once_prune_ratio))",
+      "selection": "Last pruning step within relative clean-accuracy tolerance, stopping at the first failure; source uses clean TEST"
+    },
+    "nad": {
+      "te_epochs": 10,
+      "actual_teacher_epochs": 10,
+      "actual_student_epochs": 10,
+      "betas": [500, 1000, 1000],
+      "p": 2.0,
+      "attention_normalization": "Channel-summed absolute activation powers divided by their spatial L2 norm plus 1e-6; MSE attention loss",
+      "teacher_scheduler": "CosineAnnealingLR T_max=100, stepped per epoch for ten teacher epochs",
+      "student_scheduler": "Manual epoch LR: configured lr before epoch 2, 0.01 at epochs 2-19, 0.0001 from epoch 20; default ten student epochs therefore use 0.01",
+      "unused_yaml_fields": "epochs=100 does not set the NAD student loop length; momentum/weight_decay aliases do not replace sgd_momentum/wd in the optimizer factory"
+    },
+    "ft_sam": {
+      "rho_min": 2.0,
+      "rho_max": 2.0,
+      "adaptive": true,
+      "alpha": 0.0,
+      "label_smoothing": 0.1,
+      "scheduler_step_unit": "minibatch",
+      "note": "Equal rho_min/rho_max keep radius at 2.0; alpha zero disables the source gradient-decomposition correction"
+    }
+  },
+  "adaptations": {
+    "common": [
+      "HPELi CSI-to-pose regression replaces image classification. MPJPE replaces cross-entropy, while clean repair-selection error replaces accuracy only for the FP stopping criterion.",
+      "Repair starts from audited, complete epoch-49 T1 checkpoints. The original victim, trigger, poison identities and T1-T3 files remain immutable.",
+      "A shared trusted-clean bank uses at most 5% of original TRAIN frames per seed, split into sequence-disjoint repair-fit and repair-selection partitions. The original victim may already have seen these TRAIN observations.",
+      "Official TEST is neither a repair loader nor a hyperparameter-selection set. All defenses retain their final scheduled checkpoint; full TEST is scored after repair. No initial-epoch or clean-best fallback is used.",
+      "Numerical optimizer, epoch, batch, FP-step, NAD-beta and SAM-radius defaults follow the pinned configs and operative source code. HPE layer mapping, clean-bank grouping, loss and FP utility semantics are explicit task adaptations, not optimized defenses.",
+      "There are no class labels or meaningful classification label-smoothing targets in pose regression. The common sequence-balanced, sequence-disjoint clean bank replaces image/class-oriented subset handling; RGB augmentations are not applied to CSI.",
+      "Windows repair/evaluation loaders use zero subprocess workers as a new T5 execution policy; no worker policy in the frozen original experiments is changed."
+    ],
+    "ft": {
+      "name": "Clean fine-tuning",
+      "source_paths": ["defense/ft.py", "config/defense/ft/config.yaml"],
+      "mechanism": "Optimize the inherited victim on trusted clean inputs and true pose labels.",
+      "adaptation": "Full HPE parameter fine-tuning with source numerical defaults and MPJPE, without RGB augmentation or class sampling. The final scheduled model is retained."
+    },
+    "fp": {
+      "name": "Fine-Pruning",
+      "paper_title": "Fine-Pruning: Defending Against Backdooring Attacks on Deep Neural Networks",
+      "source_paths": ["defense/fp.py", "config/defense/fp/config.yaml"],
+      "mechanism": "Rank model features by clean activation, suppress the least-active features, then fine-tune.",
+      "adaptation": "Mask input columns of HPE final linear regression.7, ranked by signed mean activation, using source 1%-step counts. Replace source clean-TEST accuracy loss with clean-TRAIN-selection relative MPJPE increase within 10%, stopping at first failure. Fix the source off-by-one mask slice and mutable-candidate alias explicitly. Retain the final fine-tuned model. This is not pruning every backbone convolutional channel."
+    },
+    "nad": {
+      "name": "Neural Attention Distillation",
+      "paper_title": "Neural Attention Distillation: Erasing Backdoor Triggers from Deep Neural Networks",
+      "source_paths": ["defense/nad.py", "config/defense/nad/config.yaml"],
+      "upstream_author_code": "https://github.com/bboylyg/NAD",
+      "mechanism": "Fine-tune a teacher on trusted clean data, freeze it, and repair an original-victim student with attention-transfer and clean-task losses.",
+      "adaptation": "Map the three source attention positions to HPE skunit1, skunit2 and regression.5, retain source betas [500,1000,1000], p=2 and norm-plus-1e-6 normalization, and replace the clean class loss with MPJPE. Teacher and original-victim student each run the operative source ten epochs; use final teacher and final student, not clean-best checkpoints."
+    },
+    "ft_sam": {
+      "name": "FT-SAM",
+      "paper_title": "Enhancing Fine-Tuning Based Backdoor Defense with Sharpness-Aware Minimization",
+      "source_paths": ["defense/ft-sam.py", "utils/defense_utils/sam/sam.py", "config/defense/ft-sam/config.yaml"],
+      "mechanism": "Use two forward/backward passes: a weight-adaptive perturbation maximizing clean loss locally, followed by an update at restored weights.",
+      "adaptation": "An independent weight-adaptive two-pass update retains source radius 2.0, alpha zero, SGD defaults and the operative per-minibatch cosine scheduler. MPJPE replaces label-smoothed classification cross-entropy; no artificial pose classes or class-balanced labels are introduced. Retain the final model."
+    }
+  },
+  "licenses": {
+    "backdoorbench_declared_spdx": "CC-BY-NC-4.0",
+    "license_url": "https://github.com/SCLBD/BackdoorBench/blob/f02e3534645f0ee63d6848653062cd6c0d6c400d/LICENSE",
+    "third_party_notice": "The repository explicitly excepts third-party components with their own terms. Its repository license must not be assumed to cover every dependency or original author implementation.",
+    "attribution": "Retain attribution to BackdoorBench and the original defense authors when using the relevant methods. A source audit is not endorsement by those authors or a legal review."
+  },
+  "limits": [
+    "Pinned provenance establishes what was inspected, not that a CSI/HPE adaptation is empirically effective.",
+    "The local implementation and tests do not by themselves establish a full MM-Fi defense result or statistical superiority.",
+    "FT, FP, NAD and FT-SAM are four representative model-repair settings, not coverage of all BackdoorBench defenses or detection methods."
+  ]
+}
