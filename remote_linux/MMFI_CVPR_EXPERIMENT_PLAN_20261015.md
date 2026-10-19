@@ -38,6 +38,35 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
+### Sửa lỗi cache DCE 2026-10-20 — không retrain victim
+
+Log người dùng gửi cho thấy task v2 đã thoát với
+`Invalid shape/value in dce_error_mm`, task `Ready`, không có cell v2 đang
+chạy trong log. Đây là **lỗi reporter**, không phải kết quả defense kém hoặc
+bằng chứng hỏng checkpoint: evaluator v1 lưu DCE `(N,6)` sau khi mean target
+joints, còn reader v2 và fixture tổng hợp đã giả sai `(N,6,2)`.
+
+- Chỉ sửa reader reporting về đúng `(N,6)`; không broadcast thành per-joint,
+  không đổi công thức/đơn vị/mean-positive DCE hoặc bất kỳ metric target nào.
+- Thêm regression lấy output **thật của evaluator** trên synthetic poses;
+  test đọc-cache/reuse/worker phải dùng cùng schema, không chỉ mock tự khớp.
+- V1 evaluator, FT/ANP/NAD/FT-SAM operators, victim/trigger/recipe vẫn nguyên
+  vẹn. Original NPZ/checkpoint/record không bị sửa hoặc xóa. Các test đã nêu
+  ở lịch sử không bắt được lỗi nối evaluator-reader này, không coi chúng là
+  xác nhận full run. Việc sửa reader làm source hash v2/CLP thay đổi có chủ đích.
+- **Không sửa tay hash manifest v2 cũ, không dùng lại output đã khóa với code
+  cũ.** Dùng output mới
+  `mmfi_a1_defenses_ft_anp_nad_sam_s42_43_44_v3_dcefix`, task riêng
+  `MMFI-A1-Defense-DCEFix`; vẫn gọi runner/helper v2 đã sửa, không thay thuật
+  toán defense. Reuse seed42 từ v1 qua audit như cũ; không train A1 lại.
+- CLP chưa chạy trong log này: để sau bốn defense. Khi chạy CLP phải dùng
+  output mới và reference trỏ tới v3_dcefix, không reference manifest v2 cũ
+  đã khóa với reader sai. Hướng dẫn sửa lỗi trong `A1_DEFENSES_V2_VI.md`.
+- Kiểm thử hotfix: **194 tests đạt, exit code 0 theo hai nhóm**: 186
+  reporter/reuse/v2 worker/CLP runner và 8 regression evaluator thực + NPZ
+  roundtrip. NPZ full-count test dùng dữ liệu tổng hợp lặp để kiểm schema,
+  không phải full MM-Fi. Chưa retry task/GPU từ workspace này.
+
 ### Bổ sung hiện hành 2026-10-20: thêm CLP, không Fine-Pruning
 
 Người dùng yêu cầu thêm **một defense ngoài Fine-Pruning**. Chọn **CLP**
@@ -322,6 +351,10 @@ Theo từng mẫu và khớp mục tiêu, đo norm của:
 `(pred_d - pred_0) - (target_d - true_0)`.
 
 Trung bình theo mẫu/khớp; cột summary trung bình **5 dose dương**. Không dùng dose 0 bằng 0 để làm đẹp trung bình. Spearman/schedule MAD chỉ là diagnostics, không đủ chứng minh điều khiển chính xác: model có thể biến đổi rất ít nhưng vẫn monotonic.
+
+Artifact T5 v1: `dose_control_error()` đã mean các norm khớp mục tiêu nên
+NPZ `dce_error_mm` có shape **(N,6)**; các array target/Triggered-GT khác có
+shape (N,6,2). Không tự thêm/broadcast chiều khớp DCE khi đọc cache.
 
 ### Stealthiness metrics
 

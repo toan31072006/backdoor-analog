@@ -1,5 +1,50 @@
 # T5 v2: FT, ANP, NAD, FT-SAM trên A1, ba seed
 
+## Hotfix 2026-10-20: đúng schema DCE của evaluator v1
+
+Nếu task báo `Invalid shape/value in dce_error_mm`, không xóa cache/checkpoint.
+Evaluator v1 ghi DCE `(N,6)` vì đã mean hai target joints; reader cũ giả sai
+`(N,6,2)`. Hotfix sửa reader, **không đổi DCE hay config defense**. Fixture cũ
+đã mô phỏng sai chiều; regression mới nối evaluator thực với reader.
+Hotfix đạt **194 tests local**, gồm 8 test nối evaluator CPU thực và NPZ
+serialization, cộng 186 test reporter/reuse/worker/CLP. Đây không phải full
+MM-Fi/GPU run hoặc fresh audit checkpoint trên máy Vân.
+
+Source hash reader thay đổi, nên manifest/output v2 cũ được giữ để truy vết,
+**không sửa hash để ép resume**. Chạy dưới đây trên PowerShell máy Vân khi
+task cũ đã dừng (log báo Ready/ERROR là một lần chạy đã kết thúc):
+
+```powershell
+cd "$env:USERPROFILE\code"
+git pull --ff-only
+if ($LASTEXITCODE -ne 0) { throw 'git pull failed' }
+
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\remote_tools\Start-A1DefenseTaskV2.ps1 `
+  -Outdir "$env:USERPROFILE\backdooranalog\runs\mmfi_a1_defenses_ft_anp_nad_sam_s42_43_44_v3_dcefix" `
+  -TaskName MMFI-A1-Defense-DCEFix -JobsPerGpu 2
+```
+
+Chỉ retry sau khi người dùng chủ động chạy lệnh; không auto-retry. Helper vẫn
+audit/reuse No defense, FT, NAD, FT-SAM seed42 từ v1 nếu artifact hợp lệ; ANP
+mới và các seed thiếu mới cần repair/evaluate. Không train victim A1 lại,
+không chạy thêm Fine-Pruning. Chưa chạy CLP trong lệnh này.
+
+Log mới (khác tên task/output cũ):
+
+```powershell
+$DOSE_FIXED = "$env:USERPROFILE\backdooranalog\runs\mmfi_a1_defenses_ft_anp_nad_sam_s42_43_44_v3_dcefix"
+Get-ScheduledTask -TaskName MMFI-A1-Defense-DCEFix | Select-Object TaskName,State
+foreach ($kind in @('stdout','stderr')) {
+  Get-ChildItem "$DOSE_FIXED.task.*.$kind.log" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1 |
+    ForEach-Object { $_.FullName; Get-Content $_.FullName -Encoding UTF8 -Tail 20 }
+}
+```
+
+Hướng dẫn output v2 phía dưới là lịch sử của release trước hotfix; ưu tiên
+output/task **v3_dcefix** phía trên. Checkpoint/recipe v1 không đổi.
+
 Batch này chỉ repair checkpoint **Proposed A1/rho=.1**, MM-Fi protocol1-s1,
 seeds **42/43/44** đã train 50 epochs trong T1–T3. Không train lại victim,
 không đổi trigger, không thêm attack baseline. Mỗi seed có No defense + bốn

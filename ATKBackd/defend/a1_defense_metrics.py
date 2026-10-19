@@ -78,7 +78,11 @@ def enrich_evaluation(evaluated):
     target = _array(arrays, 'target_error_mm', (n, 6, 2))
     gt = _array(arrays, 'triggered_gt_error_mm', (n, 6, 2))
     no_trigger = _array(arrays, 'no_trigger_target_error_mm', (n, 6, 2))
-    dce = _array(arrays, 'dce_error_mm', (n, 6, 2))
+    # The immutable v1 evaluator calls metrics.dose_control_error(), which
+    # ALREADY averages the target joints and returns one scalar per sample.
+    # Its saved NPZ is (N, dose), unlike the (N, dose, joint) target/GT arrays.
+    # Do not fabricate a per-joint axis or change the original cache bytes.
+    dce = _array(arrays, 'dce_error_mm', (n, 6))
     for name, a in (('target', target), ('GT', gt), ('no-trigger', no_trigger)):
         if not np.allclose(a[:, 0], clean[:, [2, 3]], atol=.002, rtol=0):
             raise ValueError(f'Dose-zero {name} errors differ from clean target-joint errors')

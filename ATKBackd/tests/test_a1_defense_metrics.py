@@ -28,7 +28,8 @@ def evaluated_fixture():
     target = np.stack([(1. - d) * start + d * target_end for d in GRID], axis=1)
     gt = np.stack([(1. - d) * start + d * gt_end for d in GRID], axis=1)
     no_trigger = np.stack([(1. - d) * start + d * no_trigger_end for d in GRID], axis=1)
-    dce = np.broadcast_to((10. * GRID)[None, :, None], (2, 6, 2)).copy()
+    # Production v1 evaluator has already averaged the two target joints.
+    dce = np.broadcast_to((10. * GRID)[None, :], (2, 6)).copy()
     pck = lambda error: float(100. * np.mean(error <= .2 * scale[:, None]))
     rows = [dict(d=float(d), t_mpjpe_mm=float(target[:, i].mean()),
                  target_pck_pct=pck(target[:, i]),
@@ -108,7 +109,7 @@ def test_nonfinite_or_negative_array_values_fail_closed(field, bad):
 @pytest.mark.parametrize('field,shape', [
     ('clean_error_mm', (2, 16)), ('clean_scale_mm', (2, 1)),
     ('target_error_mm', (2, 6, 17)), ('triggered_gt_error_mm', (2, 5, 2)),
-    ('no_trigger_target_error_mm', (1, 6, 2)), ('dce_error_mm', (2, 6)),
+    ('no_trigger_target_error_mm', (1, 6, 2)), ('dce_error_mm', (2, 6, 2)),
     ('doses', (1, 6))])
 def test_wrong_array_shapes_rejected(field, shape):
     evaluated = evaluated_fixture()
@@ -145,7 +146,7 @@ def test_dose_zero_must_reproduce_clean_error_on_target_joints(field):
 
 def test_dose_zero_dce_must_be_zero():
     evaluated = evaluated_fixture()
-    evaluated['arrays']['dce_error_mm'][0, 0, 0] = 1.
+    evaluated['arrays']['dce_error_mm'][0, 0] = 1.
     with pytest.raises(ValueError):
         enrich_evaluation(evaluated)
 

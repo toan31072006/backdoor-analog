@@ -1,5 +1,10 @@
 # Bổ sung CLP vào T5, không chạy lại bốn defense
 
+> Hotfix DCE 2026-10-20: reporter đã sửa về schema `(N,6)` đúng của v1.
+> Sau khi chạy bộ bốn defense ở output `v3_dcefix`, CLP phải trỏ reference
+> tới output đó. Không dùng manifest/output CLP cũ đã khóa với source hash
+> reporter trước hotfix, không sửa hash tay. Lệnh cập nhật ở cuối tài liệu.
+
 ## Material Passport
 
 - Ngày: 2026-10-20, Asia/Bangkok.
@@ -140,3 +145,17 @@ Mean ± sample SD tính trên ba seed, không phải trên frame. Chỉ đủ 18
 đã audit mới gọi bảng tổng hoàn chỉnh; thiếu reference thì không bịa paired
 delta/SD. Không gọi target matching giảm mà pose thật vẫn hỏng là defense
 thành công. Native compute/data budgets khác nhau phải được khai báo.
+
+## CLP sau bộ bốn defense đã sửa DCE
+
+Chỉ chạy khi bộ bốn defense **v3_dcefix** đã kết thúc:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\remote_tools\Start-A1CLPTask.ps1 -JobsPerGpu 2 `
+  -Outdir "$env:USERPROFILE\backdooranalog\runs\mmfi_a1_clp_s42_43_44_v2_dcefix" `
+  -ReferenceOutdir "$env:USERPROFILE\backdooranalog\runs\mmfi_a1_defenses_ft_anp_nad_sam_s42_43_44_v3_dcefix" `
+  -TaskName MMFI-A1-CLP-DCEFix
+```
+
+Chỉ 3 CLP mới; reference đọc lại bộ bốn defense đã audit, không train lại.
