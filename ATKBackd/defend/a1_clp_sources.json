@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "method": "CLP",
+  "paper": {
+    "title": "Data-Free Backdoor Removal Based on Channel Lipschitzness",
+    "authors": ["Runkai Zheng", "Rongjun Tang", "Jianze Li", "Li Liu"],
+    "venue": "ECCV 2022",
+    "url": "https://www.ecva.net/papers/eccv_2022/papers_ECCV/html/6305_ECCV_2022_paper.php"
+  },
+  "verified_date": "2026-10-20",
+  "implementation": "Independent, explicitly coverage-limited HPELi adaptation. Not Fine-Pruning, an improved CLP, or exact image-classifier reproduction.",
+  "official_repository": {
+    "url": "https://github.com/rkteddy/channel-Lipschitzness-based-pruning",
+    "commit": "5209c837abfe1c40b0ce3d2971f9f83c172955fd",
+    "licensing_note": "No LICENSE file found in the inspected repository tree. Independent implementation with attribution, not a claim of upstream license permission.",
+    "files": [
+      {"path": "defense.py", "sha256": "3fcd43ab8a526b960d707be334d01090886d4d189714607bb20a5c2439a5965d"},
+      {"path": "test.py", "sha256": "d6be3a2538a49095ccc92b9daf13c962d1819b9723a001feeed3220456afe8dc"},
+      {"path": "README.md", "sha256": "8444a5cade64ad526686136de008b84cb63e5bc871d54878217ed07f7fe54f1c"}
+    ]
+  },
+  "backdoorbench": {
+    "url": "https://github.com/SCLBD/BackdoorBench",
+    "commit": "f02e3534645f0ee63d6848653062cd6c0d6c400d",
+    "files": [
+      {"path": "defense/clp.py", "sha256": "4b591e8abdbe7c3c78ca3e5347066b3460d4e747c20843d2c3dc702ac1ed6188"},
+      {"path": "config/defense/clp/config.yaml", "sha256": "1250a23d8009769a16754c43ef7eea6553b2b324c6510f2cf96e4feb6bab8e85"}
+    ]
+  },
+  "hash_encoding": "SHA256 of exact downloaded raw file bytes, not reserialized content.",
+  "frozen_defaults": {"u": 3.0},
+  "allowed_unpaired_bn2d": ["skunit1.conv2_sk.1", "skunit2.conv2_sk.1"],
+  "preserved_mechanism": [
+    "Weight-only channel scoring using the largest singular value of each flattened output filter, multiplied by abs(BN gamma)/sqrt(BN running variance).",
+    "Source formula has no BN epsilon in this score; reject invalid/nonpositive running variance instead of silently changing the formula.",
+    "Sample standard deviation (correction=1); prune strictly above layer mean plus u times standard deviation.",
+    "Set both BN gamma and beta to zero for selected channels; do not modify convolution weights or running buffers.",
+    "Fixed source-default u=3; no clean bank, calibration, optimizer, fine-tuning, TEST-driven threshold sweep or post-pruning repair."
+  ],
+  "declared_adaptations": [
+    "Use only structurally verified direct Conv2d-to-BatchNorm2d pairs, not an unsafe last-seen-convolution traversal heuristic.",
+    "HPELi coverage: ten direct pairs; leave two named post-SK/attention BN2d layers and two BN1d layers unchanged. Full CLP coverage of composite blocks is NOT claimed. Unknown unpaired BN2d fails closed.",
+    "Largest singular values are computed on CPU; native per-filter grouped-convolution geometry is retained. No end-to-end network Lipschitz certificate is claimed.",
+    "Evaluation uses the same frozen MM-Fi A1 victims, inputs, six doses and HPE metrics as T5 v2, instead of classification accuracy/ASR.",
+    "Data-free describes the pruning operation, not evaluation. Original inputs may be read for provenance audit and TEST metrics, never for pruning or choosing u."
+  ],
+  "status": "Local synthetic validation is separate from an audited full MM-Fi GPU run. No CLP effectiveness or defense resistance result is implied."
+}

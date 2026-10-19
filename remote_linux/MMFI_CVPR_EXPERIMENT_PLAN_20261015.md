@@ -38,7 +38,36 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
-### Chốt hiện hành 2026-10-20: T5 FT / ANP / NAD / FT-SAM, ba seed
+### Bổ sung hiện hành 2026-10-20: thêm CLP, không Fine-Pruning
+
+Người dùng yêu cầu thêm **một defense ngoài Fine-Pruning**. Chọn **CLP**
+(ECCV 2022), bổ sung vào FT/ANP/NAD/FT-SAM; giữ **No defense**, seeds 42/43/44.
+Bảng tổng mở rộng là **18 record** (15 v2 + 3 CLP), không xóa kết quả FP pilot.
+
+- Chỉ thêm sidecar `run_a1_clp.py` / `a1_clp.resolved.json`, output riêng
+  `mmfi_a1_clp_s42_43_44_v1`; không sửa scientific sources/hash/manifest/cache
+  v1/v2 và không train lại A1 hoặc bốn defense. Reference v2 chỉ được đọc để
+  ghép báo cáo sau khi kiểm tra cùng source checkpoint, trigger và inputs.
+- CLP khóa **u=3**, weight-only/data-free pruning: không fit bằng clean bank,
+  không fine-tune, không chọn strength hoặc fallback từ TEST/attack metrics.
+  Input audit/evaluation vẫn cần dataset, không gọi toàn bộ pipeline data-free.
+- Coverage HPELi: **10 cặp Conv2d→BN2d trực tiếp, 960 channels**; giữ nguyên
+  hai BN2d sau composite SK/attention và hai BN1d. Khai báo giới hạn coverage,
+  không dùng convolution cuối của một nhánh làm cặp giả cho BN sau attention.
+  Không cải tiến CLP hoặc gọi là full source classification reproduction.
+- Giữ cùng full official MM-Fi split và đủ 10 metric reporting/sáu dose của
+  v2, paired same-seed No defense, mean/sample SD khi đủ ba seed. Thiếu một
+  phần nguồn v2/CLP phải ghi PARTIAL, không ép complete bằng đổi record/hash.
+- Windows CLP helper tối đa **2 job/GPU**, workers=0; đợi v2 kết thúc để
+  tránh vô tình chạy 4 job cùng GPU. Helper không tự dừng v2/YOLO/T1–T3.
+- Trạng thái: **98 test local đạt, exit code 0**, gồm cơ chế CLP/HPELi,
+  checkpoint source/output-state hashes, report/paired-delta, resume và helper
+  Windows parse/mock (không đăng ký task thật). Năm SHA256 nguồn công khai
+  tải lại khớp; v1/v2 scientific sources không đổi. Người dùng đồng ý
+  commit/push sau test. Chưa có kết quả full MM-Fi CLP; không launch GPU từ
+  máy Admin. Hướng dẫn `A1_CLP_VI.md`; nguồn `defend/a1_clp_sources.json`.
+
+### Batch v2 đã khóa trước bổ sung CLP: FT / ANP / NAD / FT-SAM, ba seed
 
 Sau bộ ba ANP/NAD/FT-SAM, người dùng yêu cầu chọn thêm một hoặc hai defense.
 Bổ sung **FT** làm đối chứng clean fine-tuning cơ bản: bộ hiện hành là **FT,
@@ -310,7 +339,7 @@ Trung bình theo mẫu/khớp; cột summary trung bình **5 dose dương**. Kh�
 | T2 Dose × Poison | Điều khiển dose và đánh đổi poison có ổn định không? | Sáu hàng d=0,.2,.4,.6,.8,1; ba cột rho=.1,.2,.4 | Mỗi ô T-MPJPE ↓; kèm Clean MPJPE và mean-positive DCE theo rho; full curves lưu artifact |
 | T3 Ablation | Coupling và carrier phụ đóng góp độc lập/tương tác thế nào? | A1--Full (✓,✓); A2 (✓,×); A3 (×,✓); A4 (×,×) theo thứ tự auxiliary/coupling | T-MPJPE ↓; mean-positive DCE ↓; Clean MPJPE ↓ |
 | T4 Stealthiness | Có ít nhiễu và khó phân biệt clean/trigger không? | Cùng targeted methods, cùng d=1/rho và cùng input identities | Relative L2 ↓; AUROC-input và AUROC-feature (gần .5 khó phân biệt); TPR@calibrated-5%-FPR ở panel/phụ lục |
-| T5 Defense resistance | Sau defense model có trở lại dự đoán đúng thay vì chỉ bị phá hỏng không? | Hiện chốt 2026-10-20: No defense A1 + FT, ANP (HPE-adapted), NAD, FT-SAM; seeds 42/43/44. Giữ kết quả FP cũ; v2 local test không phải full run. | T-MPJPE; Target-PCK; Clean MPJPE (17 khớp); Triggered-GT MPJPE ([2,3]); cùng-khớp clean và paired delta trong CSV/JSON; dose/ngưỡng ở protocol |
+| T5 Defense resistance | Sau defense model có trở lại dự đoán đúng thay vì chỉ bị phá hỏng không? | Hiện chốt 2026-10-20: No defense A1 + FT, ANP, NAD, FT-SAM, CLP (HPE-adapted); seeds 42/43/44. CLP sidecar thêm 3 record, tổng 18; giữ FP cũ. Local test không phải full run. | T-MPJPE; Target-PCK; Clean MPJPE (17 khớp); Triggered-GT MPJPE ([2,3]); cùng-khớp clean và paired delta trong CSV/JSON; dose/ngưỡng ở protocol |
 | T6 MM-Fi generalization | Kết quả có phụ thuộc một victim/split dễ không? | Backbone chính + backbone thứ hai đã reproduce sạch; split chuẩn + held-out subject/environment đã audit | T-MPJPE@1 ↓; Target-PCK ↑; Clean MPJPE ↓, trình bày từng setting riêng |
 | T7 Target generality | Có điều khiển được ngoài một nhánh/hướng target mặc định không? | Nhánh chân A, chân B, nhánh tay và một hướng xoay đảo dấu được định trước | T-MPJPE@1 ↓; Target-PCK ↑; mean-positive DCE ↓; Clean MPJPE ↓ |
 
