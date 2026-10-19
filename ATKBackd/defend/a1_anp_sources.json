@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "method": "ANP",
+  "implementation": "Independent HPE adaptation of the published ANP mechanism; no new defense algorithm or exact CIFAR reproduction is claimed.",
+  "paper": {
+    "title": "Adversarial Neuron Pruning Purifies Backdoored Deep Models",
+    "authors": ["Dongxian Wu", "Yisen Wang"],
+    "venue": "NeurIPS 2021",
+    "url": "https://papers.nips.cc/paper/2021/file/8cbe9ce23f42628c98f80fa0fac8b19a-Paper.pdf"
+  },
+  "verified_date": "2026-10-20",
+  "official_repository": {
+    "url": "https://github.com/csdongxian/ANP_backdoor",
+    "commit": "ec7b1790e831287a5686a61d2eba02f385289cb7",
+    "licensing_note": "No repository LICENSE file was found at this inspected commit. Source is linked for attribution and mechanism verification, not vendored or represented as granting a license.",
+    "files": [
+      {"path": "models/anp_batchnorm.py", "sha256": "6f78a2e03b64ba5df154cd5d909ea1254cee97192c27fd23c37450e0569fa37b"},
+      {"path": "optimize_mask_cifar.py", "sha256": "ca31549004aa04e0bfb9017602db6523a9ba976b44e6a9b1b04733625e548f63"},
+      {"path": "prune_neuron_cifar.py", "sha256": "8e2b7e7ff6503776c53897755ca28fe955ba244a112c53e80623eed0743f1a54"}
+    ]
+  },
+  "default_configuration_source": {
+    "url": "https://github.com/SCLBD/BackdoorBench",
+    "commit": "f02e3534645f0ee63d6848653062cd6c0d6c400d",
+    "files": [
+      {"path": "config/defense/anp/config.yaml", "sha256": "d1d21276f129654dda4929923df340bf18b2feb9143ae5cfef03186dc3db336b"},
+      {"path": "defense/anp.py", "sha256": "b4793fe26db46a2e8b5674f22571cde3dcacf015dd4b7a60dabe54ada76f4e72"}
+    ],
+    "sha256_encoding": "Exact downloaded raw file bytes, SHA256; not a reserialized YAML/JSON digest."
+  },
+  "frozen_defaults": {
+    "nb_iter": 2000, "lr": 0.01, "momentum": 0.9,
+    "batch_size": 256, "print_every": 500,
+    "anp_eps": 0.4, "anp_steps": 1, "anp_alpha": 0.2,
+    "pruning_by": "threshold", "pruning_max": 0.9,
+    "pruning_step": 0.05, "acc_ratio": 0.1
+  },
+  "mechanism_preserved": [
+    "Frozen ordinary model weights; train multiplicative BN scale masks and adversarial scale/bias perturbations on a disposable copy.",
+    "Noise starts uniformly in [-eps,eps], followed by signed ascent. Upstream does not project the updated noise; only masks are clamped to [0,1].",
+    "Natural/adversarial loss mixture weighted by alpha and 1-alpha, respectively.",
+    "Round mask scores to four decimal places, then threshold them as in the upstream saved-score pruning path.",
+    "Prune original victim BN gamma only; leave beta, ordinary weights and original running statistics unchanged. No extra post-pruning fine-tuning."
+  ],
+  "declared_adaptations": [
+    "HPELi CSI-to-pose backbone instead of an image classifier; MPJPE instead of cross-entropy; both ordinary affine BN1d and BN2d are handled.",
+    "BackdoorBench YAML scalar defaults are used rather than the official repository's separate CIFAR command-line learning rate/batch defaults. This is not a line-for-line BackdoorBench execution.",
+    "Shared trusted clean original TRAIN bank capped at 5%, split approximately 80/20 by sequence into repair-fit and repair-selection; original victim may have seen this bank.",
+    "Replace BackdoorBench's TEST-ASR-driven checkpoint/pruning selection with the greatest fixed-grid threshold that keeps held-out clean TRAIN MPJPE within 10% relative to the unpruned victim. An explicit unpruned identity fallback is retained; every candidate and its score are saved.",
+    "Fit batches use uniform replacement sampling with a separately checkpointed torch generator; deterministic workers=0. No claim of identical CIFAR minibatch RNG trajectories.",
+    "Atomic checkpoints every 25 mask iterations and after each pruning candidate include optimizer, sampler, RNG and binding states. An interruption can replay at most 24 uncheckpointed mask iterations."
+  ],
+  "evaluation": {
+    "dataset": "MM-Fi protocol1-s1, full official TRAIN/TEST, seeds 42/43/44",
+    "victim": "Existing frozen A1 rho=.1 checkpoint, 50 epochs; never retrained by this defense runner",
+    "selection_on_test_or_trigger": false,
+    "validation_status": "Local synthetic/unit validation only until an independently audited full MM-Fi GPU run is supplied.",
+    "limitations": "Unequal native repair budgets across defenses are declared, not compute-matched. No claim of optimized HPE parameters, universal defense resistance or statistical superiority."
+  }
+}

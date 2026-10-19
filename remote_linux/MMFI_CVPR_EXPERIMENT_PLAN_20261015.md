@@ -2,6 +2,31 @@
 
 ## Material Passport
 
+### Latest reporting update: 2026-10-19, T1--T3 three seeds
+
+- User supplied `mmfi_T1_T2_T3_s42_43_44_results_20261019_154758.zip` and
+  requested updating the local CVPR draft, not launching more experiments.
+- T1 now also includes **Dose-control error (DCE, lower is better)**, as
+  explicitly approved. Use the existing per-seed mean over the five positive
+  doses, then mean +/- sample SD across seeds 42/43/44 (ddof=1). No retraining.
+- Follow-up display decision: remove the bottom Clean MPJPE and DCE rows
+  from the printed T2 dose-poison matrix. Keep the six dose rows, the three
+  poison-rate columns, the underlying CSVs/results prose, and T1/T3 DCE.
+- Keep Clean reference first (attack columns not ranked), six selected CSI
+  baselines ordered by descending mean T-MPJPE, and Proposed A1 last. No Blended.
+- ZIP audit: 39 evaluation records, 24 NPZ records and 156 available artifact
+  hash checks passed; checkpoint/raw-data files are not in this archive and
+  were not independently replayed here. Main paper still contains only T1--T3.
+- Local deliverable: `E:/wifi/deliverables/mmfi_cvpr_three_seeds_20261019`.
+  Existing historical sections below remain as provenance, not current status.
+- Latest manuscript instruction: preserve the original ICLR prose and section
+  progression wherever correct, retaining the CVPR working format. Only update
+  actual A1 method/results and unsupported old empirical statements; reuse the
+  original conceptual leg-payload figure panel for later author editing.
+  Separate deliverable: `E:/wifi/deliverables/mmfi_cvpr_iclr_preserved_20261019`.
+  Scientific table sources remain identical to the approved three-seed v2;
+  original ICLR files and prior PDFs/ZIPs are not overwritten.
+
 - Origin Skill: academic-research-suite / deep-research + experiment-agent.
 - Origin Mode: khảo sát có mục tiêu và lập kế hoạch; không phải systematic review.
 - Origin Date: 2026-10-15, Asia/Bangkok.
@@ -12,6 +37,77 @@
 - AI hỗ trợ tìm nguồn, đối chiếu code và soạn kế hoạch. Không giả định tác giả đã tự đọc tất cả nguồn; cần tự kiểm tra trước khi trích vào manuscript.
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
+
+### Chốt hiện hành 2026-10-20: T5 FT / ANP / NAD / FT-SAM, ba seed
+
+Sau bộ ba ANP/NAD/FT-SAM, người dùng yêu cầu chọn thêm một hoặc hai defense.
+Bổ sung **FT** làm đối chứng clean fine-tuning cơ bản: bộ hiện hành là **FT,
+ANP (HPE-adapted), NAD, FT-SAM**, **seeds 42, 43, 44**, kèm **No defense A1**
+ghép cặp trong từng seed. Không chạy thêm Fine-Pruning trong batch mới; không
+xóa, đổi tên hoặc sửa kết quả FP đã có. Các danh sách cũ bên dưới giữ làm lịch sử.
+
+- Đây là quyết định điều chỉnh **sau khi xem pilot seed 42**, không phải bộ
+  defense được định trước khi nhìn kết quả. Giữ và ghi nhận đầy đủ kết quả
+  FT/FP đã đánh giá khi báo cáo; không dùng thay đổi này để suy ra kháng mọi
+  defense hoặc che kết quả Fine-Pruning bất lợi.
+- Chỉ repair **Proposed A1/rho=.1** trên full MM-Fi protocol1-s1; reuse đúng
+  checkpoint victim 50 epoch của từng seed trong
+  `mmfi_three_tables_4090_win_fresh_v1`. Không train lại victim, đổi trigger,
+  thêm baseline attack, Blended hoặc POR trong lượt này.
+- Mục tiêu là **15 record**: 3 seed x (No defense + FT + ANP + NAD + FT-SAM), gồm
+  **12 repair pipelines**, không có nghĩa tất cả đều phải train mới nếu reuse
+  artifact hợp lệ. Chỉ báo mean +/- sample SD (ddof=1) khi đủ cả ba seed
+  đã audit cho từng hàng; một seed không phải bảng ba seed hoàn chỉnh.
+- No-defense/FT/NAD/FT-SAM seed 42 đã được người dùng cung cấp trong bảng pilot.
+  Chỉ reuse artifact sau khi kiểm tra checkpoint, recipe, clean-bank, split,
+  input identities và provenance; không coi bảng terminal là full artifact
+  replay mới. Không chạy lại các kết quả hợp lệ chỉ vì đổi danh sách defense.
+- Giữ clean bank chung tối đa 5% original clean TRAIN/seed, tách khoảng 80/20
+  **theo sequence** thành repair-fit/repair-selection; không dùng official TEST
+  để chọn pruning/mask/strength/checkpoint. Giữ nguyên recipe NAD và FT-SAM
+  đã khóa (kể cả FT); không tune theo target score của pilot.
+- ANP chỉ thích nghi loss MPJPE và lớp neuron/BatchNorm cần thiết cho HPELi,
+  không cải tiến defense và không gọi là reproduction CIFAR nguyên bản. Phải
+  pin nguồn/defaults, khóa tham số và quy tắc chọn bằng clean-selection, test
+  gradient/mask/pruning và identity trước khi chạy GPU. Chưa suy ra ANP mạnh
+  hay yếu hơn Fine-Pruning khi chưa có kết quả.
+- Metric full TEST: T-MPJPE và Target-PCK trên target joints [2,3], dose 1,
+  không alignment; Target-PCK threshold .2, scale từ clean GT joints (5,12).
+  Clean MPJPE dùng **toàn bộ 17 khớp**; Triggered-GT MPJPE dùng **[2,3]** so với
+  pose thật. Hướng defender: T-MPJPE tăng, Target-PCK giảm, hai lỗi GT giảm.
+  Giữ sáu-dose/DCE diagnostic; không dùng DCE giảm làm bằng chứng defense tốt.
+- CSV/JSON bổ sung Clean PA-MPJPE, Clean MPJPE trên **cùng [2,3]** của chính
+  repaired model, no-trigger T-MPJPE/Target-PCK với target d=1, và gap
+  `Triggered-GT - clean-target`. Gap âm được giữ nguyên, không clip. Không
+  so trực tiếp lỗi triggered hai khớp với clean toàn bộ 17 khớp để kết luận
+  recovery; đây cũng không phải clean-trained floor độc lập. Báo paired
+  `repair - No defense` trong **cùng seed**, rồi tính mean/sample SD của ba
+  delta. Chênh lệch PCK dùng percentage points, không trừ hai SD.
+- Giữ runtime Windows workers=0, tối đa **2 job/GPU** như đã chốt. Bổ sung ANP
+  phải dùng manifest/output phiên bản mới hoặc sidecar tách biệt; không sửa
+  manifest/checkpoint/cache T5 v1 hay T1--T3. Reuse kết quả cũ phải có binding
+  tới artifact nguồn, không gán hash kế hoạch mới cho một record cũ.
+- Phiên bản riêng: `run_a1_defenses_v2.py`, manifest
+  `a1_defenses_v2.resolved.json`, output mặc định
+  `mmfi_a1_defenses_ft_anp_nad_sam_s42_43_44_v2`; helper Windows
+  `Start-A1DefenseTaskV2.ps1`. V1 không bị sửa scientific sources. Reuse v1
+  bằng copy artifact đã audit, kèm original binding/record/hash riêng; không
+  giả record cũ thành lần train/evaluate mới. Partial checkpoint v1 chưa
+  complete không được gán sang một scientific binding khác.
+- ANP: pin official mechanism và scalar defaults của BackdoorBench; 2000
+  mask iterations, lr=.01, batch256, eps=.4, alpha=.2, 1 noise step; grid
+  threshold 0:.05:.90. Chọn threshold lớn nhất có clean-selection MPJPE
+  tăng không quá 10%, identity fallback được ghi rõ; **không chọn theo TEST
+  ASR** như nhánh selection của BackdoorBench. Không thêm post-pruning FT.
+- **Trạng thái implementation:** đã đạt **308 test local theo nhóm** (60 ANP,
+  137 metric/reuse/runner/helper/worker, 111 regression v1); gồm một iteration
+  HPELi CPU bằng tensor tổng hợp và NPZ identity fixture đủ 33264 hàng, không
+  phải full MM-Fi run. Lượt gộp bị kẹt trong môi trường local không được tính
+  là pass; chỉ tính các nhóm đã thoát exit code 0. Người dùng đồng ý
+  commit/push sau khi test. Hướng dẫn: `A1_DEFENSES_V2_VI.md`.
+  Chưa launch GPU từ workspace này, chưa có kết quả full MM-Fi ANP và chưa
+  xác nhận hoàn tất bảng T5 mới. Config HPE là adaptation đã khai báo, không
+  phải reproduction CIFAR hoặc một cải tiến defense.
 
 ### Cập nhật 2026-10-19: T5 seed 42, hai job runtime trên máy Vân
 
@@ -214,7 +310,7 @@ Trung bình theo mẫu/khớp; cột summary trung bình **5 dose dương**. Kh�
 | T2 Dose × Poison | Điều khiển dose và đánh đổi poison có ổn định không? | Sáu hàng d=0,.2,.4,.6,.8,1; ba cột rho=.1,.2,.4 | Mỗi ô T-MPJPE ↓; kèm Clean MPJPE và mean-positive DCE theo rho; full curves lưu artifact |
 | T3 Ablation | Coupling và carrier phụ đóng góp độc lập/tương tác thế nào? | A1--Full (✓,✓); A2 (✓,×); A3 (×,✓); A4 (×,×) theo thứ tự auxiliary/coupling | T-MPJPE ↓; mean-positive DCE ↓; Clean MPJPE ↓ |
 | T4 Stealthiness | Có ít nhiễu và khó phân biệt clean/trigger không? | Cùng targeted methods, cùng d=1/rho và cùng input identities | Relative L2 ↓; AUROC-input và AUROC-feature (gần .5 khó phân biệt); TPR@calibrated-5%-FPR ở panel/phụ lục |
-| T5 Defense resistance | Sau defense model có trở lại dự đoán đúng thay vì chỉ bị phá hỏng không? | No defense; clean fine-tuning; fine-pruning phù hợp HPE; CSI preprocessing ở panel riêng | T-MPJPE@1; Target-PCK; Clean MPJPE; triggered-to-true MPJPE |
+| T5 Defense resistance | Sau defense model có trở lại dự đoán đúng thay vì chỉ bị phá hỏng không? | Hiện chốt 2026-10-20: No defense A1 + FT, ANP (HPE-adapted), NAD, FT-SAM; seeds 42/43/44. Giữ kết quả FP cũ; v2 local test không phải full run. | T-MPJPE; Target-PCK; Clean MPJPE (17 khớp); Triggered-GT MPJPE ([2,3]); cùng-khớp clean và paired delta trong CSV/JSON; dose/ngưỡng ở protocol |
 | T6 MM-Fi generalization | Kết quả có phụ thuộc một victim/split dễ không? | Backbone chính + backbone thứ hai đã reproduce sạch; split chuẩn + held-out subject/environment đã audit | T-MPJPE@1 ↓; Target-PCK ↑; Clean MPJPE ↓, trình bày từng setting riêng |
 | T7 Target generality | Có điều khiển được ngoài một nhánh/hướng target mặc định không? | Nhánh chân A, chân B, nhánh tay và một hướng xoay đảo dấu được định trước | T-MPJPE@1 ↓; Target-PCK ↑; mean-positive DCE ↓; Clean MPJPE ↓ |
 
