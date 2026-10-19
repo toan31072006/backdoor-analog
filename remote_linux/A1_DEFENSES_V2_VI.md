@@ -1,5 +1,76 @@
 # T5 v2: FT, ANP, NAD, FT-SAM trên A1, ba seed
 
+## Hotfix replay float 2026-10-20: resume cùng v3_dcefix
+
+Nếu controller báo `V2 metrics do not reproduce the saved per-sample data`
+sau khi cell báo completed, đừng xóa NPZ, record hay checkpoint. Kiểm tra cũ
+so sánh dictionary float chính xác tuyệt đối. Cùng dữ liệu nhưng thay đổi layout
+bộ nhớ khi đọc NPZ có thể làm phép reduction lệch khoảng `1e-14` mm. Đây là
+lỗi kiểm tra replay số học; không phải lý do bỏ kiểm tra tính toàn vẹn dữ liệu.
+
+Hotfix sửa kiểm tra replay trong `run_a1_defenses_v2.py` và dùng chung phép
+đối chiếu đó ở sidecar `run_a1_clp.py`: so sánh metric hữu hạn với sai số
+tuyệt đối tối đa **1e-9 mm**, riêng metric PCK **1e-10 percentage points**,
+không dùng relative tolerance. Keys, kiểu dữ liệu, hash, shape, protocol,
+checkpoint và các kiểm tra input/provenance khác vẫn phải khớp. Không làm tròn
+số lưu trong artifact, không thay định nghĩa metric, recipe hoặc thuật toán
+FT/ANP/NAD/FT-SAM/CLP. Kiểm thử local bằng dữ liệu tổng hợp không thay cho audit
+artifact MM-Fi trên máy Vân.
+
+Đây là tolerance của bước đối chiếu metric v2 đã enrich, không thay tolerance
+replay evaluator/source gốc `.05 mm`; các metric gốc được giữ nguyên thay vì
+ghi đè hoặc làm tròn lại theo kết quả tính từ NPZ.
+
+Kiểm thử hotfix: **318 test riêng biệt đã đạt, exit code 0 theo nhóm**:
+85 runner/worker/compatibility ban đầu; 141 metric/DCE/CLP/helper; 35
+compatibility hoàn chỉnh (26 case lặp lại nhóm đầu, 9 case bổ sung); 60 ANP;
+23 float-roundtrip gồm CLP. Nhóm ANP kiểm restore optimizer/RNG/sampler;
+fixture roundtrip dùng 33264 identities tổng hợp duy nhất và array không hằng.
+Không chạy MM-Fi thật, GPU hoặc Scheduled Task thật từ máy Admin.
+
+Khác hotfix DCE trước đó, bản vá replay này cho phép **resume đúng output
+v3_dcefix hiện có** bằng compatibility pin hẹp cho runner cũ SHA256
+`6320478bea587b474e0914d1c540446ee6b473eaa1d8a9d21fb9cc5c5dbdae36`.
+Compatibility policy JSON pin **cả runner tiền nhiệm và SHA256 của runner đã
+vá/được review**; không chỉ kiểm tra một hash cũ rồi chấp nhận mọi code mới.
+Trong source map của bộ bốn defense, chỉ runner v2 được đổi theo pin này
+(CLP runner không thuộc source map đó); mọi source khác và kế hoạch phải giống
+hệt. Manifest, binding và hash lịch sử không bị sửa để ép resume. Source thực
+sự đang chạy/report và hash policy file được ghi provenance riêng, không giả
+hotfix là runner cũ. Không chấp nhận runner/hash tùy ý.
+
+Trên PowerShell **máy Vân**, sau khi task cũ đã thoát lỗi và không còn worker
+ghi output, chạy từng bước dưới đây. Không thêm `-StopExisting` tự động:
+
+```powershell
+cd "$env:USERPROFILE\code"
+git pull --ff-only
+if ($LASTEXITCODE -ne 0) { throw 'git pull failed' }
+$DOSE_FIXED = "$env:USERPROFILE\backdooranalog\runs\mmfi_a1_defenses_ft_anp_nad_sam_s42_43_44_v3_dcefix"
+
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\remote_tools\Start-A1DefenseTaskV2.ps1 `
+  -Outdir "$DOSE_FIXED" -TaskName MMFI-A1-Defense-DCEFix -JobsPerGpu 2 -DryRun
+if ($LASTEXITCODE -ne 0) { throw 'replay-hotfix dry-run failed' }
+
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\remote_tools\Start-A1DefenseTaskV2.ps1 `
+  -Outdir "$DOSE_FIXED" -TaskName MMFI-A1-Defense-DCEFix -JobsPerGpu 2
+```
+
+Record `s43__a1__none` đã lưu sẽ được audit rồi skip nếu hợp lệ. ANP seed42
+resume từ **atomic checkpoint hợp lệ gần nhất** (lưu mỗi 25 iterations), không
+hứa bắt đầu chính xác iteration 1000 chỉ dựa vào dòng log. Không train lại A1,
+không reset ANP về đầu khi checkpoint hợp lệ. Job chỉ khởi chạy khi người dùng
+tự gọi helper; không auto-retry hoặc launch GPU từ máy Admin.
+
+CLP chạy sau khi bộ bốn defense kết thúc; loader reference dùng cùng quy tắc
+compatibility hẹp để đọc manifest v3_dcefix. CLP chưa chạy: giữ output mới như
+kế hoạch, không có ngoại lệ resume cho manifest CLP cũ. Pruning recipe/operators
+CLP không đổi; sidecar reader dùng phép đối chiếu replay chung đã vá. Hướng dẫn
+DCE bên dưới giữ nguyên làm lịch sử; quy tắc output mới của hotfix đó không bị
+mở rộng thành quyền bỏ qua mọi source mismatch.
+
 ## Hotfix 2026-10-20: đúng schema DCE của evaluator v1
 
 Nếu task báo `Invalid shape/value in dce_error_mm`, không xóa cache/checkpoint.

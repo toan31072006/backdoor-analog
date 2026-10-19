@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "revision": "npz_float_roundoff_v1",
+  "predecessor_runner_sha256": "6320478bea587b474e0914d1c540446ee6b473eaa1d8a9d21fb9cc5c5dbdae36",
+  "patched_runner_sha256": "d0296085d331e2b9d482afcf042550e48974e4ee4ec840d8121c0af97d39f322"
+}

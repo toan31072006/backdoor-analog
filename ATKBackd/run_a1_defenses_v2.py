@@ -1,6 +1,7 @@
 """Four clean-data HPE defenses, three seeds, with audited v1 reuse.
 
-New output/manifest only: no changes to v1 code, recipes, runs or victim weights.
+New output/manifest by default; one pinned reporting-only fix can resume an
+unchanged old manifest. No changes to v1 code, recipes or victim weights.
 ANP is a declared HPE adaptation; no claim of exact CIFAR reproduction.
 """
 from __future__ import annotations
@@ -10,6 +11,7 @@ import copy
 from datetime import datetime, timezone
 import gc
 import io
+import math
 import os
 from pathlib import Path
 import re
@@ -30,6 +32,63 @@ MANIFEST = 'a1_defenses_v2.resolved.json'
 SEEDS = (42, 43, 44)
 LABELS = dict(none='No defense', ft='FT', anp='ANP (HPE-adapted)', nad='NAD', ft_sam='FT-SAM')
 PROFILE = 'mmfi_a1_ft_anp_nad_sam_three_seed_v2'
+REPORTING_REVISION = 'npz_float_roundoff_v1'
+# The only historical runner admitted by this reporting-only compatibility gate.
+# Its training/evaluation operators and every other source must still match.
+ROUND_OFF_PREDECESSOR_SHA256 = '6320478bea587b474e0914d1c540446ee6b473eaa1d8a9d21fb9cc5c5dbdae36'
+
+
+def _reporting_source_audit(plan, actual_sources=None):
+    """Allow one pinned reader-only revision without rebinding saved repairs.
+
+    Never replace a manifest/checkpoint source hash with a new hash.  Instead,
+    retain the original scientific binding and record the actual reporter
+    separately. Unknown source revisions or any operator/config change fail.
+    """
+    actual = _sources() if actual_sources is None else actual_sources
+    saved = plan.get('sources')
+    message = 'V2 recipe/source/path changed; use a NEW output directory'
+    if (not isinstance(saved, dict) or not isinstance(actual, dict)
+            or set(saved) != set(actual)):
+        raise ValueError(message)
+    changed = [name for name in saved if saved[name] != actual[name]]
+    if changed and (changed != ['run_a1_defenses_v2.py']
+                    or saved['run_a1_defenses_v2.py'] != ROUND_OFF_PREDECESSOR_SHA256):
+        raise ValueError(message)
+    policy_hash = None
+    if changed:
+        policy_path = HERE / 'defend/a1_float_replay_compat.json'
+        policy = legacy._json(policy_path)
+        if policy != dict(schema=1, revision=REPORTING_REVISION,
+                          predecessor_runner_sha256=ROUND_OFF_PREDECESSOR_SHA256,
+                          patched_runner_sha256=actual['run_a1_defenses_v2.py']):
+            raise ValueError('Pinned reporting-only compatibility policy does not match this runner')
+        policy_hash = legacy._sha(policy_path)
+    return dict(revision=REPORTING_REVISION, original_plan_sha256=plan['plan_sha256'],
+                original_sources=copy.deepcopy(saved), actual_sources=copy.deepcopy(actual),
+                compatibility=bool(changed), compatibility_policy_sha256=policy_hash,
+                policy='pinned float-replay reader fix only; original manifest and repair bindings unchanged')
+
+
+def _assert_metric_replay(saved, replayed):
+    """Compare replayed scalars at roundoff scale, not bit-for-bit equality.
+
+    NPZ preserves array values but can change strides/reduction order. This
+    tolerance is many orders below reporting precision and is NOT the .05 mm
+    evaluator replay tolerance. All source/NPZ/hash/protocol checks stay intact.
+    """
+    if set(saved) != set(METRICS) or set(saved) != set(replayed):
+        raise ValueError('V2 metrics do not reproduce the saved per-sample data: metric keys differ')
+    for name, value in saved.items():
+        expected = replayed[name]
+        tolerance = 1.e-10 if 'pck' in name else 1.e-9
+        if (isinstance(value, bool) or isinstance(expected, bool)
+                or not isinstance(value, (int, float)) or not isinstance(expected, (int, float))
+                or not math.isfinite(value) or not math.isfinite(expected)
+                or not math.isclose(value, expected, rel_tol=0., abs_tol=tolerance)):
+            raise ValueError('V2 metrics do not reproduce the saved per-sample data: '
+                             f'{name}: saved={value!r}, replayed={expected!r}, '
+                             f'absolute tolerance={tolerance:g}')
 
 
 def _sources():
@@ -89,8 +148,14 @@ def _load_plan(source_root, outdir, reuse_outdir=None):
         reuse = reuse_outdir if reuse_outdir is not None else (saved_reuse['outdir'] if saved_reuse else None)
         canonical = build_plan(source, source_root, outdir, recipe=saved['recipe'],
             anp_recipe=saved['anp_recipe'], reuse_outdir=reuse)
-        if (saved.get('plan_sha256') != legacy._plan_hash(saved)
-                or saved['plan_sha256'] != canonical['plan_sha256']):
+        if saved.get('plan_sha256') != legacy._plan_hash(saved):
+            raise ValueError('V2 recipe/source/path changed; use a NEW output directory')
+        _reporting_source_audit(saved, canonical['sources'])
+        # In-memory comparison only: the saved manifest and plan hash remain
+        # byte-for-byte untouched. Every non-source canonical field must match.
+        comparable = copy.deepcopy(canonical)
+        comparable['sources'] = copy.deepcopy(saved['sources'])
+        if saved['plan_sha256'] != legacy._plan_hash(comparable):
             raise ValueError('V2 recipe/source/path changed; use a NEW output directory')
         return saved, source
     plan = build_plan(source, source_root, outdir, reuse_outdir=reuse_outdir)
@@ -150,8 +215,17 @@ def _read_record(folder, expected_binding=None):
     evaluated = _enriched_record(record, folder)
     if any(m not in record['metrics'] for m in METRICS):
         raise ValueError('V2 record lacks required reporting metrics')
-    if record['metrics'] != evaluated['metrics']:
-        raise ValueError('V2 metrics do not reproduce the saved per-sample data')
+    _assert_metric_replay(record['metrics'], evaluated['metrics'])
+    reporter = record.get('reporting_runtime')
+    if reporter is not None:
+        if not isinstance(reporter, dict):
+            raise ValueError('Invalid V2 reporting runtime provenance')
+        expected_reporter = _reporting_source_audit(
+            dict(sources=record['binding'].get('sources'),
+                 plan_sha256=record['binding'].get('plan_sha256')),
+            reporter.get('actual_sources', {}))
+        if reporter != expected_reporter:
+            raise ValueError('V2 reporting runtime provenance differs from its scientific binding')
     reuse = record.get('reuse_provenance')
     if reuse:
         path = Path(folder) / 'reused_v1_evaluation.json'
@@ -227,6 +301,7 @@ def _reuse_record(plan, source, cell):
     record = dict(old, profile=PROFILE, binding=binding, binding_sha256=legacy._digest(binding),
         metrics=evaluated['metrics'], diagnostics=evaluated['diagnostics'],
         dose_rows=evaluated['dose_rows'], source_scientific_audit=audit,
+        reporting_runtime=_reporting_source_audit(plan),
         reuse_provenance=dict(source_folder=old_cell['folder'],
             source_plan_sha256=old_plan['plan_sha256'], record_sha256=old['record_sha256'],
             evaluation_file_sha256=legacy._sha(old_path), original_binding=old['binding'],
@@ -244,6 +319,8 @@ def _execute(plan, source, cell, device):
     from defend.a1_defense_eval import clean_loaders, evaluate_defense
     from defend.a1_repair_ops import train_repair, DEFAULT_RECIPE
     from defend.a1_anp import train_anp
+    actual_sources = _sources()
+    reporting_audit = _reporting_source_audit(plan, actual_sources)
     folder = Path(cell['folder'])
     with legacy._cell_lock(folder):
         original, run, artifacts, inputs, audit, bank, binding = _context(plan, source, cell)
@@ -280,7 +357,7 @@ def _execute(plan, source, cell, device):
         after, after_hashes, after_inputs, _ = legacy._audit_source(original)
         if artifacts != after_hashes or inputs != after_inputs or run['fingerprint'] != after['fingerprint']:
             raise ValueError('Immutable original artifacts/inputs changed during evaluation')
-        if _sources() != plan['sources']:
+        if _reporting_source_audit(plan) != reporting_audit:
             raise ValueError('Code changed while cell was running; no result accepted')
         data = io.BytesIO()
         np.savez_compressed(data, **dict(evaluated['arrays'], pair_ids=np.asarray(test_ids, dtype=str)))
@@ -290,6 +367,7 @@ def _execute(plan, source, cell, device):
             binding=binding, binding_sha256=legacy._digest(binding), metrics=evaluated['metrics'],
             diagnostics=evaluated['diagnostics'], dose_rows=evaluated['dose_rows'], repair=metadata,
             source_scientific_audit=audit, no_defense_replay_deltas_mm=replay,
+            reporting_runtime=reporting_audit,
             per_sample_file='per_sample.npz', per_sample_sha256=legacy._sha(folder / 'per_sample.npz'),
             created_utc=datetime.now(timezone.utc).isoformat())
         if cell['defense'] != 'none':
@@ -315,6 +393,7 @@ def _collect(plan, source, *, data=True):
 
 
 def export_records(plan, records):
+    reporting_audit = _reporting_source_audit(plan)
     report = build_metric_report(records)
     output = Path(plan['outdir'])
     for name in ('per_seed', 'six_dose', 'paired_deltas', 'aggregates', 'paired_aggregates'):
@@ -322,6 +401,7 @@ def export_records(plan, records):
         fields = list(dict.fromkeys(k for row in rows for k in row))
         legacy._atomic_bytes(output / f'defense_{name}.csv', legacy._csv(rows, fields))
     report.update(plan_sha256=plan['plan_sha256'], profile=PROFILE,
+        reporting_runtime=reporting_audit,
         source_plan_sha256=plan['source_plan_sha256'],
         record_provenance=[dict(cell_id=r['cell_id'], record_sha256=r['record_sha256'],
             reused_v1=bool(r.get('reuse_provenance'))) for r in records])
@@ -430,16 +510,24 @@ def main(argv=None):
     if args.source_outdir is None or args.outdir is None:
         parser.error('--source-outdir and --outdir are required')
     plan, source = _load_plan(args.source_outdir, args.outdir, args.reuse_outdir)
+    actual_sources = _sources()
+    reporting_audit = _reporting_source_audit(plan, actual_sources)
     selected = _selected(plan, args.seeds, args.defenses)
     if args.dry_run:
         print(f'[T5-v2] DRY RUN: {len(selected)}/15 evaluations; four defenses + No defense; '
               f'{args.jobs_per_gpu} slots; workers=0. NO writes/data/checkpoints/GPU/training.')
         print(f"[T5-v2] plan {plan['plan_sha256']}; source {plan['source_plan_sha256']}")
+        if reporting_audit['compatibility']:
+            print('[T5-v2] pinned reporting-only compatibility: saved plan/repair bindings preserved; '
+                  'actual reporter sources recorded separately.')
         return 0
     if args.status:
         count = sum((Path(c['folder']) / 'evaluation.json').is_file() for c in selected)
         print(f'[T5-v2] artifact presence {count}/{len(selected)}; NOT a fresh scientific audit')
         return 0
+    if reporting_audit['compatibility']:
+        print('[T5-v2] pinned reporting-only resume: original plan/repair bindings preserved; '
+              'existing results are audited, not retrained.', flush=True)
     output = Path(plan['outdir'])
     with legacy._cell_lock(output):
         plan, source = _load_plan(args.source_outdir, args.outdir, args.reuse_outdir)
@@ -459,7 +547,9 @@ def main(argv=None):
             legacy._atomic_json(output / 'runtime_launches' / f"{now.strftime('%Y%m%dT%H%M%S%fZ')}.json",
                 dict(created_utc=now.isoformat(), device=args.device, jobs_per_gpu=args.jobs_per_gpu,
                      controller_pid=os.getpid(), cells=[c['cell_id'] for c in selected],
-                     plan_sha256=plan['plan_sha256']))
+                     plan_sha256=plan['plan_sha256'], reporting_runtime=reporting_audit))
+            if _reporting_source_audit(plan) != reporting_audit:
+                raise ValueError('Code changed while controller was running; no workers launched')
             _schedule(plan, source, selected, args.device, args.jobs_per_gpu)
         records = _collect(plan, source)
         print(f"[{export_records(plan, records)}] {output / 'table5_defenses.md'}", flush=True)

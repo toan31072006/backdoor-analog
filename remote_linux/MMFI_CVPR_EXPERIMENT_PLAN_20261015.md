@@ -38,6 +38,51 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
+### Sửa lỗi replay float 2026-10-20 — giữ output/checkpoint v3_dcefix
+
+Người dùng báo task `MMFI-A1-Defense-DCEFix` đã thoát lỗi
+`V2 metrics do not reproduce the saved per-sample data`. Log cho thấy
+`s43__a1__none` hoàn tất sáu-dose evaluation và ANP seed42 đã tới iteration
+1000 trong log; chưa coi ANP hoàn tất hoặc cho rằng đúng iteration đó đã được
+checkpoint. So sánh dictionary float tuyệt đối có thể từ chối cùng dữ liệu khi
+layout bộ nhớ sau NPZ roundtrip làm reduction lệch khoảng `1e-14` mm.
+
+- Vá kiểm tra replay trong `run_a1_defenses_v2.py` và dùng chung phép đối chiếu
+  đó trong sidecar `run_a1_clp.py`: absolute tolerance
+  **1e-9 mm**, riêng PCK **1e-10 percentage points**, không relative tolerance.
+  Key/type/finite, input/checkpoint/NPZ hashes, shape, protocol và provenance
+  vẫn phải qua audit. Không làm tròn artifact hoặc đổi metric/recipe/defense.
+- Cho phép compatibility **duy nhất** với runner cũ SHA256
+  `6320478bea587b474e0914d1c540446ee6b473eaa1d8a9d21fb9cc5c5dbdae36`,
+  và SHA256 runner đã vá/được review cũng phải khớp pin trong compatibility
+  policy JSON. Source map bộ bốn defense chỉ khác runner v2 (CLP runner không
+  nằm trong map đó); mọi source còn lại và kế hoạch phải không đổi.
+  Manifest/binding/checkpoint lịch sử giữ nguyên; source runtime/reporting
+  thực và hash policy file được ghi riêng để truy vết.
+  Không sửa hash cũ hoặc bỏ source-check. Đây là ngoại lệ hẹp cho replay hotfix,
+  không đảo ngược quy tắc output mới của hotfix schema DCE bên dưới.
+- Sau test/push, người dùng pull trên Vân rồi gọi lại
+  `Start-A1DefenseTaskV2.ps1 -Outdir` trỏ đúng
+  `mmfi_a1_defenses_ft_anp_nad_sam_s42_43_44_v3_dcefix`, cùng task
+  `MMFI-A1-Defense-DCEFix`, `-JobsPerGpu 2`; dry-run trước. Không tự thêm
+  `-StopExisting`, không auto-retry, không khởi chạy GPU từ máy Admin.
+- Record seed43 No defense được audit rồi skip nếu hợp lệ; ANP tiếp tục từ
+  atomic checkpoint hợp lệ gần nhất, lưu mỗi 25 iterations. Không train A1 lại,
+  không xóa NPZ/record/checkpoint vì lỗi reporter. Local synthetic regression
+  không phải full MM-Fi/GPU validation hoặc fresh artifact audit trên Vân.
+- Kiểm thử hotfix đạt **318 test riêng biệt**, các nhóm đều exit code 0:
+  85 runner/worker/compatibility ban đầu, 141 metric/DCE/CLP/helper, 35
+  compatibility hoàn chỉnh (26 trùng nhóm đầu), 60 ANP và 23 NPZ float
+  roundtrip v2/CLP. Bao gồm nonconstant arrays, 33264 synthetic identities,
+  giữ nguyên bytes/hash, từ chối scalar/schema/provenance sai, giữ binding
+  khi resume và kiểm khôi phục RNG/sampler/optimizer; không launch GPU.
+- CLP reference loader cũng dùng compatibility pin hẹp này khi đọc v3_dcefix;
+  pruning recipe/operators CLP không đổi, nhưng sidecar reader dùng comparator
+  chung đã vá. CLP chưa chạy: vẫn dùng output mới như kế hoạch, không cho phép
+  bỏ source mismatch của manifest CLP cũ. Đợi bộ bốn defense kết thúc, không
+  mở thêm hai job CLP vào lúc hai job defense còn chạy. Hướng dẫn đầy đủ và
+  lệnh resume hiện hành ở đầu `A1_DEFENSES_V2_VI.md`.
+
 ### Sửa lỗi cache DCE 2026-10-20 — không retrain victim
 
 Log người dùng gửi cho thấy task v2 đã thoát với

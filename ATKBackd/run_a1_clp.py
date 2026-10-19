@@ -143,8 +143,9 @@ def _read_record(folder, expected_binding=None):
             or 'bank_sha256' in record['binding'] or record['binding'].get('recipe') != RECIPE):
         raise ValueError('CLP record profile/cell/data-free identity changed')
     evaluated = v2._enriched_record(record, folder)
-    if any(m not in record['metrics'] for m in METRICS) or record['metrics'] != evaluated['metrics']:
+    if any(m not in record['metrics'] for m in METRICS):
         raise ValueError('CLP metrics do not reproduce the saved per-sample data')
+    v2._assert_metric_replay(record['metrics'], evaluated['metrics'])
     _validate_repair_metadata(record.get('repair', {}))
     return record
 
