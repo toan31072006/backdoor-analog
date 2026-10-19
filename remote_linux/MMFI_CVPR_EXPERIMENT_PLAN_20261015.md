@@ -13,6 +13,27 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
+### Cập nhật 2026-10-19: T5 seed 42, hai job runtime trên máy Vân
+
+Người dùng **báo** đã hoàn tất T1–T3 seeds 42/43/44 trên máy Vân; chưa coi đây
+là audit mới của assistant khi chưa nhận ZIP/checker. Người dùng yêu cầu pilot
+defense seed 42, sau đó chốt **2 job song song** và đồng ý push sau khi test.
+Các chỉ đạo “defense để sau” ở mục lịch sử bên dưới không còn chặn pilot này.
+
+- Vẫn chỉ Proposed A1/rho=.1, full MM-Fi protocol1-s1, cùng checkpoint 50 epoch
+  trong `mmfi_three_tables_4090_win_fresh_v1`; không retrain victim/đổi trigger.
+  No defense + FT/FP/NAD/FT-SAM; mọi recipe, bank, metric và workers=0 giữ nguyên.
+- Sidecar runtime `run_a1_defenses_parallel.py` có 1 hoặc 2 slot trên một device,
+  không sửa scientific sources/hash/manifest cũ. Clean bank chuẩn bị trước khi
+  spawn; completed record audit mới được skip; epoch/stage checkpoint được reuse.
+  Chỉ một controller giữ khóa root; phải dừng owner/orphan cũ trước khi chuyển.
+- Windows helper `remote_tools/Start-A1DefenseTask.ps1` chạy qua Task Scheduler;
+  `-StopExisting` chỉ dừng đúng T5 output đã chọn, không kill Python/YOLO khác,
+  không xóa checkpoint/lock. Không auto-retry, không đổi batch để che lỗi OOM.
+- Hai job không bảo đảm nhanh hơn hay đủ VRAM/RAM. Test local/toy subprocess
+  không thay full MM-Fi/GPU run; chưa báo kết quả defense hay độ kháng defense.
+  Một seed đủ 5 record là pilot; vẫn partial so với bảng T5 ba seed/15 record.
+
 ### Bổ sung mới nhất: T5 local, không đổi batch T1–T3 (2026-10-18)
 
 Người dùng đã đồng ý **tạo code, kiểm thử và push GitHub** bộ defense **FT, FP, NAD,

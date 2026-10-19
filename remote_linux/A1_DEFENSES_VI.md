@@ -1,5 +1,94 @@
 # T5 local: FT, Fine-Pruning, NAD và FT-SAM cho MM-Fi
 
+## Cập nhật 2026-10-19: pilot seed 42, tối đa hai job trên một GPU
+
+Người dùng báo đã chạy xong T1–T3 với seeds 42/43/44 trên máy Vân và yêu cầu
+chạy T5 seed 42 với **2 job song song**. Đây là thay đổi runtime, không thay
+defense/config/metric, không phải full-run T5 đã hoàn tất. Các mục tuần tự bên
+dưới là hướng dẫn runner gốc và được giữ để truy vết.
+
+Sidecar `ATKBackd/run_a1_defenses_parallel.py` gọi **chính worker gốc** của
+`run_a1_defenses.py`; không sửa bốn file đã khóa trong T5 `sources`. Vì vậy
+manifest T5, `repair.pt` và kết quả có binding hợp lệ từ lượt tuần tự vẫn dùng
+được. Không sửa hash hoặc tạo profile mới chỉ để đổi số slot.
+
+Kiểm thử local: 25 test mới đạt (22 scheduler/lock/provenance/toy child-process,
+3 PowerShell parse/ownership/dry-run), cùng 246 test hồi quy defense/T1–T3 đã
+đạt. Không đăng ký task hay chạy full MM-Fi/GPU trong các test này. Lượt test
+riêng 25 case cuối chạy trên phiên bản code đã ổn định; warning pin-memory
+thuộc các fixture CPU cũ, không phải số liệu benchmark.
+
+- Mặc định seed 42, đủ `none`, `ft`, `fp`, `nad`, `ft_sam`; tối đa 2 child trên
+  `cuda:0`, DataLoader vẫn workers=0. `--jobs-per-gpu 1` giữ một slot; không nhận
+  3 slot. Số slot không làm batch 256 thành 128 hoặc thay số epochs.
+- Controller giữ cùng khóa root với runner gốc, kiểm tra cả cell không được chọn
+  để từ chối orphan worker. Không xóa `run.lock`; không mở controller thứ hai.
+- Audit source và tạo/kiểm tra clean bank chung **trước khi** spawn các child,
+  tránh hai worker cùng ghi `clean_bank.json.tmp`. Dataset của preflight được
+  giải phóng trước khi chạy hai child; mỗi child vẫn tự audit source/bank.
+- Kết quả hoàn tất chỉ skip sau audit source/input/bank/NPZ/checkpoint/binding.
+  Repair chưa xong resume tại checkpoint epoch/stage đã lưu; log nối tiếp.
+  Runtime provenance nằm riêng tại `runtime_launches/`, không sửa scientific plan.
+- Child lỗi thì controller dừng, không retry/tự giảm batch/đổi defense. Controller
+  chỉ cleanup worker do chính nó spawn; không tìm và kill Python/YOLO khác.
+  Khi chuyển launcher, epoch chưa lưu có thể phải chạy lại.
+- Chưa đo peak VRAM/RAM hoặc speedup khi hai defense cùng chạy trên RTX 4090.
+  Đặc biệt NAD giữ teacher và student; thiếu bộ nhớ thì báo lỗi, không coi 24 GB
+  là bảo đảm. Đây vẫn là pilot một seed, không phải bảng T5 ba seed.
+
+### PowerShell trên máy Vân: chạy nền, có thể ngắt SSH
+
+Sau khi code đã được kiểm thử và push, chạy trong **PowerShell máy Vân**:
+
+```powershell
+Set-Location "$env:USERPROFILE\code"
+git pull --ff-only
+if ($LASTEXITCODE -ne 0) { throw 'git pull failed' }
+
+powershell -NoProfile -ExecutionPolicy Bypass -File .\remote_tools\Start-A1DefenseTask.ps1 `
+  -Seeds 42 -JobsPerGpu 2 -StopExisting
+```
+
+`-StopExisting` là yêu cầu tường minh: dừng task/worker **T5 gắn đúng output**
+`runs/mmfi_a1_defenses_s42_43_44_v1` trước khi chạy controller mới; giữ mọi
+checkpoint/kết quả, không chạm job T1–T3, YOLO hoặc T5 output khác. Script dry-run
+kiểm tra plan trước khi dừng. Bỏ cờ này thì script từ chối nếu T5 cũ còn sống.
+Task mới tên `MMFI-A1-Defense-Parallel`; script nhận diện cả task tuần tự cũ
+`MMFI-A1-Defense-S42`. Không start task seed-44 để chạy defense.
+
+Helper dùng full Conda executable đã có trong `CONDA_EXE` và `conda run` để
+activate môi trường; không lưu mật khẩu. Task S4U chỉ dùng đường dẫn local,
+không hỗ trợ tài nguyên mạng/EFS. Không giới hạn mặc định 72 giờ, không auto-retry
+hay auto-run sau reboot. Task/permission/CUDA vẫn phải xác minh trên máy Vân.
+Đóng SSH/VS Code không phải lệnh dừng Task; sleep, shutdown, OOM vẫn làm gián đoạn.
+
+Chỉ kiểm tra trước, không tạo task/stop job/load dataset hoặc CUDA:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\remote_tools\Start-A1DefenseTask.ps1 -DryRun
+```
+
+Kiểm tra task và log (Running không tự chứng minh epoch đang tăng):
+
+```powershell
+Get-ScheduledTask -TaskName MMFI-A1-Defense-Parallel | Select-Object TaskName,State
+$DOSE_DEFENSE = "$env:USERPROFILE\backdooranalog\runs\mmfi_a1_defenses_s42_43_44_v1"
+Get-Content "$DOSE_DEFENSE.task.*.stdout.log" -Encoding UTF8 -Tail 12
+Get-Content "$DOSE_DEFENSE.task.*.stderr.log" -Encoding UTF8 -Tail 12
+Get-Content "$DOSE_DEFENSE\seed42\a1\*\console.log" -Encoding UTF8 -Tail 8
+```
+
+Preflight audit/bank có thể chưa in log cell ngay. Đọc log controller và process
+trước khi kết luận treo. Pilot đủ 5/15 records vẫn báo partial như runner gốc.
+Muốn chạy foreground (vẫn phụ thuộc terminal):
+
+```powershell
+& "$env:USERPROFILE\backdooranalog\envs\dose-backdoor\python.exe" -u `
+  .\ATKBackd\run_a1_defenses_parallel.py `
+  --source-outdir "$env:USERPROFILE\backdooranalog\runs\mmfi_three_tables_4090_win_fresh_v1" `
+  --outdir "$DOSE_DEFENSE" --device cuda:0 --jobs-per-gpu 2 --seeds 42
+```
+
 ## Phạm vi hiện tại
 
 Ngày 2026-10-18 người dùng đồng ý **tạo code, kiểm thử và push GitHub**.
