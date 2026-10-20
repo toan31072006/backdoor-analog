@@ -1,0 +1,55 @@
+{
+  "schema": "metafi_plus_plus_architecture_reference_v1",
+  "repository": "https://github.com/cseeyangchen/DT-Pose",
+  "commit": "2fbbef271454e6fbb95b1a0163b8cdbb96163838",
+  "verified_utc_date": "2026-10-20",
+  "source_files": [
+    {
+      "path": "model/metafi/mynetwork.py",
+      "url": "https://raw.githubusercontent.com/cseeyangchen/DT-Pose/2fbbef271454e6fbb95b1a0163b8cdbb96163838/model/metafi/mynetwork.py",
+      "sha256": "01fb8c1bef2cddae68ffa52213bd64c6b69cb1556f4b80fca231f10938b66b9b"
+    },
+    {
+      "path": "model/metafi/ChannelTrans.py",
+      "url": "https://raw.githubusercontent.com/cseeyangchen/DT-Pose/2fbbef271454e6fbb95b1a0163b8cdbb96163838/model/metafi/ChannelTrans.py",
+      "sha256": "2099da3cc1d5dd4837143c5b63ebadc77368fc95dda569ada11831329984ca8c"
+    }
+  ],
+  "license_audit": {
+    "source_license": "No LICENSE/COPYING file found in recursive tree at the pinned commit; do not infer a redistribution license from public GitHub access.",
+    "local_implementation": "Independent implementation of the architecture and equations; no vendored source files.",
+    "resnet_dependency": "torchvision ResNet34, BSD-3-Clause; torchvision manages its own dependency license and optional ImageNet weight download."
+  },
+  "architecture": {
+    "input": ["B", 3, 114, "T"],
+    "resize_per_antenna": [136, 32],
+    "encoder": "One shared ResNet34, 1-to-64 stem conv 3x3 stride1; no maxpool call",
+    "antenna_aggregation": "Concatenate three 512x17x4 antenna maps along width -> 512x17x12",
+    "transformer": "One channel-attention block, three full-width Q/K/V heads, InstanceNorm2d of channel affinities, heads averaged, MLP expansion4, dropout0.1",
+    "decoder": "Conv512->32 3x3 / BN / ReLU / Conv32->3 1x1 / BN / ReLU / average width12 / BN1d3",
+    "output": ["B", 1, 17, 3],
+    "features": ["B", 512],
+    "signed_coordinates": "Final BN1d is not followed by ReLU; signed output is retained."
+  },
+  "integration_differences": [
+    "Single-person dimension is explicit for the local HPE trainer; source MM-Fi forward returns Bx17x3.",
+    "Only the first of the source's three constructed ResNet34 objects is instantiated because the other two are never used or registered on the source module. This changes construction RNG consumption, not the executed model.",
+    "Default pretrained=false never downloads ImageNet weights; all running statistics start at identity. Source pretrained=true retains ImageNet BN running statistics after Conv Xavier and BN affine reset. Scratch mode is not claimed as bitwise source initialization reproduction.",
+    "pretrained=true explicitly uses torchvision ImageNet1K V1 and may download weights; it retains source-style running statistics before Conv/BN affine initialization.",
+    "Bilinear Resize explicitly locks antialias=true (the torchvision version-dependent default in source).",
+    "MM-Fi-only input and skeleton contract is validated rather than silently reshaping other datasets."
+  ],
+  "local_source_parity_audit": {
+    "date": "2026-10-20",
+    "torch": "2.9.1+cpu",
+    "torchvision": "0.24.1+cpu",
+    "procedure": "Downloaded the two SHA256-pinned source files into memory only, instantiated their original classes with torchvision ResNet download patched to weights=None, applied the source initializer, and strictly loaded all 268 state-dict entries into the independent implementation. Compared both eval and train forwards, using the same input and dropout RNG state, with the sole output adaptation removing the explicit local person dimension.",
+    "input_shape": [2, 3, 114, 10],
+    "eval_max_absolute_pose_error": 0.0,
+    "eval_max_absolute_feature_error": 0.0,
+    "train_max_absolute_pose_error": 0.0,
+    "train_max_absolute_feature_error": 0.0,
+    "limitations": "Synthetic CPU architecture/operator parity with matched weights only. Reference download was disabled deliberately; this does not validate ImageNet-initialization parity, full-data clean utility, optimizer convergence, GPU determinism, or paper results. Source code was not saved or vendored."
+  },
+  "validation_scope": "Local synthetic forward/gradient/state-dict tests are not full MM-Fi clean-utility reproduction or completed attack experiments."
+}

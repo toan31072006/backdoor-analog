@@ -38,6 +38,65 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
+### Bổ sung 2026-10-20: full T1--T3 trên MetaFi++ và GraphPose-Fi
+
+Người dùng yêu cầu triển khai **cả hai backbone** để chạy full experiment;
+đồng ý commit/push sau kiểm thử và chốt **2 job/GPU**, workers=0. Đây là
+cross-backbone retraining trên MM-Fi, **không phải dataset thứ hai**, trigger
+transfer hoặc defense trên backbone mới. Không sửa source/manifest/checkpoint
+HPE-Li hiện có, không tự khởi chạy GPU trên Vân từ workspace Admin.
+
+- Mỗi backbone có 13 victim/seed x seeds42/43/44 = **39**, tổng **78 train mới**.
+  T1: Clean + sáu baseline hiện chọn + A1; T2: rho=.1/.2/.4, đủ sáu dose;
+  T3: A1--A4. A1 dùng chung trong ba bảng của cùng backbone/seed. Tính metric,
+  mean/sample SD riêng từng backbone; không gộp frame hoặc hai backbone làm seed.
+- Giữ full protocol1-s1/split seed0, 133056 TRAIN/33264 TEST, target pivot1,
+  joints[2,3], Z40d, paired U(.2,1) trừ A2/A4 shuffled, native operators/rho,
+  Target-PCK scale GT(5,12), sáu-dose DCE và clean/no-trigger controls như cũ.
+- Đối chiếu nguồn tác giả cho thấy MetaFi++ **có BN1d cuối** nên output có thể
+  âm; GraphPose-Fi official dùng graph17 khớp **khớp DT-Pose/MM-Fi**. Hai lý do
+  chặn trong factory lịch sử không mô tả đúng các source đã kiểm tra hiện nay.
+  Không bỏ ReLU hay đổi topology để làm đẹp kết quả; dùng factory/adapter mới.
+- Recipe riêng, cùng mọi method trong mỗi backbone: MetaFi++ SGD lr=.01,
+  momentum=.9, wd0, batch32, 50epoch; GraphPose-Fi AdamW lr3e-4,
+  wd.02 loại bias/norm/1-D khỏi decay, **effective batch256, physical32 x
+  accumulation8**, warmup5/cosine, clipnorm1, 50epoch. Khóa final epoch49, **không chọn best TEST** như một số
+  nhánh code tác giả. Từ scratch, không ImageNet; MetaFi khác BN running stats
+  của constructor tác giả có tải ImageNet. Công bố adaptation, không nhận là
+  reproduction nguyên vẹn của paper gốc. Parameter-group order cố định để resume.
+  Graph source hỗ trợ microbatch/accumulation qua CLI; physical256 của tác giả
+  không phải mặc định cho hai job4090: CPU saved-tensor audit B1/B2 cho ước lượng
+  khoảng25GiB activation lưu riêng ở B256/job, chưa tính optimizer/workspace.
+  Mặc định physical32 giữ BN statistics theo32, không coi là bitwise physical256.
+  Accumulation reset theo epoch và sample-weighted phần cuối (MM-Fi cuối192
+  samples/effective group); không sao chép global-counter/fixed-denominator
+  partial-group behavior của source tác giả. Thay microbatch phải là plan/output
+  mới, không runtime override hoặc tự fallback OOM. Đây chưa phải CUDA peak audit.
+- Module độc lập dựa trên source pinned DT-Pose
+  `2fbbef271454e6fbb95b1a0163b8cdbb96163838` và GraphPose-Fi
+  `c6c937eca88945daa5ff06985789b639ce2d9f44`; không vendor code không thấy
+  LICENSE. Source passport có URL/SHA và khác biệt. Source/runtime/config/input/
+  poison/checkpoint/NPZ được bind vào manifest mới, không nới hash cũ.
+- Chạy `--pilot-clean` để kiểm pipeline/utility sạch trước. Pilot chưa đủ bảng;
+  không tune theo attack TEST. Full runner không tự shrink batch/retry khi OOM,
+  không kill job ngoài phạm vi. Checkpoint atomic mỗi epoch, resume cùng output.
+  `run_a1_cross_backbones.py`, helper `Start-A1CrossBackboneTask.ps1`, hướng dẫn
+  `A1_CROSS_BACKBONES_VI.md`; output mặc định
+  `runs/mmfi_cross_backbones_s42_43_44_v1` tách từng backbone.
+- Kiểm thử local: **151 test mới đạt trong một lượt, exit0**, gồm model thật
+  forward/backward, source parity, optimizer/RNG/atomic checkpoint resume,
+  accumulation/partial-group/scheduler, immutable NPZ replay và helper Windows
+  parse/mock; **138 regression T1--T3 cũ đạt**, exit0 ở lượt riêng. Dry-run
+  resolve đúng78 cells/2slots, không tạo output hoặc chạm raw data/CUDA.
+  Source trainer/factory/evaluator/report HPE-Li không đổi. Đây là kiểm thử CPU
+  tổng hợp, **không có full MM-Fi/CUDA result**, chưa xác nhận clean reproduction
+  của hai backbone, và chưa có T1--T3 mới chỉ vì code đã viết. Helper test không
+  đăng ký Task Scheduler thật, không launch GPU hoặc truy cập máy Vân.
+  Thêm **4 test worker end-to-end đạt**, exit0: hai backbone x A1/clean,
+  vòng lặp50epoch thật trên fixture300TRAIN/3TEST, native A1 injection,
+  Graph100optimizerupdates, sáu-dose/NPZ/audit và cache reuse không đổi
+  checkpoint bytes. Tổng **155 test mới +138 regression =293 test riêng biệt**.
+
 ### Sửa lỗi replay float 2026-10-20 — giữ output/checkpoint v3_dcefix
 
 Người dùng báo task `MMFI-A1-Defense-DCEFix` đã thoát lỗi

@@ -1,0 +1,55 @@
+{
+  "schema": "graphpose_fi_independent_operator_port_v1",
+  "audit_date": "2026-10-20",
+  "repository": "https://github.com/Cirrick/GraphPose-Fi",
+  "commit": "c6c937eca88945daa5ff06985789b639ce2d9f44",
+  "license_status": "No LICENSE or COPYING file was present in the audited recursive repository tree. This implementation was independently written from the architecture/operator specification; no author source files are redistributed.",
+  "paper": "Chen et al., Graph-Based 3D Human Pose Estimation Using WiFi Signals, ICASSP 2026",
+  "files": {
+    "model/model.py": "489d16be8ed257af54ee2258c0850134afce11b3ec4e8648b40bcc8ad61687ce",
+    "model/GraFormer.py": "8ef765753dd3a627351e0e2a2ca33ab29f061920c7aca6873c664bfe1000e04a",
+    "model/ChebConv.py": "57f1b4db452999ffe817c056b62f4e0210e533192c03d61aefde36063027fded",
+    "train.py": "35d7866d72f36b61444770aa064d54ffb7a868852e8ec8ea6622f966b20c12fe",
+    "utils.py": "24ad619e327f512993bfd7ef02aadb7149c69a00dc338f15dc8087b0cb5eb944",
+    "config/mmfi/pose_config_p1s1.yaml": "6471fdfac7c68d7883bacb99244f1ee3bf05cd41522f670b229685e6cf1e8cf3",
+    "README.md": "9d87020f590b9ace2f409a34b6c1e6a3021cd71c0580849553ec79fb741a65ec"
+  },
+  "architecture": {
+    "encoder": "Shared ResNet34 layer1/layer2/layer3/layer4; 1-channel 3x3 stride-1 stem; no maxpool; each antenna processed sequentially",
+    "resize": [136, 32],
+    "resize_operator": "bilinear, align_corners=false, antialias=true (torchvision Resize default in source torch2.7 environment)",
+    "antenna_count": 3,
+    "encoder_output_per_antenna": [512, 17, 4],
+    "aggregation": "attn2: 512-to-256 Conv2d projection, time softmax then antenna softmax, LayerNorm(256)",
+    "graph": "MM-Fi 17-joint undirected bones plus self loops, row normalized; exactly matches attack/payload.py MMFI_EDGES",
+    "graformer": "256-to-128 order-2 ChebConv, four attention/learned-graph plus residual-Cheb blocks, 128-to-3 order-2 ChebConv; four attention heads, dropout .1",
+    "graph_attention_norm": "sample standard deviation (unbiased=true), epsilon=1e-6; not nn.LayerNorm",
+    "signed_output": true
+  },
+  "interface_and_safety_differences": [
+    "Accepts repository CSI [B,3,114,10], retaining optional source singleton [B,3,114,10,1]",
+    "Pose gains singleton person axis: [B,1,17,3]; source joint features remain [B,17,256]",
+    "Fixed adjacency and all-true masks are registered buffers instead of construction-time global CUDA tensors",
+    "Strict MM-Fi 17-joint single-person default architecture only; non-default mean/mhsa ablations are not exposed",
+    "No ImageNet download or pretraining: pretrained=false, matching source train.py default flag state",
+    "Unused source imports, unused JointMLPHead and non-default aggregator implementations are not included"
+  ],
+  "native_training_specification_not_an_execution_claim": {
+    "epochs": 50,
+    "optimizer": "AdamW",
+    "learning_rate": 0.0003,
+    "weight_decay": 0.02,
+    "betas": [0.9, 0.999],
+    "weight_decay_exclusions": "BatchNorm1d/2d, LayerNorm, GroupNorm direct parameters; names ending .bias; all one-dimensional parameters",
+    "effective_batch_size": 256,
+    "default_device_batch_size": 256,
+    "gradient_clip_max_norm": 1.0,
+    "warmup_epochs": 5,
+    "lr_multiplier": "(epoch+1)/5 for zero-based epoch<5; otherwise .5*(1+cos(pi*(epoch-5)/max(1,total_epochs-5)))",
+    "loss": "ordinary mean Euclidean per-joint error (MPJPE)",
+    "pretrained": false,
+    "source_checkpoint_selection": "Author saves best official validation/test metrics; new attack study must state its fixed final-epoch selection instead of silently using attack/test selection",
+    "source_parameter_order_issue": "Source param_groups_simple uses sets; deterministic named-parameter order with identical decay membership is required in the new runner for portable optimizer resume"
+  },
+  "validation_status": "Local synthetic shape/operator/source-parity tests are not full MM-Fi clean reproduction or full attack experiments."
+}
