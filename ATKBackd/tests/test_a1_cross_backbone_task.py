@@ -179,6 +179,123 @@ try {
     assert not (tmp_path / 'output').exists()
 
 
+def test_seed42_a1_dry_run_selects_only_four_cells_without_writes(tmp_path):
+    before = sorted(str(p) for p in tmp_path.rglob('*'))
+    result = _powershell(_script(r'''
+$ErrorActionPreference='Stop'
+function Get-ScheduledTask { throw 'UNSAFE task inspection' }
+function Get-CimInstance { throw 'UNSAFE process inspection' }
+function Register-ScheduledTask { throw 'UNSAFE registration' }
+function Start-Process { throw 'UNSAFE process launch' }
+& '__HELPER__' -DataHome '__DATA__' -Outdir '__OUTPUT__' -EnvironmentPrefix '__PREFIX__' -PilotA1Seed42 -JobsPerGpu 2 -DryRun
+''', DATA=tmp_path / 'missing data', OUTPUT=tmp_path / 'not created output',
+        PREFIX=Path(sys.executable).parent))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '78 fresh scientific victims; 4 selected; 2 slot(s)/device' in result.stdout
+    assert sorted(str(p) for p in tmp_path.rglob('*')) == before
+
+
+@pytest.mark.parametrize('flags,expected', [
+    ('-PilotClean -PilotA1Seed42', 'Use PilotClean or PilotA1Seed42'),
+    ('-PilotA1Seed42 -Backbones graphposefi', 'requires both backbones'),
+])
+def test_seed42_pilot_conflicts_rejected_before_preflight(tmp_path, flags, expected):
+    result = _powershell(_script(r'''
+$ErrorActionPreference='Stop'
+function Get-CimInstance { throw 'UNSAFE inspection' }
+function Register-ScheduledTask { throw 'UNSAFE registration' }
+try {
+    & '__HELPER__' -DataHome '__DATA__' -Outdir '__OUTPUT__' -EnvironmentPrefix '__PREFIX__' __FLAGS__
+    throw 'expected invalid pilot failure'
+} catch {
+    if($_.Exception.Message -notlike '*__EXPECTED__*'){throw}
+    'INVALID_PILOT_BLOCKED'
+}
+''', DATA=tmp_path / 'data', OUTPUT=tmp_path / 'output',
+        PREFIX=Path(sys.executable).parent, FLAGS=flags, EXPECTED=expected))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'INVALID_PILOT_BLOCKED' in result.stdout
+    assert not (tmp_path / 'output').exists()
+
+
+def test_seed42_a1_mock_task_payload_launches_only_declared_subset(tmp_path):
+    result = _powershell(_script(r'''
+$ErrorActionPreference='Stop'
+$env:CONDA_EXE='__PYTHON__'
+function Get-CimInstance { }
+function Get-ScheduledTask { }
+function New-ScheduledTaskAction { param($Execute,$Argument)
+    $global:CBAction=[pscustomobject]@{Execute=$Execute;Arguments=$Argument}
+    $global:CBAction
+}
+function New-ScheduledTaskPrincipal { param($UserId,$LogonType,$RunLevel) [pscustomobject]@{} }
+function New-ScheduledTaskSettingsSet {
+    param($ExecutionTimeLimit,$MultipleInstances,[switch]$AllowStartIfOnBatteries,[switch]$DontStopIfGoingOnBatteries,[switch]$Hidden)
+    [pscustomobject]@{}
+}
+function Register-ScheduledTask { param($TaskName,$Action,$Principal,$Settings,[switch]$Force) }
+function Start-ScheduledTask { param($TaskName) }
+function Stop-Process { throw 'UNSAFE stop' }
+function Stop-ScheduledTask { throw 'UNSAFE task stop' }
+& '__HELPER__' -DataHome '__DATA__' -Outdir '__OUTPUT__' -EnvironmentPrefix '__PREFIX__' -PilotA1Seed42 -JobsPerGpu 2
+if($global:CBAction.Arguments -notmatch '-EncodedCommand\s+([A-Za-z0-9+/=]+)'){throw 'No encoded payload'}
+$payload=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1]))
+function Start-Process {
+    param($FilePath,$ArgumentList,$WorkingDirectory,$WindowStyle,[switch]$Wait,[switch]$PassThru,$RedirectStandardOutput,$RedirectStandardError)
+    if($ArgumentList -notmatch '--cells metafiplusplus__s42__a1 graphposefi__s42__a1$'){throw ('Wrong selected cells: '+$ArgumentList)}
+    if($ArgumentList -notmatch '--jobs-per-gpu 2 --num-workers 0 --graph-load-batch-size 32'){throw 'Wrong runtime/recipe flags'}
+    if($ArgumentList -match '--pilot-clean|s43|s44'){throw 'Unrequested pilot or seed'}
+    if($FilePath -ne '__PYTHON__' -or $WindowStyle -ne 'Hidden' -or !$Wait -or !$PassThru){throw 'Wrong process contract'}
+    Write-Host 'MOCK_A1_SUBSET_PAYLOAD_OK'
+    [pscustomobject]@{ExitCode=0}
+}
+& ([scriptblock]::Create($payload))
+''', DATA=tmp_path / 'missing data', OUTPUT=tmp_path / 'output',
+        PREFIX=Path(sys.executable).parent, PYTHON=sys.executable))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'MOCK_A1_SUBSET_PAYLOAD_OK' in result.stdout
+    assert not (tmp_path / 'output').exists()
+
+
+def test_held_root_lock_blocks_task_without_modifying_artifacts(tmp_path):
+    if os.name != 'nt' or not POWERSHELL:
+        pytest.skip('Windows byte-range lock integration')
+    import msvcrt
+    import run_a1_cross_backbones as runner
+    root = tmp_path / 'output'
+    matrix = runner.build_matrix(tmp_path / 'data', root)
+    runner.frozen._atomic_json(root / runner.MANIFEST, matrix)
+    lock_path = root / 'run.lock'
+    lock_path.write_bytes(b'0')
+    before = {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    with lock_path.open('r+b') as handle:
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        try:
+            result = _powershell(_script(r'''
+$ErrorActionPreference='Stop'
+$env:CONDA_EXE='__PYTHON__'
+function Get-ScheduledTask { }
+function Get-CimInstance { }
+function Register-ScheduledTask { throw 'UNSAFE registration' }
+function Start-ScheduledTask { throw 'UNSAFE start' }
+function Stop-Process { throw 'UNSAFE stop' }
+try {
+    & '__HELPER__' -DataHome '__DATA__' -Outdir '__OUTPUT__' -EnvironmentPrefix '__PREFIX__' -PilotA1Seed42
+    throw 'expected unavailable lock failure'
+} catch {
+    if($_.Exception.Message -notmatch 'Output lock is unavailable'){throw}
+    'HELD_LOCK_BLOCKED'
+}
+''', DATA=tmp_path / 'data', OUTPUT=root,
+                PREFIX=Path(sys.executable).parent, PYTHON=sys.executable))
+        finally:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'HELD_LOCK_BLOCKED' in result.stdout
+    assert before == {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
+
+
 def test_existing_exact_output_worker_blocks_registration_without_killing(tmp_path):
     result = _powershell(_script(r'''
 $ErrorActionPreference='Stop'

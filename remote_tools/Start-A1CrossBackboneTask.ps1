@@ -7,6 +7,7 @@ local unencrypted files and an existing Conda environment; no password is saved.
 Two jobs/GPU as explicitly requested. GraphPose-Fi loads 32 samples by default
 and accumulates to effective batch 256; this fixed adaptation is not OOM fallback.
 No existing process/task is stopped and no checkpoint or result is deleted.
+PilotA1Seed42 selects only the two A1 cells and their same-backbone clean controls.
 #>
 [CmdletBinding()]
 param(
@@ -19,6 +20,7 @@ param(
     [ValidateSet(32, 64, 128, 256)][int]$GraphLoadBatchSize = 32,
     [string]$TaskName = 'MMFI-A1-CrossBackbones',
     [switch]$PilotClean,
+    [switch]$PilotA1Seed42,
     [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
@@ -33,6 +35,16 @@ foreach ($name in @('DataHome', 'Outdir', 'EnvironmentPrefix')) {
 if (!$Backbones.Count -or ($Backbones | Sort-Object -Unique).Count -ne $Backbones.Count) {
     throw 'Empty or duplicate backbones.'
 }
+if ($PilotClean -and $PilotA1Seed42) {
+    throw 'Use PilotClean or PilotA1Seed42, not both.'
+}
+if ($PilotA1Seed42 -and $Backbones.Count -ne 2) {
+    throw 'PilotA1Seed42 requires both backbones; it does not change the saved plan.'
+}
+$cells = @()
+if ($PilotA1Seed42) {
+    $cells = @('metafiplusplus__s42__a1', 'graphposefi__s42__a1')
+}
 $python = Join-Path $EnvironmentPrefix 'python.exe'
 $runner = Join-Path $code 'ATKBackd\run_a1_cross_backbones.py'
 foreach ($file in @($python, $runner)) {
@@ -43,6 +55,7 @@ $preflight = @('-u', $runner, '--data-home', $DataHome, '--outdir', $Outdir,
     '--devices', 'cuda:0', '--jobs-per-gpu', "$JobsPerGpu", '--num-workers', '0',
     '--graph-load-batch-size', "$GraphLoadBatchSize", '--backbones') + @($Backbones)
 if ($PilotClean) { $preflight += '--pilot-clean' }
+if ($cells.Count) { $preflight += @('--cells') + $cells }
 # Pure plan validation; no data, checkpoints, GPU, task registration or writes.
 & $python @preflight --dry-run
 if ($LASTEXITCODE -ne 0) { throw 'Cross-backbone dry-run failed; nothing launched.' }
@@ -99,11 +112,36 @@ if ($activeTasks.Count -or $workers.Count) {
     throw 'This output is still active. Inspect its logs; this helper never stops an owner or starts duplicate workers.'
 }
 
+# GPU idleness / an empty CIM filter does not prove that the controller lock
+# is free. Probe an existing byte-zero lock without creating, truncating or
+# deleting it. The real controller must still acquire its own lock (race-safe).
+$rootLock = Join-Path $Outdir 'run.lock'
+if (Test-Path -LiteralPath $rootLock -PathType Leaf) {
+    $probe = @'
+import sys
+import msvcrt
+try:
+    with open(sys.argv[1], 'r+b') as handle:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+except OSError as exc:
+    print('Output lock probe failed: ' + repr(exc), file=sys.stderr)
+    sys.exit(3)
+'@
+    & $python -c $probe $rootLock
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Output lock is unavailable. No task registered. Inspect its owner or access error; do not delete run.lock.'
+    }
+}
+
 # Encoded JSON keeps paths and flags as data, not PowerShell expressions.
 $config = @{
     helper = 'a1_cross_backbone_task'; code = $code; data = $DataHome; output = $Outdir
     conda = $env:CONDA_EXE; prefix = $EnvironmentPrefix; jobs = $JobsPerGpu
     backbones = @($Backbones); pilot = [bool]$PilotClean; graphBatch = $GraphLoadBatchSize
+    cells = @($cells)
 } | ConvertTo-Json -Compress
 $config64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($config))
 $payload = @'
@@ -117,6 +155,7 @@ try {
     $env:MKL_THREADING_LAYER = 'SEQUENTIAL'
     $line = 'run --no-capture-output -p "{0}" "{0}\python.exe" -u "{1}\ATKBackd\run_a1_cross_backbones.py" --data-home "{2}" --outdir "{3}" --devices cuda:0 --jobs-per-gpu {4} --num-workers 0 --graph-load-batch-size {5} --backbones {6}' -f $cfg.prefix,$cfg.code,$cfg.data,$cfg.output,$cfg.jobs,$cfg.graphBatch,($cfg.backbones -join ' ')
     if ($cfg.pilot) { $line += ' --pilot-clean' }
+    if ($cfg.cells.Count) { $line += ' --cells ' + ($cfg.cells -join ' ') }
     $p = Start-Process -FilePath $cfg.conda -ArgumentList $line -WorkingDirectory $cfg.code -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput "$log.stdout.log" -RedirectStandardError "$log.stderr.log"
     exit $p.ExitCode
 } catch {

@@ -51,6 +51,83 @@ MetaFi++ còn BatchNorm sau decoder nên output cuối không bị buộc không
 graph 17 khớp của GraphPose-Fi tương thích target MM-Fi hiện tại. Sidecar mới
 không sửa factory/trainer/evaluator HPE-Li đã được hash trong các kết quả cũ.
 
+## Pilot hiện hành 2026-10-21: chỉ A1 seed 42, tối đa hai job
+
+Người dùng chốt **chưa thêm IAD/LIRA, chưa chạy dataset thứ hai**. HPE-Li
+T1--T3 và defense đã có kết quả thì không train lại. Bước chạy được ngay là
+A1 trên MetaFi++ và GraphPose-Fi, seed42, full50epochs/rho=.1/sáu dose, với
+clean control cùng backbone/seed. Đây chưa phải full ma trận hoặc bảng ba seed.
+
+Chạy trong **PowerShell trên máy Vân** sau khi controller/worker cũ đã dừng:
+
+```powershell
+conda activate "$env:USERPROFILE\backdooranalog\envs\dose-backdoor"
+cd "$env:USERPROFILE\code"
+git pull --ff-only
+if ($LASTEXITCODE -ne 0) { throw "git pull lỗi" }
+$CB = "$env:USERPROFILE\backdooranalog\runs\mmfi_cross_backbones_s42_43_44_v1"
+
+& .\remote_tools\Start-A1CrossBackboneTask.ps1 `
+  -Outdir "$CB" -JobsPerGpu 2 -GraphLoadBatchSize 32 -PilotA1Seed42 -DryRun
+if ($LASTEXITCODE -ne 0) { throw "Pilot preflight lỗi; chưa chạy." }
+
+& .\remote_tools\Start-A1CrossBackboneTask.ps1 `
+  -Outdir "$CB" -JobsPerGpu 2 -GraphLoadBatchSize 32 -PilotA1Seed42
+```
+
+Dry-run phải báo **78 planned / 4 selected / 2 slots**: hai A1 + hai clean
+dependencies, không phải train mới cả bốn. Clean hợp lệ được audit rồi skip;
+clean dở resume epoch checkpoint. Nếu GraphPose-Fi clean42 chưa xong, scheduler
+phải hoàn tất clean trước Graph A1; không hứa hai A1 bắt đầu đồng thời.
+Clean43/44, các baseline và ablation khác **không được chọn** trong lượt này.
+
+Helper không đổi Python scientific sources, source hash, recipe hoặc manifest.
+GPU0% chưa chứng minh không có CPU controller. Ngoài kiểm tra task/process,
+helper thử lấy rồi nhả khóa byte0 của `run.lock` hiện có trước khi đăng ký task;
+không tạo/xóa/ghi đè file khóa. Controller vẫn lấy khóa thật khi chạy để xử lý
+race. Nếu báo khóa không khả dụng, kiểm tra owner hoặc quyền truy cập; **không
+xóa lock, đổi output để né owner hoặc kill toàn bộ Python**.
+
+```powershell
+foreach ($kind in @("stdout","stderr","wrapper-error")) {
+  Get-ChildItem "$CB.task.*.$kind.log" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1 |
+    ForEach-Object { $_.FullName; Get-Content $_.FullName -Encoding UTF8 -Tail 15 }
+}
+foreach ($model in @("metafiplusplus","graphposefi")) {
+  $log = Join-Path $CB "$model\seed42\a1\console.log"
+  if (Test-Path -LiteralPath $log) {
+    $log
+    Get-Content -LiteralPath $log -Encoding UTF8 -Tail 10
+  } else {
+    Write-Host "$model A1 chưa có log: xem controller và clean42 trước."
+  }
+}
+```
+
+Kết thúc subset, dòng `selected cells finished; FULL TABLES INCOMPLETE` là
+đúng phạm vi pilot, không tự là lỗi. Cần đủ evaluation A1 và clean42 của cả hai
+backbone được audit, số hữu hạn, checkpoint đúng49 và log không lỗi; một dòng
+task `Ready` hoặc số loss giảm chưa phải kết quả attack đã hoàn tất.
+
+**Bước defense đã chốt để làm tiếp:** NAD trên MetaFi++ và ANP trên
+GraphPose-Fi, seed42, ghép No-defense của chính A1 tương ứng; giữ metrics
+target/clean/triggered-GT/cùng-khớp, PA và sáu-dose DCE diagnostics. Tại commit
+launcher pilot này, adapter/runner defense cho hai backbone **chưa được triển
+khai/kiểm chứng**. NAD hiện hardcode layer HPE-Li; không trỏ runner HPE-Li vào
+checkpoint MetaFi++/GraphPose-Fi rồi gọi là defense cross-backbone. Phải audit
+hook/layer coverage và khóa memory-adapted recipe riêng trước GPU pilot. Không
+chạy lại defense HPE-Li để thay cho hai nhánh đó. Chưa có lệnh hay kết quả mới
+IAD/LIRA và không đổi tên các learned-carrier drafts thành reproduction.
+
+Kiểm thử bổ sung: **47 test launcher/runner đạt, exit0**, gồm native Windows
+byte-lock đang được giữ vẫn chặn task trước registration và giữ nguyên bytes.
+**2 test defense preflight đạt, exit0** trên model thật/dữ liệu tổng hợp: NAD
+MetaFi++ có gradient qua fused features (`bn2`, `tf`, `decode.2`), teacher không
+bị cập nhật; ANP GraphPose-Fi thay/mask ordinary BN và giữ nguyên source model.
+LayerNorm attention/graph không được ANP BN mask cover. Đây chỉ là porting
+probes, chưa khóa repair recipe hoặc xác nhận resume/end-to-end MM-Fi defense.
+
 ## Trước khi chạy đầy đủ
 
 Code và test synthetic/local không xác nhận clean utility hay full GPU run.

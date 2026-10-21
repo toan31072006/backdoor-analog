@@ -38,6 +38,37 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
+### Pilot hiện hành 2026-10-21: A1 trước, defense tiếp; chưa IAD/LIRA/dataset2
+
+Người dùng yêu cầu test các nhánh mới trên 4090 trước khi thuê Vast, sau đó
+xác nhận **chưa thêm IAD/LIRA, ưu tiên A1 và defense**. Không chạy lại HPE-Li
+đã hoàn tất, không nhân pilot thành toàn bộ78victim, không chạm dataset thứ hai.
+
+- Chạy được ngay: MM-Fi protocol1-s1, seed42, A1/rho=.1 của MetaFi++ và
+  GraphPose-Fi; cùng50epoch, final49, sáu dose/metrics và recipe/microbatch32
+  của manifest cross-backbone đã có. Reuse clean42 chỉ sau audit; clean chưa
+  xong phải resume trước A1. Bốn selected cells gồm hai clean dependency và
+  hai A1, không phải bốn training mới. Seeds43/44 và baseline không được chọn.
+- Thêm switch vận hành `-PilotA1Seed42` vào helper Task Scheduler; giữ tối đa
+  hai job/GPU, workers0 và toàn bộ scientific Python sources/hash/checkpoints.
+  Từ chối dùng đồng thời `-PilotClean`; không tự kill, retry hoặc xóa lock.
+  Probe khóa root hiện có trước đăng ký task; controller vẫn khóa khi chạy.
+  GPU idle / CIM filter rỗng không thay cho kiểm tra khóa và log.
+- Defense pilot được chọn để chuẩn bị tiếp: NAD/MetaFi++, ANP/GraphPose-Fi,
+  seed42, dùng checkpoint A1 hoàn tất + No-defense cùng model/seed. HPE-Li
+  repair code hiện có không chứng minh adapter mới đúng. Cần hook/coverage,
+  pose-gradient và resume tests, recipe/bank/microbatch công bố trước GPU;
+  **chưa có runner defense cross-backbone đã kiểm chứng trong bản launcher**.
+- Một seed là pilot riêng, không phải mean/SD ba seed hoặc full paper tables.
+  Không thêm FT-SAM vào bộ paper hiện hành; historical artifacts không đổi.
+  Người dùng cho phép commit/push launcher sau khi test, không tự launch GPU
+  trên Vân từ workspace Admin. Hướng dẫn ở đầu `A1_CROSS_BACKBONES_VI.md`.
+- Kiểm thử: **47 launcher/runner tests +2 real-model synthetic defense probes
+  đạt, exit0** ở hai lượt. Probe NAD dùng fused MetaFi features, giữ teacher
+  bất biến; ANP chỉ mask ordinary BN của GraphPose-Fi, không cover LayerNorm.
+  Không có full GPU/MM-Fi run, không đăng ký task thật khi test; defense
+  runner/recipe/bank/resume trên hai backbone mới vẫn cần triển khai đầy đủ.
+
 ### Bổ sung 2026-10-20: full T1--T3 trên MetaFi++ và GraphPose-Fi
 
 Người dùng yêu cầu triển khai **cả hai backbone** để chạy full experiment;
