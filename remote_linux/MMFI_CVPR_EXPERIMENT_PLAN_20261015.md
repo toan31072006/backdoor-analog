@@ -38,6 +38,91 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
+### 2026-10-22 hiện hành: train thật WiFlow Clean + A1 seed42, push sau test
+
+Sau khi làm rõ probe chưa phải training, người dùng yêu cầu **chạy thật** và
+xác nhận **kiểm thử xong push GitHub**. Quyền này thay scope local-only/no-push
+của các mục WiFlow lịch sử bên dưới. Không có quyền kill MetaFi++, xóa kết quả
+hoặc đổi recipe/checkpoint Graph/Meta/HPE-Li; chưa xác thực SSH/GPU trên Vân.
+
+- Sidecar `run_a1_wiflow.py`, adapter riêng, helper
+  `Start-A1WiFlowTask.ps1`, output mới `runs/mmfi_wiflow_a1_s42_v1`;
+  manifest `wiflow_a1.resolved.json`. Chỉ hai scientific victims Clean + A1,
+  seed42, mỗi model50epoch/final49; clean xong rồi A1, một WiFlow worker slot.
+  MetaFi++ là job riêng; một Meta + một WiFlow = hai active training jobs.
+  Suspend Graph vẫn giữ VRAM; helper không tự kill/pause/resume job khác.
+- Giữ nguyên author architecture WiFlow MM-Fi 3D, pinned Apache-2.0 source,
+  không load pretrained. AdamW lr1e-4/wd1e-4/betas(.9,.999)/eps1e-8/clip1;
+  physical32 x accumulation2 = effective64, tail sample-weighted, epoch flush.
+  BN theo physical32. Đây không phải claim physical64 hoặc full reproduction.
+- **Công bố adaptation trước run**: common ordinary MPJPE, không native
+  SmoothL1/bone loss; fixed LR, không author validation-plateau/early stopping.
+  Không chạy native bone graph joint9, không sửa payload joint8/architecture.
+  Full official protocol1-s1/split0, TRAIN133056/TEST33264, same preprocessing,
+  units/action prior, rho0/.1, paired U(.2,1), pivot1/joints[2,3], Z40d.
+- Giữ đủ sáu dose, T-MPJPE/Target-PCK@.2, Clean MPJPE/PA, mean-positive DCE,
+  same-seed clean trigger/no-trigger diagnostics và input/poison/source/
+  checkpoint/NPZ hashes. Epoch atomic checkpoint/RNG/optimizer resume;
+  không auto-retry, skip failed batch, shrink batch hoặc chọn theo TEST.
+- Báo `ONE_SEED_PILOT_NOT_FULL_PAPER_TABLE`, không mean/SD hay đủ T1/T2/T3.
+  Không thêm baseline, defense hoặc dataset2 ở lượt này. Clean utility cần
+  kiểm trên dữ liệu thật; CPU synthetic tests không chứng minh efficacy.
+- Hướng dẫn chạy/resume/check/log Meta+WiFlow trong `A1_WIFLOW_VI.md`.
+  Kiểm thử cuối: **166 test riêng biệt đạt**, exit0 theo nhóm40 mới
+  (34 runner +6 helper) và126 regression/source/probe; model source thật
+  physical32 được kiểm thêm, không đếm thành seed/test mới. Online source
+  SHA/AST audit và Git-index model/license/wrapper pins khớp. Hai worker
+  Clean/A1 model WiFlow thật chạy50epoch trên fixture12TRAIN/3TEST; không phải
+  full MM-Fi/CUDA. Scientific Python sources cũ không đổi. Chưa launch GPU
+  trên Vân; push source không có nghĩa đã có kết quả MM-Fi.
+
+### 2026-10-22: yêu cầu tạm dừng Graph, thử compute WiFlow trên Vân
+
+Người dùng hiện yêu cầu **tạm dừng riêng GraphPose-Fi để thử WiFlow**.
+Quyền này thay phần chưa cho phép pause Graph ở mục lịch sử bên dưới; không
+cho phép kill MetaFi++, xóa checkpoint/lock hoặc push WiFlow lên GitHub.
+SSH non-interactive tới alias `windows` bị từ chối xác thực: chưa có process
+nào được dừng, suspend hoặc launch từ workspace này.
+
+- Controller cross-backbone xử lý một worker thất bại bằng cách dừng các
+  worker còn lại. Không kill Graph riêng khi controller đang chạy. Phương án
+  bàn giao là Suspend đúng PID worker Graph seed42 của cùng manifest, giữ
+  controller/MetaFi++ nguyên vẹn; Resume khi muốn tiếp tục. Không dùng tên
+  `python.exe` để suspend hàng loạt. Suspend vẫn giữ RAM/VRAM và các lock.
+- Chỉ thử `probe_wiflow_mmfi.py --models wiflow`, một process, synthetic
+  forward/backward, không optimizer update/dataset/attack/defense. Chưa có
+  full-run adapter/recipe cho WiFlow; không gọi đây là A1 hoặc T1 hoàn tất.
+  Nếu MetaFi++ còn chạy, timing bị contention, không phải speed benchmark
+  cô lập. Kiểm VRAM trước, không tự fallback, shrink batch hoặc retry OOM.
+- Chuyển bundle các file WiFlow mới bằng SCP do người dùng xác thực; không
+  ghi đè scientific source/manifest/checkpoint cũ, không commit/push.
+
+### 2026-10-22: thử WiFlow theo source tác giả, chưa thay GraphPose-Fi
+
+Người dùng đồng ý **thử local WiFlow dựa trên code gốc** làm ứng viên thứ ba
+ngoài HPE-Li/MetaFi++ do chi phí GraphPose-Fi. Chưa có quyền tự dừng Graph,
+đổi source/manifest cũ, train full GPU, claim efficacy hoặc xóa checkpoint.
+
+- Pin official `cross_dataset_test/WiFlow/wiflow.py` tại commit
+  `8ddb9a01772c368fc591f69e8414044b49d817e1`, license Apache-2.0. Trích nguyên
+  model/loss definitions và chỉ bọc giao diện17-joint3D. Giữ attribution/license;
+  online SHA/AST audit khớp nguyên bản, không execute toàn bộ script tải về.
+- Native loss là SmoothL1 vị trí +bone-length, khác ordinary MPJPE hiện tại;
+  native bone edges neo tay tại9, payload hiện neo tại8. Khác biệt cần kiểm
+  trước full run, không âm thầm đổi topology/loss hoặc gọi reproduction đầy đủ.
+- Local CPU synthetic: 26 tests đạt exit0; parameter count WiFlow1060597,
+  HPE813427, MetaFi26517868. B2/2threads/FP32/warmup2/5 measured steps:
+  median fwd+bwd s = .09068 / .12536 / 3.20969 tương ứng. Không optimizer step,
+  không dataset/checkpoint, không clean utility/attack result hoặc GPU ETA.
+- Script `probe_wiflow_mmfi.py` và wrapper/vendor riêng; không đăng ký WiFlow
+  vào factory/runner đã khóa, không nới scientific hashes. Chưa có full
+  MM-Fi training/defense runner cho WiFlow. Nếu đi tiếp phải khóa plan/output
+  mới, đủ split/seed/rho/dose/metrics như checklist; một probe không thay T1.
+- Hướng dẫn `WIFLOW_MMFI_PROBE_VI.md`; artifact nằm ngoài historical runs.
+  HPE-Li và MetaFi++/GraphPose-Fi đã chạy hoặc đang chạy vẫn được giữ nguyên.
+- Lượt gộp **103 tests đạt, exit0**: 26 WiFlow +77 runner/adapter/evaluator
+  regression. Người dùng xác nhận chỉ kiểm thử local trước, **không commit/push**.
+
 ### Pilot hiện hành 2026-10-21: A1 trước, defense tiếp; chưa IAD/LIRA/dataset2
 
 Người dùng yêu cầu test các nhánh mới trên 4090 trước khi thuê Vast, sau đó

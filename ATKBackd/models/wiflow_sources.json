@@ -1,0 +1,95 @@
+{
+  "schema": "wiflow_mmfi_author_source_probe_v1",
+  "repository": "https://github.com/DY2434/WiFlow-WiFi-Pose-Estimation-with-Spatio-Temporal-Decoupling",
+  "commit": "8ddb9a01772c368fc591f69e8414044b49d817e1",
+  "source_url": "https://raw.githubusercontent.com/DY2434/WiFlow-WiFi-Pose-Estimation-with-Spatio-Temporal-Decoupling/8ddb9a01772c368fc591f69e8414044b49d817e1/cross_dataset_test/WiFlow/wiflow.py",
+  "source_sha256": "9233dfd54bfe58025ff5c9a5eeca7ccee27c39e6c57376d989c7ec53e0b1a49e",
+  "license": "Apache-2.0",
+  "license_url": "https://github.com/DY2434/WiFlow-WiFi-Pose-Estimation-with-Spatio-Temporal-Decoupling/blob/8ddb9a01772c368fc591f69e8414044b49d817e1/LICENSE",
+  "upstream_notice_files": [],
+  "local_sha256": {
+    "models/_vendor/wiflow_mmfi.py": "9f9ab05aff05c41c92c265a705b9086d7d9da52b3a28a5b2359bc9e688475c57",
+    "models/_vendor/licenses/WiFlow-APACHE-2.0.txt": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "models/wiflow_mmfi.py": "763ee3b5df35a5c25d88584a79f75270f884ad084a22002681eea9fed4b25a4d"
+  },
+  "adaptations": [
+    "Extracted model/loss definitions and minimal torch/math imports; no upstream training, plotting, file operations or import-time side effects.",
+    "Author architecture, initialization, dropout, last-time-step decoding and native loss remain unchanged.",
+    "Interface wrapper validates fixed MM-Fi input and returns pose Bx1x17x3 plus pooled pre-decoder axial features Bx1088.",
+    "No historical model factory, trainer, metric evaluator, manifest or checkpoint was modified.",
+    "Common synthetic MPJPE timing is a compute probe, not author-recipe reproduction or clean/attack efficacy."
+  ],
+  "native_loss": {
+    "position": "Smooth L1 beta=.1, default weight1",
+    "bone": "Smooth L1 beta=.05, default weight .2",
+    "exception_behavior": "Author loss catches bone exceptions and substitutes zero; preserved, not endorsed.",
+    "bone_edges": [
+      [
+        0,
+        7
+      ],
+      [
+        7,
+        8
+      ],
+      [
+        8,
+        9
+      ],
+      [
+        9,
+        10
+      ],
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        0,
+        4
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        9,
+        14
+      ],
+      [
+        14,
+        15
+      ],
+      [
+        15,
+        16
+      ],
+      [
+        9,
+        11
+      ],
+      [
+        11,
+        12
+      ],
+      [
+        12,
+        13
+      ]
+    ],
+    "topology_note": "Author bone loss anchors arms at joint9; existing A1 MM-Fi payload skeleton anchors them at joint8. Output index semantics/data adapter must be audited before native-loss full training; do not silently rewrite either graph."
+  },
+  "scope": "Synthetic source/operator/gradient/cost probe only. No full MM-Fi, CUDA peak, clean utility, attack or defense verification."
+}
