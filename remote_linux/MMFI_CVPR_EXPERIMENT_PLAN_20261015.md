@@ -38,6 +38,54 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
+### 2026-10-23 hiện hành: PiW HPE-Li Clean seed42 trước; A1 sau adapter
+
+Người dùng chọn **HPE-Li, Clean + A1 seed42 trên Person-in-WiFi-3D**, sau đó
+xác nhận **Clean trước rồi A1, commit/push launcher sau kiểm thử local**.
+Chỉ chuẩn bị/chạy thêm một PiW worker; không dừng hoặc sửa WiFlow, Graph,
+MetaFi++, checkpoint/manifest/source khoa học MM-Fi đang có.
+
+- Dữ liệu trên Vân: `datasets/Person-in-WiFi-3D_processed_v1`, lấy từ bản
+  mirror Drive người dùng cung cấp `1tr98LAenpHUxhV3ibq91Qkjk6cxsftik`.
+  ZIP dài 8577781802 bytes; người dùng đã gửi `PIW_EXTRACT_COMPLETE` sau
+  `tar.exe` exit0. Đây chưa phải audit loader/content hoặc nguồn tác giả.
+  Không thay bằng ZIP raw local 1.74GB thiếu `csi_ap`.
+- Giai đoạn hiện được triển khai: **Clean-only**, HPE-Li từ scratch, một
+  người/14 khớp, giữ nguyên official train/test lists và lọc next-frame TRAIN
+  theo DT-Pose. Không tùy ý tạo split khác, cắt subset hoặc đổi units.
+  Khóa full-list counts 89946/7824, one-person 28121/2586, sau filter TRAIN
+  27876 và TEST 2586; kiểm ordered-ID hash và toàn bộ file one-person.
+  Capture prefixes có chia sẻ giữa TRAIN/TEST: đây không phải held-out
+  session/environment protocol, dù không trùng frame identity.
+  Kiểm tra dữ liệu/skeleton/finite/input shape trước khi dùng GPU; units
+  được khai báo là mét, không tự đoán hoặc tự scale để làm đẹp kết quả.
+- Recipe PiW đã xác nhận: **200 epoch, final199**, batch32, workers0,
+  AdamW lr=.001/wd=.01, ordinary MPJPE, fixed LR, seed42, không pretrained,
+  không chọn best TEST, không early stop hay tự fallback batch/retry.
+  Đây là recipe PiW WBackdoor đã có; không gọi là tái lập nguyên vẹn recipe
+  DT-Pose lr=.01 hoặc copy recipe MM-Fi SGD50epoch.
+- Sidecar mới `run_piw_hpeli_clean.py`, manifest
+  `piw_hpeli_clean.resolved.json`, output `runs/piw_hpeli_clean_s42_v1`;
+  helper Task Scheduler `Start-PiWHPELiCleanTask.ps1` chạy một worker độc lập
+  với SSH. Checkpoint atomic mỗi epoch + optimizer/RNG, source/runtime/config
+  và input binding riêng. Không sửa source khoa học cũ hoặc xóa lock/cache.
+- Chỉ báo clean MPJPE/PA-MPJPE toàn bộ14 khớp; clean PCK với scale(6,4)
+  chỉ là clean metric, **không Target-PCK/ASR hoặc attack result**. Một seed
+  không mean/SD ba seed. Chuẩn bị full TEST prediction artifact để audit/reuse
+  sau; clean checkpoint chỉ được ghép vào A1 tương lai sau kiểm tra provenance.
+- **Chưa có A1 PiW:** `md_multicarrier` và Target-PCK hiện khóa MM-Fi.
+  Legacy PiW `micro_dropper` complex injection/60deg/diverse không được đổi
+  tên thành A1. Phải khóa operator amp/phase, normalization, target7->[11,13],
+  metric14khớp và plan/output riêng trước giai đoạn A1; không thay method
+  hoặc diễn giải kết quả clean thành hiệu quả tấn công.
+- Local CPU synthetic tests/preflight không phải full PiW/CUDA convergence.
+  Chưa xác thực SSH/GPU trên Vân từ workspace Admin; người dùng pull/chạy
+  helper sau handoff. Quyền push không tự cấp quyền kill các process khác.
+  Focused gate: 49 runner tests +14 helper tests đạt; HPE-Li thật CPU batch32
+  forward/backward +AdamW update đạt đúng output `[32,1,14,3]`. Fixture200epoch
+  kiểm optimizer/RNG exact resume, không phải kết quả full PiW. Hướng dẫn
+  launch/log/audit trong `remote_linux/PIW_HPELI_CLEAN_VI.md`.
+
 ### 2026-10-22 hiện hành: train thật WiFlow Clean + A1 seed42, push sau test
 
 Sau khi làm rõ probe chưa phải training, người dùng yêu cầu **chạy thật** và
