@@ -38,6 +38,61 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
+### 2026-10-23 hiện hành: A1 HPE-Li/PiW seed42 sau Clean đã hoàn thành
+
+Người dùng gửi log Clean final199/COMPLETE và bảng TEST (MPJPE92.8767mm,
+PA-MPJPE57.6072mm, cleanPCK@.2=71.8263%), rồi yêu cầu **chạy A1**. Các số này
+là output do người dùng cung cấp; chưa replay trực tiếp dữ liệu trên Vân từ
+workspace Admin. Quyền triển khai/test/commit/push nối tiếp quyết định Clean
+trước rồi A1 bên dưới; không cấp quyền kill WiFlow hoặc sửa kết quả Clean.
+
+- Chỉ một victim A1 mới: HPE-Li, PiW one-person14khớp, seed42, full official
+  ordered TRAIN27876/TEST2586 như Clean. Từ scratch200epoch/final199,
+  physicalbatch32, workers0, AdamWlr.001/wd.01/eps1e-8, ordinaryMPJPE,
+  fixedLR/FP32; không scheduler/AMP/earlystop/chọn checkpoint bằng TEST.
+- Giữ A1 native không peak projection: attack_eps=.185, rho=.1, chọn
+  floor(.1*27876)=2787 mẫu uniform bằng RNG42; trigger dose và label dose
+  paired U(.2,1), fixed poison plan; không train riêng cho từng test dose.
+  Giữ base motion prior `actions/data_bend.npy`, topk6, fps30, LOS(1,0,0),
+  fc5.32GHz, df312.5kHz, packet_rate1000, aoa_spread.6, d0=1.5;
+  base/carrier seed42, DCT modes(3,1), unitRMS equal mixture p0/p1.
+- **Adaptation PiW được công bố trước run:** model input3x180x20 có 90 hàng
+  amplitude và90phase; 90amplitude gồm3 link groups x30physicalsubcarriers.
+  Dùng numeric A1 gain/clip nguyên trạng với shape3x30x20, cùng pattern cho
+  từng amplitude block30, sau normalization PiW hiện có; phase giữ nguyên
+  chính xác, không normalize lại sau trigger. Không giả 90 hàng là90physical
+  subcarriers và không dùng legacy complex `micro_dropper` với phase đã
+  min-max. Đây là digital CSI/HPE adaptation, không claim RF/over-air.
+- Target: right hip pivot7, right knee/ankle[11,13], linear Z40deg*d.
+  Gọi payload với explicit target indices, không đổi global skeleton MM-Fi.
+  Giữ sáu dose0,.2,.4,.6,.8,1. T-MPJPE/Target-PCK chỉ chấm[11,13] so với
+  attacker target, không align; Target-PCK@.2 lấy scale từ cleanGT(6,4)
+  theo PiW (elbow-to-elbow), không copy MM-Fi(5,12). Clean MPJPE/PA chấm14
+  khớp, mm; mean-positive DCE chỉ trung bình5dose dương, không dùng dose0
+  làm thấp mean. Không gọi cleanPCK là Target-PCK hay Target-PCK là poseASR.
+- Bảng pilot: Clean reference (attack columns để trống) và A1, cột
+  T-MPJPE@1, Target-PCK@.2@1, CleanMPJPE/PA và mean-positiveDCE. Lưu full
+  poses/GT/targets/orderedIDs và sáu dose; tính thêm same-victim no-trigger
+  target controls và clean-trained-model+trigger controls, triggered-GT error.
+  Absolute PCK/mm giữa PiW và MM-Fi không phải cùng skeleton/test set.
+- Clean reference dùng read-only từ `runs/piw_hpeli_clean_s42_v1` sau
+  source/config/runtime/input/checkpoint/NPZ audit; không fine-tune hoặc train
+  lại Clean. A1 output riêng `runs/piw_hpeli_a1_s42_v1`, manifest
+  `piw_hpeli_a1.resolved.json`, runner `run_piw_hpeli_a1.py`, helper
+  `Start-PiWHPELiA1Task.ps1`; một PiWworker cùng job WiFlow đang có.
+  Checkpoint atomic mỗi epoch +optimizer/RNG; hash cả action/trigger/poison
+  plan, input, source và Clean reference. Không tự retry job, sửa batch,
+  xóa lock hoặc ghi đè historical artifacts để vượt mismatch.
+- Chỉ handoff sau local synthetic/CPU tests; full A1/CUDA và efficacy chưa
+  được xác minh cho đến khi người dùng chạy trên Vân. Một seed và hai hàng
+  Clean/A1 không phải full comparison/bốn bảng paper hoặc mean/SD nhiều seed.
+  Gate cuối23/10: **174 passed**, exit0 (57adapter +30runner +17helper
+  +7publication recovery +63Clean regression). Fixture12TRAIN/3TEST có1poison
+  và full200epoch; exactRNG/optimizer resume sau97. HPE-Li thật CPUbatch32
+  poisonpair+MPJPE/AdamW step đạt, phase không đổi. Không phải kết quả full
+  PiW A1/CUDA. Source Clean/MM-Fi cũ và artifact lịch sử không sửa; hướng dẫn
+  mới ở `remote_linux/PIW_HPELI_A1_VI.md`.
+
 ### 2026-10-23 hiện hành: PiW HPE-Li Clean seed42 trước; A1 sau adapter
 
 Người dùng chọn **HPE-Li, Clean + A1 seed42 trên Person-in-WiFi-3D**, sau đó
