@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "profile": "wipose_hpeli_independent_dtpose_adaptation_v1",
+  "upstream": "https://github.com/cseeyangchen/DT-Pose",
+  "commit": "2fbbef271454e6fbb95b1a0163b8cdbb96163838",
+  "license_status": "No repository LICENSE found at pinned commit; no upstream source module is redistributed. Existing local SKUnit parameters are reused with an independently implemented original-attention forward and dataset-specific head.",
+  "sha256_git_blob_lf": {
+    "feeder/wipose.py": "1ff5f6cca71e9de2fa299e6f46c1f925421140662f9d2d6861b834294f80de40",
+    "model/hpeli/hpeli.py": "a13b46afead889deb2fa382b8c67017a76095c9e1e20c537ef5fcd20a28eb48e",
+    "model/hpeli/SK_network.py": "b93da3fc43bf01013f5a2f89f8b275735957f788a2816a6fa874329716a9fced",
+    "data/wipose/process.py": "ab725111991762f9e40f36663748916c6d60242985d90c21f8ea65cc186f1c90",
+    "train_pose.py": "9910adc0ddc38d5fd7e0f53ca58c78057861f1ec12449567dc0744084f752076",
+    "config/wipose/pose_config.yaml": "6dbcaacb8e57e73bed776244d2f5686256cc898a34f93bcb40935b2b0f28e1de"
+  },
+  "data": {
+    "official_dataset": "https://github.com/NjtechCVLab/Wi-PoseDataset",
+    "official_drive_id": "1WL6bJ-rSVdsclRt9RFc0l5hhtXYmfNg9",
+    "input": "processed CSI (3,90,5), SkeletonPoints (2,18), official TRAIN/TEST ordered lists",
+    "train_filter": "retain current identity iff next_frame zfill(3) is in same TRAIN list",
+    "test_filter": "full official TEST list; no next-frame filtering",
+    "normalization": "per-frame global amplitude min-max before trigger; no post-trigger normalization",
+    "coordinate_scaling": "SkeletonPoints.transpose(1,0)*0.001; inverse reporting factor1000; original image annotation coordinate units, NOT metres",
+    "preparation": "Pinned author's active branch does NOT call dwt_amp despite Amplitude_DWT directory name; dtpose schema only transpose/reshape. Public csi_serial complex input requires declared abs amplitude adaptation and jointsVector x/y extraction.",
+    "lists": "preserve supplied ordered lists; explicitly generated sorted raw-file lists are labelled order adaptation",
+    "safe_resume": "explicit --resume only; immutable preparation.inprogress.json binds raw/source hashes, roots, schema and ordered lists before first processed output; every existing NPZ exactly compared with source conversion; no overwrite; interrupted .saving files preserved and require inspection",
+    "preflight_gt_scale": "positive clean GT reference distance joints5,8 required for all listed frames; no dropping, replacement or TEST-driven threshold choice"
+  },
+  "model": {
+    "kind": "HPE-Li scratch baseline branch, not full DT-Pose two-stage method",
+    "input": [3,90,5],
+    "output": [1,18,2],
+    "attention": "original DT-Pose view/reshape convention independently implemented in new WiPoseSKUnit; historical corrected SKUnit unchanged",
+    "head": "Conv128to64to32to16 + Linear32to36; global average feature128",
+    "inactive_author_parameters": "unused conv3/shortcut layers in author SKUnit omitted; active tensors/forward/backward checked with shared state",
+    "initialization": "Xavier normal Conv2d; unit BN1d/2d scales and zero BN biases; Linear default; no pretrained weights"
+  },
+  "claim": "New CSI/HPE2D pilot adaptation. No claim of full original DT-Pose reproduction, WiPose efficacy, GPU performance, or completed paper table."
+}

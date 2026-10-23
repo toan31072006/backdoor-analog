@@ -38,6 +38,54 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
+### 2026-10-23 hiện hành: thử WiPose 2D từ nhánh HPE-Li của DT-Pose
+
+Người dùng chấp nhận MM-Fi 3D + WiPose 2D, yêu cầu port code chạy thử, cung cấp
+Drive `1WL6bJ-rSVdsclRt9RFc0l5hhtXYmfNg9` (trùng repo dataset gốc), xác nhận Vân
+chưa có dữ liệu và đồng ý **commit/push sau khi test**. Không được sửa/dừng run
+WiFlow, PiW hoặc MM-Fi; không tự thuê/chạy Vast. Đây là pilot mới, không phải
+full DT-Pose pretraining/decoding hoặc một bảng comparison đã hoàn tất.
+
+- Giữ run PiW đã audit làm provenance. Đối chứng người dùng cung cấp cho thấy
+  A1/PiW dose1 T=110.75 so với no-trigger95.78mm, PCK63.15 so với64.87%;
+  cả năm dose dương DCE cao hơn đối chứng không dịch chuyển (mean54.81 so với
+  khoảng38.32mm). Không dùng riêng PCK63% để claim attack thành công, không
+  chọn lại seed/target/threshold theo TEST hoặc xóa pilot này.
+- Nhánh mới chỉ HPE-Li, WiPose18khớp/2D, seed42, scratch Clean rồi A1 riêng,
+  cùng50epoch/final49, batch32, SGDlr.01/momentum.9/wd0, ordinaryMPJPE,
+  FP32/workers0/drop_lastTrue theo nhánh baseline tác giả; không chọn best TEST.
+  Model mới giữ active attention reshape và head90x5 của DT-Pose; không sửa
+  corrected SKUnit/head của các model lịch sử. Pin commit
+  `2fbbef271454e6fbb95b1a0163b8cdbb96163838`, independent implementation,
+  không phân phối lại nguyên module nguồn chưa có license.
+- Theo ordered TRAIN/TEST lists, TRAIN lọc next-frame, TEST không lọc;
+  raw list counts132847/33753 phải audit trước run, không âm thầm lấy subset.
+  LoaderCSI3x90x5, min-max toàn frame, label18x2 nhân.001 như nguồn. Khi báo
+  sai số nhân1000 trả về đơn vị ảnh gốc (thường pixel), **không gọi là mm**.
+  Nguồn DT-Pose đặt tên thư mục Amplitude_DWT nhưng process.py active không
+  gọi DWT. Bản raw public có thể khác field schema: csi_serial complex cần
+  abs amplitude adaptation được ghi riêng; không tự dựng denoising DWT.
+- A1 digital amplitude adaptation: cùng numeric3x30x5 native gain/clip trên
+  ba nhóm30 của input đã normalize, không normalize lần nữa; attackeps.185,
+  rho.1 uniformfloorN*.1, pairedU(.2,1), seed42. Target2D pivot8->[9,10],
+  xoay+40deg*d trong mặt phẳng, dose0 identity. PCK@.2 lấy scaleGT(5,8)
+  như WiPose nguồn, không copy PiW/MM-Fi. Cùng sáu dose0,.2,.4,.6,.8,1,
+  DCEmean năm dose dương; lưu cả no-trigger/clean-model+trigger và
+  still-prediction DCE/response magnitude/nontarget drift. Không gọi PCK là ASR.
+- Sidecar `run_wipose_hpeli.py`, output `runs/wipose_hpeli_a1_s42_v1`,
+  manifest `wipose_hpeli.resolved.json`, helper `Start-WiPoseHPELiTask.ps1`.
+  Một worker serial Clean->A1, checkpoint atomic mỗi epoch kèm optimizer/RNG,
+  binding data/action/poison/preparation/source/runtime/execution; không retry
+  job, tự giảm batch, xóa lock hoặc sửa manifest để resume. Read-only status
+  và check-only replay predictions; full data/CUDA efficacy chưa được xác nhận
+  cho đến khi người dùng chạy dữ liệu thật. Tests local chỉ synthetic/CPU.
+- Gate local23/10: **373 passed**, exit0, gồm199test WiPose
+  (47data/preparation +75adapter/metrics +51runner/resume +26helper) và174test
+  hồi quy PiW. HPE-Li WiPose thật đạt một SGDstep CPUbatch32/synthetic,
+  output32x1x18x2/finitegradient/parameterupdate; independent review không
+  thấy lỗi chặn. Không phải full-data/CUDA efficacy. Hướng dẫn tải/prepare/
+  preflight/launch ở `remote_linux/WIPOSE_HPELI_A1_VI.md`.
+
 ### 2026-10-23 hiện hành: A1 HPE-Li/PiW seed42 sau Clean đã hoàn thành
 
 Người dùng gửi log Clean final199/COMPLETE và bảng TEST (MPJPE92.8767mm,
