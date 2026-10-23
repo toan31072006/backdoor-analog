@@ -38,6 +38,37 @@
 
 ## 0. Checklist bắt buộc trước mỗi lượt chạy (người dùng xác nhận lại 2026-10-16)
 
+### 2026-10-23 bổ sung: WiPose hai job train, đánh giá vẫn paired
+
+Người dùng yêu cầu setup hai job trên4090 sau khi biết launcher serial chỉ một
+worker. Chỉ đổi execution, không đổi recipe/dataset/seed/target/metric/poison.
+Thêm sidecar `run_wipose_hpeli_parallel.py` và helper
+`Start-WiPoseHPELiParallelTask.ps1`, output mới
+`runs/wipose_hpeli_a1_s42_parallel_v1`, manifest/profile parallel riêng. Không
+sửa preparer đang chạy hoặc nguồn/checkpoint serial, PiW, MM-Fi, WiFlow.
+
+- Hai process train độc lập Clean/A1 từ scratch, mỗi model50epoch/final49,
+  physicalbatch32/SGDlr.01/momentum.9/wd0/FP32/workers0/drop_lastTrue như serial.
+  Không warm-start, chia victim hoặc rút ngắn lịch. Mỗi process có RNG/BN riêng.
+- A1 training không phụ thuộc checkpoint Clean; sau cả hai train hoàn tất mới
+  chấm Clean rồi A1 +fullsixdose/pairedcontrols. Traincheckpoint bindsource/
+  input/config/RNG/optimizer/execution; evaluation bindCleanresult/NPZcheckpoint.
+  TRAINED_NOT_EVALUATED không phải kết quả full paper hay PILOT_COMPLETE.
+- Hai slot không bảo đảm vừa VRAM/tăng tốc2x. Không retry/shrinkbatch/AMP tự động.
+  Khi một worker lỗi, controller không launch pending mới, đợi peer do nó sở hữu
+  thoát rồi báo lỗi, không kill peer hoặc để rootlock được giải phóng sớm.
+- Helper chặn serial/parallel task/process cùng dataset nhận diện được và khóa
+  output riêng; không launch hai helper cùng lúc/bypassguard/xóa lock. Không
+  tự dừng serial nếu đã chạy. Không migrate/relabel checkpoint serial sang mới.
+  Hướng dẫn: `remote_linux/WIPOSE_HPELI_PARALLEL_VI.md`.
+- Quyền test/push tiếp nối WiPose đã duyệt; chưa launch trên Vân. Localtests
+  không thay cho full dataset/CUDA/VRAM/efficacy. Chưa có TEST WiPose mới.
+- Gate23/10: **293 passed**, exit0 (94parallel mới:46runner+48helper;
+  199hồi quy WiPose serial/data/model/metrics). Hai toyprocessOS thật overlap;
+  hai process modelHPE-Li thật SGDstep CPU/syntheticbatch32 đạt finite/update.
+  ExactRNG/optimizer resume và numericalparityserial đạt; independent review
+  không thấy lỗi chặn. Không phải fullWiPose/CUDA hoặc bảo đảm2job vừaVRAM.
+
 ### 2026-10-23 hiện hành: thử WiPose 2D từ nhánh HPE-Li của DT-Pose
 
 Người dùng chấp nhận MM-Fi 3D + WiPose 2D, yêu cầu port code chạy thử, cung cấp
