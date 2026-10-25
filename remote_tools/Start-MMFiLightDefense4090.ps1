@@ -2,8 +2,8 @@
 .SYNOPSIS
 Launch one serialized seed42 A1 defense pilot for an MM-Fi pose backbone.
 .DESCRIPTION
-DryRun is default. Preflight authenticates source/data; GpuSmoke checks the
-actual 4090. Launch requires both receipts and creates a persistent task.
+DryRun is default. Prepare runs dry run, source/data preflight and all six
+serial GPU smokes. Launch requires both receipts and creates a persistent task.
 The historical victims, other tasks, and earlier repair outputs are untouched.
 #>
 [CmdletBinding()]
@@ -11,7 +11,7 @@ param(
     [Parameter(Mandatory=$true)]
     [ValidateSet('hpeli','metafiplusplus','wiflow')]
     [string]$Backbone,
-    [ValidateSet('DryRun','Preflight','GpuSmoke','Launch','Status','CheckOnly')]
+    [ValidateSet('DryRun','Prepare','Preflight','GpuSmoke','Launch','Status','CheckOnly')]
     [string]$Mode = 'DryRun',
     [string]$DataHome = "$env:USERPROFILE\backdooranalog",
     [string]$SourceRoot = '',
@@ -24,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 $code = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $lane = @{hpeli='hpeli_light_4090';metafiplusplus='metafi_light_4090';wiflow='wiflow_4090'}[$Backbone]
 if (!$EnvironmentPrefix) { $EnvironmentPrefix = Join-Path $DataHome 'envs\dose-backdoor' }
-if (!$TaskName) { $TaskName = "MMFi-Light-Defense-$Backbone-S42-v2" }
+if (!$TaskName) { $TaskName = "MMFi-Light-Defense-$Backbone-S42-v3-BNP-FST" }
 if ($TaskName -notmatch '^[A-Za-z0-9_.-]+$') { throw 'Invalid task name' }
 foreach ($name in @('DataHome','EnvironmentPrefix')) {
     $value = [IO.Path]::GetFullPath((Get-Variable $name -ValueOnly)).TrimEnd('\')
@@ -58,14 +58,20 @@ if ($Archive) {
 $flags = @{DryRun='--dry-run';Preflight='--preflight';GpuSmoke='--gpu-smoke';
            Status='--status';CheckOnly='--check-only'}
 if ($Mode -ne 'Launch') {
-    & $python @runnerArgs $flags[$Mode]
-    if ($LASTEXITCODE -ne 0) { throw "$Backbone $Mode failed; full defense not started" }
+    $phases = if ($Mode -eq 'Prepare') {
+        @('--dry-run','--preflight','--gpu-smoke')
+    } else { @($flags[$Mode]) }
+    foreach ($phase in $phases) {
+        & $python @runnerArgs $phase
+        if ($LASTEXITCODE -ne 0) { throw "$Backbone $phase failed; full defense not started" }
+    }
+    if ($Mode -eq 'Prepare') { Write-Host "PREPARED_$Backbone; full defense has not started" }
     return
 }
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     throw "Scheduled task $TaskName already exists; inspect its state/log before another launch"
 }
-if (!$Outdir) { $Outdir = Join-Path $DataHome "runs\${Backbone}_light_a1_defense4090_s42_v2_nc" }
+if (!$Outdir) { $Outdir = Join-Path $DataHome "runs\${Backbone}_light_a1_defense4090_s42_v3_bnp_fst_nc" }
 foreach ($receipt in @('preflight.json','gpu_smoke.json')) {
     $path = Join-Path $Outdir $receipt
     if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing gate: $path" }
@@ -98,9 +104,9 @@ $action = New-ScheduledTaskAction -Execute $shell -Argument "-NoProfile -NonInte
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $principal = New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-$task = New-ScheduledTask -Action $action -Principal $principal -Settings $settings -Description 'Exploratory MM-Fi A1 light defense seed42; exact source/data and one-GPU capacity gates; no retry.'
+$task = New-ScheduledTask -Action $action -Principal $principal -Settings $settings -Description 'MM-Fi A1 seed42: NoDef, FT10, CLP, BNP, FST-adapted, NC-adapted; one GPU serial; no retry.'
 Register-ScheduledTask -TaskName $TaskName -InputObject $task -ErrorAction Stop | Out-Null
 Start-ScheduledTask -TaskName $TaskName
 Write-Host "Task $TaskName started. Controller: $Outdir.task.*.stdout.log / stderr.log"
-Write-Host "Outputs: $Outdir\$Backbone\seed42\<none|ft|clp|nc>\evaluation.json"
+Write-Host "Outputs: $Outdir\$Backbone\seed42\<none|ft|clp|bnp|fst|nc>\evaluation.json"
 Get-ScheduledTask -TaskName $TaskName | Select-Object TaskName,State

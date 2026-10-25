@@ -7,7 +7,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 if (!$EnvironmentPrefix) { $EnvironmentPrefix=Join-Path $DataHome 'envs\dose-backdoor' }
-if (!$ReportDir) { $ReportDir=Join-Path $DataHome 'runs\mmfi_three_light_a1_defense_report_s42_v2_nc' }
+if (!$ReportDir) { $ReportDir=Join-Path $DataHome 'runs\mmfi_three_light_a1_defense_report_s42_v3_bnp_fst_nc' }
 $code=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $python=Join-Path $EnvironmentPrefix 'python.exe'
 $reporter=Join-Path $code 'ATKBackd\defend\a1_three_model_report.py'
@@ -16,8 +16,8 @@ foreach ($path in @($python,$reporter)) {
 }
 $reportArgs=@('-u',$reporter)
 foreach ($backbone in @('hpeli','metafiplusplus','wiflow')) {
-    $root=Join-Path $DataHome "runs\${backbone}_light_a1_defense4090_s42_v2_nc\$backbone\seed42"
-    foreach ($method in @('none','ft','clp','nc')) {
+    $root=Join-Path $DataHome "runs\${backbone}_light_a1_defense4090_s42_v3_bnp_fst_nc\$backbone\seed42"
+    foreach ($method in @('none','ft','clp','bnp','fst','nc')) {
         $path=Join-Path $root "$method\evaluation.json"
         if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Incomplete $backbone/$method : $path" }
         if ($method -eq 'nc') {
@@ -31,6 +31,7 @@ foreach ($backbone in @('hpeli','metafiplusplus','wiflow')) {
     }
 }
 $reportArgs+=@('--require-defense','ft','--require-defense','clp',
+         '--require-defense','bnp','--require-defense','fst',
          '--out',(Join-Path $ReportDir 'table4_a1_only.json'),
          '--markdown-out',(Join-Path $ReportDir 'table4_a1_only.md'))
 $env:PYTHONUTF8='1'

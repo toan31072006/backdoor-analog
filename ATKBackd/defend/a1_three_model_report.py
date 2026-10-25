@@ -23,9 +23,13 @@ from defend.a1_defense_metrics import enrich_evaluation
 BACKBONES = ('hpeli', 'metafiplusplus', 'wiflow')
 METAFI_WINDOWS_PROFILE = 'metafi_mmfi_windows_single_gpu_defense_s42_v1'
 LIGHT_WINDOWS_PROFILES = {
-    'hpeli': 'hpeli_mmfi_windows_light_a1_defense_s42_v2_nc',
-    'metafiplusplus': 'metafiplusplus_mmfi_windows_light_a1_defense_s42_v2_nc',
-    'wiflow': 'wiflow_mmfi_windows_light_a1_defense_s42_v2_nc',
+    'hpeli': 'hpeli_mmfi_windows_light_a1_defense_s42_v3_bnp_fst_nc',
+    'metafiplusplus': 'metafiplusplus_mmfi_windows_light_a1_defense_s42_v3_bnp_fst_nc',
+    'wiflow': 'wiflow_mmfi_windows_light_a1_defense_s42_v3_bnp_fst_nc',
+}
+LEGACY_LIGHT_WINDOWS_PROFILES = {
+    backbone: profile.replace('v3_bnp_fst_nc', 'v2_nc')
+    for backbone, profile in LIGHT_WINDOWS_PROFILES.items()
 }
 FIELDS = ('clean_mpjpe_mm', 'clean_target_mpjpe_mm',
           'triggered_gt_mpjpe_mm', 'triggered_gt_minus_clean_target_mm',
@@ -82,8 +86,12 @@ def load_verified_record(backbone, path):
         source_identity = record.get('source_checkpoint_sha256')
         if not isinstance(source_identity, str) or len(source_identity) != 64:
             raise ValueError(f'Legacy MetaFi source checkpoint binding missing: {path}')
-    elif record.get('profile') == LIGHT_WINDOWS_PROFILES.get(backbone):
-        if record.get('method') not in ('none', 'ft', 'clp', 'nc'):
+    elif record.get('profile') in (LIGHT_WINDOWS_PROFILES.get(backbone),
+                                  LEGACY_LIGHT_WINDOWS_PROFILES.get(backbone)):
+        allowed = (('none', 'ft', 'clp', 'nc')
+                   if record['profile'] == LEGACY_LIGHT_WINDOWS_PROFILES[backbone]
+                   else ('none', 'ft', 'clp', 'bnp', 'fst', 'nc'))
+        if record.get('method') not in allowed:
             raise ValueError(f'Unknown light defense method: {path}')
         defense = record['method']
         source_identity = record.get('source_checkpoint_sha256')

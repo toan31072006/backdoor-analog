@@ -169,6 +169,18 @@ def test_record_loader_requires_bound_full_test_arrays_and_replay(tmp_path):
     path.write_text(json.dumps(light), encoding='utf-8')
     with pytest.raises(ValueError, match='diagnostic without repair'):
         load_verified_record('wiflow', path)
+    light['status'] = 'complete'
+    light['method'] = 'fst'
+    light.pop('record_sha256')
+    light['record_sha256'] = _digest(light)
+    path.write_text(json.dumps(light), encoding='utf-8')
+    assert load_verified_record('wiflow', path)['defense'] == 'fst'
+    light['method'] = 'fp'
+    light.pop('record_sha256')
+    light['record_sha256'] = _digest(light)
+    path.write_text(json.dumps(light), encoding='utf-8')
+    with pytest.raises(ValueError, match='Unknown light defense method'):
+        load_verified_record('wiflow', path)
     path.write_text(json.dumps(legacy), encoding='utf-8')
     npz.write_bytes(npz.read_bytes() + b'corrupt')
     with pytest.raises(ValueError, match='Per-sample artifact changed'):

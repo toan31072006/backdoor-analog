@@ -8,7 +8,7 @@ from pathlib import Path
 import queue
 import traceback
 
-METHODS = ('none', 'ft', 'clp', 'nc')
+METHODS = ('none', 'ft', 'clp', 'bnp', 'fst', 'nc')
 PHYSICAL_BATCH = 32
 
 
@@ -33,12 +33,22 @@ def _worker(repo, method, messages):
         os.environ['MKL_NUM_THREADS'] = '2'
         import sys
         sys.path.insert(0, str(Path(repo) / 'ATKBackd'))
+        import importlib.util
+        for name in ('a1_bnp_pose', 'a1_fst_pose'):
+            key = f'defend.{name}'
+            path = Path(__file__).resolve().parents[2] / 'ATKBackd' / 'defend' / f'{name}.py'
+            spec = importlib.util.spec_from_file_location(key, path)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[key] = module
+            spec.loader.exec_module(module)
         import vast_seed42_defense_adapter as adapter
         if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
             raise RuntimeError('One real CUDA GPU required; no CPU fallback')
         torch.set_num_threads(2)
         if method == 'nc':
             measured = _smoke_nc(adapter)
+        elif method in ('bnp', 'fst'):
+            measured = _smoke_extra(method)
         else:
             measured = adapter.smoke('wiflow', method, device='cuda:0',
                                      batch_size=PHYSICAL_BATCH, activation_offload='none')
@@ -87,6 +97,19 @@ def _smoke_nc(adapter):
                 nc_unlearning_optimizer_steps=1, finite=True)
 
 
+def _smoke_extra(method):
+    from vast_seed42_adapter import build_model
+    model = build_model('wiflow', num_keypoints=17, num_coor=3, num_person=1,
+                        subcarrier_num=114, dataset='mmfi', pretrained=False)
+    if method == 'bnp':
+        from defend.a1_bnp_pose import smoke_bnp
+        details = smoke_bnp('wiflow', model, 'cuda:0', PHYSICAL_BATCH)
+    else:
+        from defend.a1_fst_pose import smoke_fst
+        details = smoke_fst('wiflow', model, 'cuda:0', PHYSICAL_BATCH)
+    return dict(details, defense=method, execution={'device': 'cuda:0'})
+
+
 def run_wave(repo, method):
     if method not in METHODS:
         raise ValueError('Unsupported light-defense smoke method')
@@ -119,6 +142,11 @@ def validate_wave(wave, method):
     if method == 'ft' and (result.get('optimizer_steps', 0) < 2
                            or result.get('optimizer_state_initialized') is not True):
         raise ValueError('FT smoke did not exercise the optimizer')
+    if method == 'bnp' and result.get('n_layers', 0) < 1:
+        raise ValueError('BNP smoke did not inspect hidden BN layers')
+    if method == 'fst' and (result.get('head_reinitialized') is not True
+                           or result.get('norm_projected') is not True):
+        raise ValueError('FST smoke did not reinitialize and project the coordinate head')
     if method == 'nc' and (result.get('nc_inversion_batch') != 8
                            or result.get('nc_inversion_gradient') is not True
                            or result.get('nc_unlearning_optimizer_steps') != 1):

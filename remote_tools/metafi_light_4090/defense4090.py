@@ -21,8 +21,8 @@ import sys
 import capacity4090 as capacity
 import portable_source as source
 
-PROFILE = 'metafiplusplus_mmfi_windows_light_a1_defense_s42_v2_nc'
-METHODS = ('none', 'ft', 'clp', 'nc')
+PROFILE = 'metafiplusplus_mmfi_windows_light_a1_defense_s42_v3_bnp_fst_nc'
+METHODS = ('none', 'ft', 'clp', 'bnp', 'fst', 'nc')
 ROOT = Path(__file__).resolve().parent
 FT_EPOCHS = 10
 FT_LR = 1e-4
@@ -34,7 +34,7 @@ def activate(repo):
     os.environ.setdefault('OMP_NUM_THREADS', '2')
     os.environ.setdefault('MKL_NUM_THREADS', '2')
     sys.path.insert(0, str(Path(repo) / 'ATKBackd'))
-    for name in ('a1_nc_bank', 'neural_cleanse_pose'):
+    for name in ('a1_nc_bank', 'neural_cleanse_pose', 'a1_bnp_pose', 'a1_fst_pose'):
         module = f'defend.{name}'
         path = ROOT.parents[1] / 'ATKBackd' / 'defend' / f'{name}.py'
         spec = importlib.util.spec_from_file_location(module, path)
@@ -74,7 +74,7 @@ def runtime():
 def tool_sources():
     result = {name: source.sha(ROOT / name) for name in
               ('defense4090.py', 'capacity4090.py', 'portable_source.py')}
-    for name in ('a1_nc_bank.py', 'neural_cleanse_pose.py'):
+    for name in ('a1_nc_bank.py', 'neural_cleanse_pose.py', 'a1_bnp_pose.py', 'a1_fst_pose.py'):
         result[name] = source.sha(ROOT.parents[1] / 'ATKBackd' / 'defend' / name)
     return result
 
@@ -92,7 +92,7 @@ def get_args(argv=None):
         modes.add_argument('--' + key, action='store_true')
     a = p.parse_args(argv)
     a.data_home = a.data_home.resolve()
-    a.outdir = (a.outdir or a.data_home / 'runs/metafiplusplus_light_a1_defense4090_s42_v2_nc').resolve()
+    a.outdir = (a.outdir or a.data_home / 'runs/metafiplusplus_light_a1_defense4090_s42_v3_bnp_fst_nc').resolve()
     a.source_root = (a.source_root or a.data_home / 'imports/metafiplusplus_s42_snapshot_20261025').resolve()
     a.attack_root = a.source_root
     a.repo = ROOT.parents[1]
@@ -127,6 +127,10 @@ def plan(a):
         science_sources=native_hashes(), methods=list(METHODS), physical_repair_batch=FT_BATCH,
         evaluation_batch=32, activation_offload='none', jobs_per_gpu=1,
         recipes={'none': {}, 'ft': ft, 'clp': adapter.recipe('metafiplusplus', 'clp'),
+                 'bnp': {'u': 3.0, 'clean_train_only': True, 'layers': 'hidden BN2d'},
+                 'fst': {'epochs': FT_EPOCHS, 'lr': FT_LR, 'alpha': .1,
+                         'coordinate_head_reinitialized': True,
+                         'clean_train_only': True},
                  'nc': asdict(NCConfig())},
         serial_order=list(METHODS),
         source_policy='Original final49 Clean/A1 immutable; all repairs restart independently from A1',
@@ -230,6 +234,8 @@ def completed(a, method, preflight):
         raise ValueError('Defense record is not a completed evaluation')
     expected = {'per_sample.npz'} | ({'repair.pt'} if method != 'none' else set())
     if method not in ('none', 'clp'): expected.add('clean_bank.json')
+    if method == 'bnp': expected.add('bnp_pruning.json')
+    if method == 'fst': expected.add('fst_progress.pt')
     if method == 'nc':
         expected |= {'nc_partitions.json', 'nc_stage/nc_diagnostic.json',
                      'nc_stage/nc_receipt.json', 'nc_stage/nc_unlearned.pt'}
@@ -295,6 +301,18 @@ def execute(a, method, preflight):
             model, repaired = train_repair(model, fit, selection, 'ft', recipe,
                                             'cuda:0', folder / 'repair.pt', binding, 42)
             repaired = dict(repaired, architecture=adapter.architecture_audit(model, 'metafiplusplus', 'ft'))
+        elif method == 'bnp':
+            from defend.a1_bnp_pose import repair_bnp
+            from defend.a1_repair_ops import _atomic_save, _state
+            model, repaired = repair_bnp(model, fit, 'cuda:0', u=3.0)
+            atomic(folder / 'bnp_pruning.json', repaired)
+            _atomic_save(dict(binding_sha256=binding, complete=True,
+                              selected_model_state=_state(model), metadata=repaired),
+                         folder / 'repair.pt')
+        elif method == 'fst':
+            from defend.a1_fst_pose import repair_fst
+            model, repaired = repair_fst(model, 'metafiplusplus', fit, selection, 'cuda:0',
+                                        folder, binding, 42, epochs=FT_EPOCHS, lr=FT_LR)
         elif method == 'nc':
             from defend.a1_nc_bank import run as run_nc
             from defend.a1_repair_ops import _atomic_save, _state
@@ -338,6 +356,8 @@ def execute(a, method, preflight):
         temp.write_bytes(buffer.getvalue()); os.replace(temp, path)
         files = ['per_sample.npz'] + ([] if method == 'none' else ['repair.pt'])
         if bank is not None: files.append('clean_bank.json')
+        if method == 'bnp': files.append('bnp_pruning.json')
+        if method == 'fst': files.append('fst_progress.pt')
         if method == 'nc':
             files += ['nc_partitions.json', 'nc_stage/nc_diagnostic.json',
                       'nc_stage/nc_receipt.json', 'nc_stage/nc_unlearned.pt']
@@ -389,7 +409,7 @@ def main(argv=None):
                            for m in METHODS}, indent=2))
         return 0
     if a.dry_run or not (a.preflight or a.gpu_smoke or a.launch or a.check_only):
-        print('DRY_RUN_ONLY: MetaFi++ A1 NoDef, FT10/B32/lr1e-4, CLP, NC-adapted; one GPU serial; no data/CUDA/training/writes')
+        print('DRY_RUN_ONLY: MetaFi++ A1 NoDef, FT10/B32/lr1e-4, CLP, BNP, FST-adapted, NC-adapted; one GPU serial; no data/CUDA/training/writes')
         print(json.dumps(dict(profile=PROFILE, archive=str(a.archive),
              expected_archive_sha256=source.ARCHIVE_SHA256, source_root=str(a.source_root),
              attack_root=str(a.attack_root), outdir=str(a.outdir), methods=METHODS,
