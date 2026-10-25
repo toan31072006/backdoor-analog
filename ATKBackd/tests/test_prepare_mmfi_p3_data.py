@@ -38,6 +38,29 @@ def test_rejects_wrong_archive_root_before_extraction(tmp_path):
     assert not home.exists()
 
 
+def test_accepts_explicit_compress_root_directory(tmp_path, monkeypatch):
+    archive = tmp_path / 'with_root.zip'
+    with zipfile.ZipFile(archive, 'w') as output:
+        output.writestr('Compress/', b'')
+        for scene in ('E01', 'E02', 'E03', 'E04'):
+            output.writestr(f'Compress/{scene}/S01/A01/sample.bin', scene.encode())
+    assert helper.inspect_archive(archive)['files'] == 4
+    monkeypatch.setattr(helper, 'validate_mmfi', lambda root: {'ok': True})
+    receipt = helper.prepare_data(tmp_path / 'mmfi', archive)
+    assert receipt['archive_metadata']['files'] == 4
+
+
+def test_rejects_unrelated_root_directory(tmp_path):
+    archive = tmp_path / 'extra_root.zip'
+    with zipfile.ZipFile(archive, 'w') as output:
+        output.writestr('Compress/', b'')
+        output.writestr('Other/', b'')
+        for scene in ('E01', 'E02', 'E03', 'E04'):
+            output.writestr(f'Compress/{scene}/S01/A01/sample.bin', scene.encode())
+    with pytest.raises(ValueError, match='outside Compress/'):
+        helper.inspect_archive(archive)
+
+
 def test_verified_extract_resume_and_modified_file_refusal(tmp_path, monkeypatch):
     archive = make_archive(tmp_path / 'data.zip')
     home = tmp_path / 'mmfi'

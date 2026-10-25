@@ -33,8 +33,11 @@ def inspect_archive(archive_path):
     files = [name for name, info in entries if not info.is_dir()]
     if not files or any(not name.startswith('Compress/') for name in files):
         raise ValueError('Archive must contain only processed files under Compress/')
-    if any(name != 'Compress/' and not name.startswith('Compress/')
-           for name, _ in entries):
+    # safe_entries normalizes the explicit ZIP directory "Compress/" to
+    # "Compress". It is allowed only when the member really is a directory.
+    if any(not (name.startswith('Compress/') or
+                (name == 'Compress' and info.is_dir()))
+           for name, info in entries):
         raise ValueError('Archive has a member outside Compress/')
     missing = [scene for scene in ('E01', 'E02', 'E03', 'E04')
                if not any(name.startswith(f'Compress/{scene}/') for name in files)]
