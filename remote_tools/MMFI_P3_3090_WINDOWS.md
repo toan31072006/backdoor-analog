@@ -45,24 +45,23 @@ new directory for a later source version.
 ## 2. Prepare a Python environment
 
 An existing Windows Python 3.11 environment with CUDA PyTorch, NumPy, SciPy and
-PyYAML can be supplied to the launcher with `-Python`. The commands below
-install Python 3.11.9 for the current user and create a virtual environment.
+PyYAML can be supplied to the launcher with `-Python`. Windows Installer
+returned 1601 on this host, so use the official full Python 3.11.9 ZIP.
+This ZIP was checked to contain working python.exe, pip and venv.
 
 ```powershell
-$Installer = Join-Path $HomeDir 'downloads\python-3.11.9-amd64.exe'
-$InstallDir = Join-Path $HomeDir 'python311'
-$ExpectedInstaller = '5EE42C4EEE1E6B4464BB23722F90B45303F79442DF63083F05322F1785F5FDDE'
+$PythonZip = Join-Path $HomeDir 'downloads\python-3.11.9-amd64.zip'
+$InstallDir = Join-Path $HomeDir 'python311-zip'
+$ExpectedPythonZip = '4BA90A4AB8990891033D37FF04D2047FDAE8948D0D2729A68D3A6A17C585B681'
 if (!(Test-Path -LiteralPath (Join-Path $InstallDir 'python.exe'))) {
-    Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe' -OutFile $Installer -TimeoutSec 120
-    if ((Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash -ne $ExpectedInstaller) { throw 'Python installer SHA256 mismatch.' }
-    $Signature = Get-AuthenticodeSignature -LiteralPath $Installer
-    if ($Signature.Status -ne 'Valid' -or $Signature.SignerCertificate.Subject -notlike '*Python Software Foundation*') { throw 'Python installer signature invalid.' }
-    $Process = Start-Process -FilePath $Installer -ArgumentList @('/quiet','InstallAllUsers=0',"TargetDir=$InstallDir",'Include_pip=1','Include_launcher=0','Include_test=0','PrependPath=0') -WindowStyle Hidden -Wait -PassThru
-    if ($Process.ExitCode -ne 0) { throw "Python installer failed: $($Process.ExitCode)" }
+    Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.zip' -OutFile $PythonZip -TimeoutSec 120
+    if ((Get-FileHash -LiteralPath $PythonZip -Algorithm SHA256).Hash -ne $ExpectedPythonZip) { throw 'Python ZIP SHA256 mismatch.' }
+    Expand-Archive -LiteralPath $PythonZip -DestinationPath $InstallDir
 }
 $SystemPy = Join-Path $InstallDir 'python.exe'
 if (!(Test-Path -LiteralPath $SystemPy)) { throw 'Python 3.11 executable missing.' }
 & $SystemPy --version
+& $SystemPy -m pip --version
 $Venv = Join-Path $HomeDir 'envs\mmfi-p3'
 & $SystemPy -m venv $Venv
 if ($LASTEXITCODE -ne 0) { throw 'Python 3.11 is required.' }
