@@ -12,20 +12,23 @@ import hashlib
 import importlib.util
 from importlib.metadata import version
 import json
+import math
 import os
 from pathlib import Path
 import platform
 import subprocess
 import sys
+import time
+import uuid
 
 
 HERE = Path(__file__).resolve().parent
-PROFILE = 'mmfi_two_exploratory_attacks_s42_v1'
+PROFILE = 'mmfi_two_exploratory_attacks_s42_v3_two_per_gpu'
 BACKBONES = ('metafiplusplus', 'wiflow')
 METHODS = ('smooth_lf_csi', 'tsba_adapted')
 DEFAULT_REPO = Path('/workspace/mmfi_v6/backdoor-analog')
 DEFAULT_DATA = Path('/workspace/mmfi')
-DEFAULT_OUT = Path('/workspace/runs/mmfi_two_extra_s42_v1')
+DEFAULT_OUT = Path('/workspace/runs/mmfi_two_extra_s42_v3')
 DEFAULT_RECEIPT = Path('/workspace/runs/mmfi_metafiplusplus_s42_attack_defense_v1/dataset_content.json')
 
 
@@ -176,7 +179,7 @@ def make_plan(args):
                               torch=version('torch'), numpy=version('numpy'),
                               scipy=version('scipy'), pyyaml=version('PyYAML')),
                  cells=cells,
-                 scheduling='one process per GPU; smooth-LF wave then TSBA wave',
+                 scheduling='four concurrent processes; two per GPU; combined four-worker smoke barrier',
                  selection='scratch 50 epochs, fixed final49; no TEST checkpoint selection',
                  caveats=['TSBA adapted generator has white-box training access.',
                           'Smooth-LF is a fixed CSI control inspired by LF, not LF optimized-pattern reproduction.',
@@ -246,7 +249,39 @@ def require_idle_gpus():
         raise RuntimeError(f'Other GPU compute PIDs {sorted(others)} are active; inspect nvidia-smi')
 
 
-def run_smoke_worker(plan, cell):
+def smoke_attempt_dir(plan, attempt):
+    if not isinstance(attempt, str) or len(attempt) != 32 or any(
+            char not in '0123456789abcdef' for char in attempt):
+        raise ValueError('Invalid four-worker smoke attempt ID')
+    return Path(plan['outdir']) / 'smoke' / 'attempts' / attempt
+
+
+def wait_smoke_barrier(plan, attempt, phase, *, timeout=300):
+    if phase not in ('ready', 'done'):
+        raise ValueError('Unknown smoke barrier phase')
+    folder = smoke_attempt_dir(plan, attempt)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if (folder / 'abort.json').is_file():
+            raise RuntimeError('Peer smoke failed; see four-worker attempt logs')
+        complete = True
+        for peer in plan['cells']:
+            marker = folder / phase / (peer['id'] + '.json')
+            if not marker.is_file():
+                complete = False
+                break
+            record = json.loads(marker.read_text(encoding='utf-8'))
+            if (record.get('cell') != peer['id'] or record.get('attempt') != attempt
+                    or record.get('plan_sha256') != plan['plan_sha256']
+                    or record.get('device') != peer['device']):
+                raise ValueError(f'Invalid {phase} smoke marker: {marker}')
+        if complete:
+            return
+        time.sleep(0.25)
+    raise TimeoutError(f'Four-worker smoke {phase} barrier timed out')
+
+
+def run_smoke_worker(plan, cell, attempt):
     import numpy as np
     import torch
     adapter, lf, _, _, _ = setup_source(Path(plan['repo_dir']))
@@ -271,22 +306,34 @@ def run_smoke_worker(plan, cell):
     if cell['method'] == 'tsba_adapted':
         trigger = engine.build_trigger(cfg).to(device)
         trigger_opt = torch.optim.Adam(trigger.parameters(), lr=cfg['tsba_lr'])
-        doses = torch.full((4,), 0.6, device=device)
-        _generator_update(model, trigger, trigger_opt, x[:4], y[:4], doses, cfg)
-        with torch.no_grad():
-            attacked = trigger.inject_tensor(x, torch.full((batch,), 0.6, device=device),
-                                             eps=cfg['tsba_eps'])
     else:
         trigger = lf.build_smooth_lf_trigger(cfg)
         attacked = torch.from_numpy(np.stack([
             trigger.inject(frame, 0.6, cfg['eps']) for frame in x.cpu().numpy()
         ])).to(device)
-    loss = engine._victim_update(model, optimizer, attacked, y)
-    if not np.isfinite(loss):
-        raise RuntimeError('Nonfinite synthetic actual-model smoke loss')
+    folder = smoke_attempt_dir(plan, attempt)
+    marker = dict(cell=cell['id'], attempt=attempt,
+                  plan_sha256=plan['plan_sha256'], device=device, pid=os.getpid())
+    atomic_json(folder / 'ready' / (cell['id'] + '.json'), marker)
+    wait_smoke_barrier(plan, attempt, 'ready')
+    # All four models and optimizers are resident before any backward pass.
+    # The learned generator gets a full physical batch here to stress VRAM.
+    for _ in range(4):
+        if (folder / 'abort.json').is_file():
+            raise RuntimeError('Peer smoke failed; stopping synthetic steps')
+        if cell['method'] == 'tsba_adapted':
+            doses = torch.full((batch,), 0.6, device=device)
+            _generator_update(model, trigger, trigger_opt, x, y, doses, cfg)
+            with torch.no_grad():
+                attacked = trigger.inject_tensor(x, doses, eps=cfg['tsba_eps'])
+        loss = engine._victim_update(model, optimizer, attacked, y)
+        if not np.isfinite(loss):
+            raise RuntimeError('Nonfinite synthetic actual-model smoke loss')
     torch.cuda.synchronize(device)
+    atomic_json(folder / 'done' / (cell['id'] + '.json'), marker)
+    wait_smoke_barrier(plan, attempt, 'done')
     return dict(cell=cell['id'], physical_batch=batch, optimizer=optimizer_name,
-                finite=True, loss=loss,
+                finite=True, loss=loss, attempt=attempt, concurrent_workers=4,
                 gpu=gpu_identity()[int(device.split(':')[1])],
                 peak_allocated_bytes=torch.cuda.max_memory_allocated(device),
                 peak_reserved_bytes=torch.cuda.max_memory_reserved(device))
@@ -340,21 +387,24 @@ def get_cell(plan, name):
     return cells[0]
 
 
-def internal_command(args, mode, cell):
-    return [sys.executable, '-u', str(Path(__file__).resolve()),
+def internal_command(args, mode, cell, *, smoke_attempt=None):
+    command = [sys.executable, '-u', str(Path(__file__).resolve()),
             '--repo-dir', str(Path(args.repo_dir).resolve()),
             '--data-home', str(Path(args.data_home).resolve()),
             '--outdir', str(Path(args.outdir).resolve()),
             '--dataset-receipt', str(Path(args.dataset_receipt).resolve()),
             mode, cell['id']]
+    if smoke_attempt is not None:
+        command += ['--smoke-attempt', smoke_attempt]
+    return command
 
 
-def wave(args, plan, method, mode, *, selected=None):
+def wave(args, plan, method, mode):
     children = []
     for cell in plan['cells']:
-        if cell['method'] != method or (selected is not None and cell['id'] not in selected):
+        if method is not None and cell['method'] != method:
             continue
-        log_dir = Path(plan['outdir']) / ('smoke' if mode == '--smoke-worker' else 'logs')
+        log_dir = Path(plan['outdir']) / 'logs'
         log_dir.mkdir(parents=True, exist_ok=True)
         path = log_dir / (cell['id'] + '.log')
         handle = path.open('a', encoding='utf-8')
@@ -372,26 +422,88 @@ def wave(args, plan, method, mode, *, selected=None):
         raise RuntimeError(f'{method} wave failed {failures}; logs/checkpoints retained; no automatic retry')
 
 
+def smoke_all(args, plan):
+    """Run the actual four-cell topology, with a resident-model barrier."""
+    attempt = uuid.uuid4().hex
+    folder = smoke_attempt_dir(plan, attempt)
+    children = []
+    try:
+        for cell in plan['cells']:
+            path = folder / 'logs' / (cell['id'] + '.log')
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open('x', encoding='utf-8') as handle:
+                process = subprocess.Popen(
+                    internal_command(args, '--smoke-worker', cell, smoke_attempt=attempt),
+                    stdout=handle, stderr=subprocess.STDOUT)
+            print(f'[concurrent-smoke] {cell["id"]} PID={process.pid} '
+                  f'GPU={cell["device"]} log={path}', flush=True)
+            children.append((cell, process))
+    except OSError as error:
+        atomic_json(folder / 'abort.json',
+                    dict(attempt=attempt, reason='failed to launch all smoke workers'))
+        raise RuntimeError(f'Four-worker smoke launch failed; preserve {folder}') from error
+    failures = []
+    while True:
+        states = [(cell['id'], process.poll()) for cell, process in children]
+        newly_failed = [(name, code) for name, code in states if code not in (None, 0)]
+        if newly_failed and not (folder / 'abort.json').exists():
+            atomic_json(folder / 'abort.json', dict(attempt=attempt, failures=newly_failed))
+        if all(code is not None for _, code in states):
+            failures = [(name, code) for name, code in states if code != 0]
+            break
+        time.sleep(0.25)
+    if failures:
+        raise RuntimeError(f'Four-worker concurrent GPU smoke failed {failures}; '
+                           f'preserve {folder}; no training launched')
+    return attempt
+
+
+def gate_payload(plan, attempt, gpus, receipt_sha):
+    folder = smoke_attempt_dir(plan, attempt)
+    if (folder / 'abort.json').exists():
+        raise ValueError('Smoke attempt was aborted')
+    expected = dict(profile=PROFILE, plan_sha256=plan['plan_sha256'],
+                    dataset_receipt_sha256=receipt_sha,
+                    gpus=gpus, smoke_attempt=attempt,
+                    concurrency=dict(workers=4, jobs_per_gpu=2,
+                                     barrier='four resident models; full-batch TSBA backward'))
+    for cell in plan['cells']:
+        smoke = folder / (cell['id'] + '.json')
+        if not smoke.is_file():
+            raise FileNotFoundError(f'Missing actual-model GPU smoke {smoke}')
+        value = json.loads(smoke.read_text(encoding='utf-8'))
+        gpu_index = int(cell['device'].split(':')[1])
+        if (value.get('cell') != cell['id'] or value.get('finite') is not True
+                or value.get('gpu') != expected['gpus'][gpu_index]
+                or value.get('attempt') != attempt
+                or value.get('concurrent_workers') != 4
+                or value.get('physical_batch') != cell['config']['batch_size']
+                or value.get('optimizer') != cell['config']['optimizer']
+                or not isinstance(value.get('loss'), (int, float))
+                or not math.isfinite(value['loss'])
+                or value.get('peak_allocated_bytes', 0) <= 0):
+            raise ValueError('Failed actual-model GPU smoke')
+        expected.setdefault('smoke_sha256', {})[cell['id']] = sha(smoke)
+        for phase in ('ready', 'done'):
+            marker = folder / phase / (cell['id'] + '.json')
+            record = json.loads(marker.read_text(encoding='utf-8'))
+            if (record.get('cell') != cell['id'] or record.get('attempt') != attempt
+                    or record.get('plan_sha256') != plan['plan_sha256']
+                    or record.get('device') != cell['device']):
+                raise ValueError(f'Invalid {phase} smoke marker: {marker}')
+            expected.setdefault('barrier_sha256', {}).setdefault(phase, {})[cell['id']] = sha(marker)
+    return dict(expected, gate_sha256=digest(expected))
+
+
 def validate_gate(args, plan):
     output = Path(plan['outdir'])
     gate_path = output / 'prelaunch_gate.json'
     if not gate_path.is_file():
         raise FileNotFoundError('Separate --prepare-only gate missing')
     gate = json.loads(gate_path.read_text(encoding='utf-8'))
-    expected = dict(profile=PROFILE, plan_sha256=plan['plan_sha256'],
-                    dataset_receipt_sha256=sha(plan['dataset_receipt']),
-                    gpus=gpu_identity())
-    for cell in plan['cells']:
-        smoke = output / 'smoke' / (cell['id'] + '.json')
-        if not smoke.is_file():
-            raise FileNotFoundError(f'Missing actual-model GPU smoke {smoke}')
-        value = json.loads(smoke.read_text(encoding='utf-8'))
-        gpu_index = int(cell['device'].split(':')[1])
-        if (value.get('cell') != cell['id'] or value.get('finite') is not True
-                or value.get('gpu') != expected['gpus'][gpu_index]):
-            raise ValueError('Failed actual-model GPU smoke')
-        expected.setdefault('smoke_sha256', {})[cell['id']] = sha(smoke)
-    if gate != dict(expected, gate_sha256=digest(expected)):
+    expected = gate_payload(plan, gate.get('smoke_attempt'), gpu_identity(),
+                            sha(plan['dataset_receipt']))
+    if gate != expected:
         raise ValueError('Prepared source/data/GPU/smoke gate changed')
     return gate
 
@@ -406,6 +518,7 @@ def parse_args(argv=None):
     for name in ('dry-run', 'prepare-only', 'launch', 'status', 'check-only'):
         modes.add_argument('--' + name, action='store_true')
     parser.add_argument('--smoke-worker', metavar='CELL')
+    parser.add_argument('--smoke-attempt', metavar='HEX_ID')
     parser.add_argument('--worker', metavar='CELL')
     args = parser.parse_args(argv)
     if not any((args.dry_run, args.prepare_only, args.launch, args.status,
@@ -434,8 +547,9 @@ def main(argv=None):
         saved = read_plan(args)
         cell = get_cell(saved, args.smoke_worker or args.worker)
         if args.smoke_worker:
-            value = run_smoke_worker(saved, cell)
-            atomic_json(Path(saved['outdir']) / 'smoke' / (cell['id'] + '.json'), value)
+            value = run_smoke_worker(saved, cell, args.smoke_attempt)
+            atomic_json(smoke_attempt_dir(saved, args.smoke_attempt) /
+                        (cell['id'] + '.json'), value)
             print(f'GPU_SMOKE_WORKER_PASS {cell["id"]}: {value}', flush=True)
         else:
             validate_gate(args, saved)
@@ -458,7 +572,7 @@ def main(argv=None):
                     validate_gate(args, saved)
                     print('PREPARED_ONLY_EXISTING; no training launched')
                     return 0
-                print('MANUAL_PREPARE_CONTINUATION; checking prior smoke receipts', flush=True)
+                print('MANUAL_PREPARE_CONTINUATION; new four-worker smoke attempt', flush=True)
             else:
                 if any(p.name != 'controller.lock' for p in output.iterdir()):
                     raise ValueError('Output directory is nonempty without a plan; choose a NEW directory')
@@ -467,25 +581,9 @@ def main(argv=None):
             receipt_sha = verify_data(plan, full_hash=True)
             if not current_plan.exists():
                 atomic_json(current_plan, plan)
-            pending = set()
-            for cell in plan['cells']:
-                smoke = output / 'smoke' / (cell['id'] + '.json')
-                if not smoke.is_file():
-                    pending.add(cell['id'])
-                    continue
-                value = json.loads(smoke.read_text(encoding='utf-8'))
-                gpu_index = int(cell['device'].split(':')[1])
-                if (value.get('cell') != cell['id'] or value.get('finite') is not True
-                        or value.get('gpu') != gpus[gpu_index]):
-                    raise ValueError(f'Existing smoke differs; preserve and inspect {smoke}')
-            for method in METHODS:
-                wave(args, plan, method, '--smoke-worker', selected=pending)
-            expected = dict(profile=PROFILE, plan_sha256=plan['plan_sha256'],
-                            dataset_receipt_sha256=receipt_sha, gpus=gpus,
-                            smoke_sha256={cell['id']: sha(output / 'smoke' / (cell['id'] + '.json'))
-                                          for cell in plan['cells']})
+            attempt = smoke_all(args, plan)
             atomic_json(output / 'prelaunch_gate.json',
-                        dict(expected, gate_sha256=digest(expected)))
+                        gate_payload(plan, attempt, gpus, receipt_sha))
         print('PREPARED_ONLY: full input audit + four GPU smoke passes; no full training launched')
         return 0
     saved = read_plan(args)
@@ -513,8 +611,7 @@ def main(argv=None):
         return int(bool(missing))
     with controller_lock(saved['outdir']):
         require_idle_gpus()
-        for method in METHODS:
-            wave(args, saved, method, '--worker')
+        wave(args, saved, None, '--worker')
         records = [json.loads((Path(cell['eval_dir']) / 'evaluation.json').read_text(encoding='utf-8'))
                    for cell in saved['cells']]
         verify_data(saved, full_hash=True)

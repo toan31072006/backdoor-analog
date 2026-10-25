@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 
-PROFILE = "mmfi_two_extra_attacks_s42_overlay_v2"
+PROFILE = "mmfi_two_extra_attacks_s42_overlay_v3"
 NAMES = frozenset({
     "extra_attacks_runner.py", "smooth_lf_csi.py", "extra_attack_eval.py",
     "verify_extra_bundle.py", "README_VI.md",

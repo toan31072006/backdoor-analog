@@ -14,7 +14,7 @@ import zipfile
 
 
 REPO = Path(__file__).resolve().parents[1]
-PROFILE = "mmfi_two_extra_attacks_s42_overlay_v2"
+PROFILE = "mmfi_two_extra_attacks_s42_overlay_v3"
 FILES = {
     "extra_attacks_runner.py": "remote_linux/vast_seed42/extra_attacks_runner.py",
     "smooth_lf_csi.py": "ATKBackd/attack/smooth_lf_csi.py",
@@ -84,7 +84,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path,
                         default=REPO.parent / "deliverables" /
-                        "mmfi_two_extra_attacks_s42_overlay_v2.zip")
+                        "mmfi_two_extra_attacks_s42_overlay_v3.zip")
     args = parser.parse_args(argv)
     print(json.dumps(build(args.output), indent=2, ensure_ascii=False))
     return 0

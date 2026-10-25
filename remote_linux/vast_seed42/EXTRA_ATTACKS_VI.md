@@ -22,13 +22,16 @@ không phải so sánh cùng chuẩn nhiễu hay cùng quyền attacker.
 
 ## Trên máy Vast đã có dữ liệu và source v6
 
-Upload `mmfi_two_extra_attacks_s42_overlay_v2.zip` vào `/` bằng giao diện Vast.
-Đối chiếu SHA256 mà lệnh build in ra với file vừa upload. Một lần đầu:
+Upload `mmfi_two_extra_attacks_s42_overlay_v3.zip` vào `/workspace` bằng giao diện Vast.
+Đối chiếu SHA256 mà lệnh build in ra với file vừa upload. Bản v3 dùng output
+`/workspace/runs/mmfi_two_extra_s42_v3` riêng; checkpoint v2 được giữ nguyên.
+Nếu controller v2 đang train, chờ nó hoàn tất hoặc chủ động xử lý job đó trước;
+**không chạy v2 và v3 đồng thời trên cùng hai GPU**. Một lần đầu:
 
 ```bash
 set -e
-ZIP=/mmfi_two_extra_attacks_s42_overlay_v2.zip
-DEST=/workspace/mmfi_two_extra_s42_overlay_v2
+ZIP=/workspace/mmfi_two_extra_attacks_s42_overlay_v3.zip
+DEST=/workspace/mmfi_two_extra_s42_overlay_v3
 test -f "$ZIP"
 test ! -e "$DEST"
 sha256sum "$ZIP"
@@ -44,33 +47,34 @@ khác, truyền `--repo-dir`, `--data-home` và `--dataset-receipt` tương ứn
 **Kiểm trước khi train thật:**
 
 ```bash
-R=/workspace/mmfi_two_extra_s42_overlay_v2/extra_attacks_runner.py
+R=/workspace/mmfi_two_extra_s42_overlay_v3/extra_attacks_runner.py
 P=/workspace/venvs/mmfi/bin/python
 $P -u "$R" --dry-run
 $P -u "$R" --prepare-only
 ```
 
-`--dry-run` chỉ in plan. `--prepare-only` kiểm source/dữ liệu và làm GPU smoke;
-chưa chạy 50 epoch. Nếu smoke lỗi, giữ log để chẩn đoán; sau khi xử lý,
-chạy lại `--prepare-only` thủ công trong cùng thư mục để chạy smoke còn thiếu.
+`--dry-run` chỉ in plan. `--prepare-only` kiểm source/dữ liệu và làm GPU smoke
+**đồng thời cả 4 worker (2/GPU)**; chưa chạy 50 epoch. Chỉ launch khi có
+`PREPARED_ONLY` và gate của đủ bốn worker. Nếu smoke lỗi, giữ log để chẩn đoán; sau khi xử lý,
+chạy lại `--prepare-only` thủ công trong cùng thư mục để thử lại **cả bốn worker đồng thời**.
 Không tự giảm batch, đổi optimizer hay dùng một receipt của run khác để vượt
 gate. Kiểm GPU trống trước khi launch: `nvidia-smi`.
 
 **Chạy 4 victim:**
 
 ```bash
-tmux new-session -d -s mmfi-two-extra-s42 \
-  'exec /workspace/venvs/mmfi/bin/python -u /workspace/mmfi_two_extra_s42_overlay_v2/extra_attacks_runner.py --launch >> /workspace/mmfi_two_extra_s42_v1.log 2>&1'
-tail -n 30 -F /workspace/mmfi_two_extra_s42_v1.log
+tmux new-session -d -s mmfi-two-extra-s42-v3 \
+  'exec /workspace/venvs/mmfi/bin/python -u /workspace/mmfi_two_extra_s42_overlay_v3/extra_attacks_runner.py --launch >> /workspace/mmfi_two_extra_s42_v3.log 2>&1'
+tail -n 30 -F /workspace/mmfi_two_extra_s42_v3.log
 ```
 
-Controller chạy tối đa **một process trên mỗi GPU**: hai LF controls trước, rồi
-hai TSBA. Không tự chạy lại job lỗi. `Ctrl+C` ở màn `tail -F` chỉ ngừng xem
+Controller chạy **hai process trên mỗi GPU** sau khi GPU smoke cùng cấu hình
+đã đạt. Không tự chạy lại job lỗi. `Ctrl+C` ở màn `tail -F` chỉ ngừng xem
 log. Theo dõi ngắn:
 
 ```bash
 /workspace/venvs/mmfi/bin/python "$R" --status
-tail -n 30 /workspace/mmfi_two_extra_s42_v1.log
+tail -n 30 /workspace/mmfi_two_extra_s42_v3.log
 nvidia-smi
 ```
 
@@ -81,6 +85,6 @@ input/source binding:
 /workspace/venvs/mmfi/bin/python "$R" --check-only
 ```
 
-Kết quả nằm dưới `/workspace/runs/mmfi_two_extra_s42_v1`. Chỉ dùng số đo khi
+Kết quả nằm dưới `/workspace/runs/mmfi_two_extra_s42_v3`. Chỉ dùng số đo khi
 `--check-only` xác nhận đủ **4/4**. Nếu source v6, dữ liệu, CUDA hay bộ nhớ trên
 host thay đổi, báo lỗi/không launch; giữ nguyên run cũ để kiểm tra.
