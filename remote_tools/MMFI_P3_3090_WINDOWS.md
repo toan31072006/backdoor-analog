@@ -12,41 +12,59 @@ the official processed archive contains roughly 322,000 files.
 
 ## 1. Create folders and get the code
 
+Git and Python are absent on this host. Download the exact reviewed commit as
+a ZIP; no Git installation is needed for this run.
+
 ```powershell
-Get-Command git,py,python -ErrorAction SilentlyContinue |
-    Select-Object Name,Source
-if (!(Get-Command git -ErrorAction SilentlyContinue)) {
-    throw 'Git is required to fetch the code; install Git for Windows before this step.'
-}
 $HomeDir = Join-Path $env:USERPROFILE 'backdooranalog'
-$Repo = Join-Path $HomeDir 'code\backdoor-analog'
+$Commit = '8f5cc790f08115f1927d5f79efc8d37d6541923b'
+$Repo = Join-Path $HomeDir "code\backdoor-analog-$Commit"
 foreach ($name in @('code','downloads','actions','runs','envs')) {
     New-Item -ItemType Directory -Force -Path (Join-Path $HomeDir $name) | Out-Null
 }
 Get-PSDrive -Name C | Select-Object Name,Free,Used
-git clone https://github.com/toan31072006/backdoor-analog.git $Repo
-if ($LASTEXITCODE -ne 0) { throw 'Git clone failed; check network/repository access.' }
-git -C $Repo rev-parse HEAD
+$CodeZip = Join-Path $HomeDir 'downloads\backdoor-analog-p3-8f5cc79.zip'
+if (!(Test-Path -LiteralPath $Repo)) {
+    Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/toan31072006/backdoor-analog/archive/$Commit.zip" -OutFile $CodeZip -TimeoutSec 120
+    if ((Get-FileHash -LiteralPath $CodeZip -Algorithm SHA256).Hash -ne '111C3DBFB25B2B139C2796CD18F60B8529FE69462529C82C5A40CBB22C3215D7') {
+        throw 'Code ZIP SHA256 mismatch; no extraction.'
+    }
+    Expand-Archive -LiteralPath $CodeZip -DestinationPath (Join-Path $HomeDir 'code')
+}
+if (!(Test-Path -LiteralPath (Join-Path $Repo 'remote_tools\Start-MMFiP3-3090.ps1'))) {
+    throw 'P3 launcher is missing from the pinned source.'
+}
+$Repo
 ```
 
 The `datasets` directory may be absent or empty. The verified extractor
 binds it to the archive; a nonempty unbound directory is rejected rather
-than overwritten. If `$Repo` already exists, inspect
-`git -C $Repo status -sb` and update with `git -C $Repo pull --ff-only` only
-when the checkout is clean.
+than overwritten. This pinned source snapshot is not a Git checkout; use a
+new directory for a later source version.
 
 ## 2. Prepare a Python environment
 
 An existing Windows Python 3.11 environment with CUDA PyTorch, NumPy, SciPy and
-PyYAML can be supplied to the launcher with `-Python`. For a new virtual
-environment, use:
+PyYAML can be supplied to the launcher with `-Python`. The commands below
+install Python 3.11.9 for the current user and create a virtual environment.
 
 ```powershell
-if (!(Get-Command py -ErrorAction SilentlyContinue)) {
-    throw 'Python launcher py is missing. Install Python 3.11 for Windows or use an existing Python 3.11 environment with -Python.'
+$Installer = Join-Path $HomeDir 'downloads\python-3.11.9-amd64.exe'
+$InstallDir = Join-Path $HomeDir 'python311'
+$ExpectedInstaller = '5EE42C4EEE1E6B4464BB23722F90B45303F79442DF63083F05322F1785F5FDDE'
+if (!(Test-Path -LiteralPath (Join-Path $InstallDir 'python.exe'))) {
+    Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe' -OutFile $Installer -TimeoutSec 120
+    if ((Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash -ne $ExpectedInstaller) { throw 'Python installer SHA256 mismatch.' }
+    $Signature = Get-AuthenticodeSignature -LiteralPath $Installer
+    if ($Signature.Status -ne 'Valid' -or $Signature.SignerCertificate.Subject -notlike '*Python Software Foundation*') { throw 'Python installer signature invalid.' }
+    $Process = Start-Process -FilePath $Installer -ArgumentList @('/quiet','InstallAllUsers=0',"TargetDir=$InstallDir",'Include_pip=1','Include_launcher=0','Include_test=0','PrependPath=0') -WindowStyle Hidden -Wait -PassThru
+    if ($Process.ExitCode -ne 0) { throw "Python installer failed: $($Process.ExitCode)" }
 }
+$SystemPy = Join-Path $InstallDir 'python.exe'
+if (!(Test-Path -LiteralPath $SystemPy)) { throw 'Python 3.11 executable missing.' }
+& $SystemPy --version
 $Venv = Join-Path $HomeDir 'envs\mmfi-p3'
-py -3.11 -m venv $Venv
+& $SystemPy -m venv $Venv
 if ($LASTEXITCODE -ne 0) { throw 'Python 3.11 is required.' }
 $Py = Join-Path $Venv 'Scripts\python.exe'
 & $Py -m pip install --upgrade pip
