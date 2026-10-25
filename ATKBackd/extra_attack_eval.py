@@ -120,14 +120,18 @@ def _contract(cfg: dict, cached: dict) -> None:
                     pretrained=False, data_parallel=False,
                     victim_loss='mpjpe', rho=0.1, poison_select='uniform',
                     dose_min=0.2, dose_max=1.0, batch_size=32)
-    if cfg.get('model') not in ('metafiplusplus', 'wiflow'):
-        raise ValueError('Extra attack evaluator supports MetaFi++/WiFlow only')
-    recipe = ({'optimizer': 'sgd', 'lr': 0.01, 'momentum': 0.9,
-               'weight_decay': 0.0}
-              if cfg['model'] == 'metafiplusplus' else
-              {'optimizer': 'adamw', 'lr': 0.0001, 'weight_decay': 0.0001,
-               'backbone_effective_batch_size': 64,
-               'backbone_accumulation_steps': 2})
+    recipes = {
+        'hpeli': {'optimizer': 'sgd', 'lr': 0.001, 'momentum': 0.9,
+                  'weight_decay': 0.0},
+        'metafiplusplus': {'optimizer': 'sgd', 'lr': 0.01, 'momentum': 0.9,
+                           'weight_decay': 0.0},
+        'wiflow': {'optimizer': 'adamw', 'lr': 0.0001, 'weight_decay': 0.0001,
+                   'backbone_effective_batch_size': 64,
+                   'backbone_accumulation_steps': 2},
+    }
+    if cfg.get('model') not in recipes:
+        raise ValueError('Extra attack evaluator supports HPE-Li/MetaFi++/WiFlow only')
+    recipe = recipes[cfg['model']]
     required.update(recipe)
     if any(cfg.get(name) != expected for name, expected in required.items()):
         raise ValueError('Checkpoint config differs from frozen MM-Fi seed42 target')
@@ -176,11 +180,17 @@ def _read_existing(outdir: Path, binding: dict) -> dict | None:
     return report
 
 
+def _build_evaluation_model(cfg: dict, model_builder):
+    """Use the MM-Fi geometry encoded in the checkpoint for every backbone."""
+    return model_builder(cfg['model'], num_keypoints=17, subcarrier_num=114,
+                         dataset='mmfi', pretrained=False)
+
+
 def evaluate_checkpoint(run_dir, out_dir, device, *, model_builder,
                         trigger_builder=None) -> dict:
     """Replay a completed final49 victim without training or TEST selection.
 
-    ``model_builder`` takes ``metafiplusplus`` or ``wiflow``. An optional
+    ``model_builder`` takes ``hpeli``, ``metafiplusplus`` or ``wiflow``. An optional
     ``trigger_builder(cfg)`` supplies the LF-CSI trigger; TSBA uses the frozen
     factory and must restore its trained generator state from the checkpoint.
     """
@@ -225,7 +235,7 @@ def evaluate_checkpoint(run_dir, out_dir, device, *, model_builder,
     if found is not None:
         return found
 
-    model = model_builder(cfg['model'])
+    model = _build_evaluation_model(cfg, model_builder)
     model.load_state_dict(blob['model'], strict=True)
     model = model.to(device).eval()
     trigger = (trigger_builder(cfg) if trigger_builder is not None
