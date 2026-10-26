@@ -224,14 +224,33 @@ def preflight(args) -> dict:
     if not action.is_file() or action.is_symlink():
         raise FileNotFoundError(f"Authentic A1 action file missing: {action}")
     value = parse_worker_json(run_worker(args, "--preflight-only", capture=True).stdout)
-    for key in ("receipt_path", "receipt_sha256", "input_fingerprint",
-                "input_stat_fingerprint", "plan_sha256"):
+    for key in ("receipt_path", "receipt_sha256"):
         if not value.get(key):
             raise ValueError(f"Worker preflight omitted {key}")
     receipt = Path(value["receipt_path"]).resolve()
-    if not receipt.is_file() or file_sha(receipt) != value["receipt_sha256"]:
+    if (receipt != args.outdir.resolve() / "preflight_receipt.json" or
+            not receipt.is_file() or file_sha(receipt) != value["receipt_sha256"]):
         raise ValueError("Worker preflight receipt content hash differs")
+    bound = json.loads(receipt.read_text(encoding="utf-8"))
+    if bound.get("status") != "PASS":
+        raise ValueError("Worker preflight receipt did not pass")
+    for key in ("input_fingerprint", "input_stat_fingerprint", "plan_sha256"):
+        if not bound.get(key) or (value.get(key) and value[key] != bound[key]):
+            raise ValueError(f"Worker preflight receipt {key} missing or inconsistent")
+        value[key] = bound[key]
+    stats = parse_worker_json(run_worker(args, "--check-input-stats", capture=True).stdout)
+    if (stats.get("plan_sha256") != value["plan_sha256"] or
+            stats.get("input_stat_fingerprint") != value["input_stat_fingerprint"]):
+        raise ValueError("Audited PiW input file paths/sizes/mtimes changed")
     return value
+
+
+def require_prepare_output(out: Path) -> None:
+    existing = {p.name for p in out.iterdir() if p.name != "controller.lock"}
+    if existing not in (set(), {"plan.json", "preflight_receipt.json"}):
+        raise ValueError("Prepare requires an empty output or only the completed worker preflight")
+    if any(p.is_symlink() for p in out.iterdir()):
+        raise ValueError("Prepare output contains a linked file")
 
 
 def smoke_attempt_folder(out: Path, attempt: str, wave: int) -> Path:
@@ -450,8 +469,7 @@ def main(argv=None) -> int:
         return 0
     if args.prepare_only:
         with controller_lock(out):
-            if any(p.name != "controller.lock" for p in out.iterdir()):
-                raise ValueError("Prepare requires a new empty output directory")
+            require_prepare_output(out)
             require_idle_gpus()
             gpus = gpu_identity()
             dry = parse_worker_json(run_worker(args, "--dry-run", capture=True).stdout)

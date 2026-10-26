@@ -64,6 +64,41 @@ def test_smoke_barrier_matches_live_wave_size(tmp_path, monkeypatch, wave_index,
     assert len(result['cells']) == workers
 
 
+def test_completed_worker_preflight_is_reused_with_bound_input_stats(tmp_path, monkeypatch):
+    dataset = tmp_path / 'dataset'
+    dataset.mkdir()
+    action = tmp_path / 'action.npy'
+    action.write_bytes(b'authentic-action-placeholder')
+    out = tmp_path / 'run'
+    out.mkdir()
+    receipt = out / 'preflight_receipt.json'
+    receipt.write_text(json.dumps(dict(status='PASS', plan_sha256='plan',
+        input_fingerprint='content', input_stat_fingerprint='stats')),
+        encoding='utf-8')
+    (out / 'plan.json').write_text('{}', encoding='utf-8')
+    controller.require_prepare_output(out)
+
+    def fake_worker(args, mode, *, capture):
+        if mode == '--preflight-only':
+            report = dict(status='PASS_EXISTING', receipt_path=str(receipt),
+                          receipt_sha256=controller.file_sha(receipt),
+                          input_fingerprint='content', plan_sha256='plan')
+        elif mode == '--check-input-stats':
+            report = dict(plan_sha256='plan', input_stat_fingerprint='stats')
+        else:
+            raise AssertionError(mode)
+        return SimpleNamespace(stdout=json.dumps(report))
+
+    monkeypatch.setattr(controller, 'run_worker', fake_worker)
+    monkeypatch.setattr(controller, 'paths', lambda args: (tmp_path, dataset, action, out))
+    result = controller.preflight(SimpleNamespace(outdir=out))
+    assert result['input_stat_fingerprint'] == 'stats'
+
+    (out / 'smoke.log').write_text('unexpected', encoding='utf-8')
+    with pytest.raises(ValueError, match='completed worker preflight'):
+        controller.require_prepare_output(out)
+
+
 def test_result_export_requires_complete_bound_artifacts(tmp_path):
     gate = {"preflight": {"plan_sha256": "test-science-plan"}}
     for backbone in controller.BACKBONES:
