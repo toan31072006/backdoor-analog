@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,15 +16,52 @@ controller = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(controller)
 
 
-def test_six_baselines_plus_a1_clean_on_two_balanced_gpus():
+def test_six_baselines_plus_a1_clean_with_three_slots_per_gpu():
     waves = controller.waves()
-    assert len(waves) == 4
+    assert [len(wave) for wave in waves] == [6, 6, 4]
+    assert controller.JOBS_PER_GPU == 3
     assert len({cell["id"] for wave in waves for cell in wave}) == 16
-    for wave in waves:
+    for index, wave in enumerate(waves):
         for gpu in ("cuda:0", "cuda:1"):
             assigned = [cell for cell in wave if cell["device"] == gpu]
-            assert len(assigned) == 2
+            assert len(assigned) == (3 if index < 2 else 2)
             assert {cell["backbone"] for cell in assigned} == {"metafiplusplus", "wiflow"}
+    for index in (0, 1):
+        per_gpu = [sum(cell['backbone'] == 'metafiplusplus'
+                       for cell in waves[index] if cell['device'] == gpu)
+                   for gpu in ('cuda:0', 'cuda:1')]
+        assert sorted(per_gpu) == [1, 2]
+    assert [sum(cell['backbone'] == 'metafiplusplus'
+                for cell in waves[index] if cell['device'] == 'cuda:0')
+            for index in (0, 1)] == [2, 1]
+
+
+@pytest.mark.parametrize('wave_index,workers', [(0, 6), (1, 6), (2, 4)])
+def test_smoke_barrier_matches_live_wave_size(tmp_path, monkeypatch, wave_index, workers):
+    seen = []
+
+    class FakeProcess:
+        pid = 12345
+
+        def __init__(self, command, *, stdout, stderr, env):
+            seen.append(int(env['PIW_SMOKE_COUNT']))
+            name = env['PIW_SMOKE_CELL']
+            root = Path(env['PIW_SMOKE_BARRIER_DIR'])
+            for phase in ('ready', 'done'):
+                (root / phase / f'{name}.json').write_text('{}', encoding='utf-8')
+            stdout.write('GPU_SMOKE_WORKER_PASS\n')
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(controller.subprocess, 'Popen', FakeProcess)
+    args = SimpleNamespace(outdir=tmp_path, repo_dir=tmp_path,
+                           dataset_root=tmp_path, action_npy=tmp_path)
+    wave = controller.waves()[wave_index]
+    result = controller.run_wave(args, wave, mode='smoke', wave_index=wave_index,
+                                 attempt='a' * 32)
+    assert seen == [workers] * workers
+    assert len(result['cells']) == workers
 
 
 def test_result_export_requires_complete_bound_artifacts(tmp_path):

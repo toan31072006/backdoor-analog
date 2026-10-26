@@ -21,16 +21,16 @@ import uuid
 
 
 BACKBONES = ("metafiplusplus", "wiflow")
-METHOD_PAIRS = (
-    ("clean", "a1"),
-    ("wanet_source", "ftrojan"),
-    ("fiba", "bpp_source"),
+METHOD_GROUPS = (
+    ("clean", "a1", "wanet_source"),
+    ("ftrojan", "fiba", "bpp_source"),
     ("smooth_lf_csi", "tsba_adapted"),
 )
-PROFILE = "EXPLORATORY_PIW3D_TWO_MODELS_S42_V1"
+JOBS_PER_GPU = 3
+PROFILE = "EXPLORATORY_PIW3D_TWO_MODELS_S42_3PERGPU_V2"
 DEFAULT_REPO = Path(__file__).resolve().parents[2]
 DEFAULT_HOME = Path("/workspace/piw3d")
-DEFAULT_OUT = Path("/workspace/runs/piw3d_two_models_s42_v1")
+DEFAULT_OUT = Path("/workspace/runs/piw3d_two_models_s42_3pergpu_v2")
 
 
 def file_sha(path: Path) -> str:
@@ -119,8 +119,8 @@ def gpu_identity() -> list[dict]:
     result = []
     for index in range(2):
         props = torch.cuda.get_device_properties(index)
-        if props.total_memory < 20 * 2**30:
-            raise RuntimeError(f"cuda:{index} has under 20 GiB VRAM")
+        if "5090" not in props.name or props.total_memory < 30 * 2**30:
+            raise RuntimeError(f"cuda:{index} is not an RTX 5090 with at least 30 GiB VRAM")
         result.append(dict(index=index, name=props.name,
                            total_memory=props.total_memory,
                            capability=[props.major, props.minor],
@@ -163,12 +163,15 @@ def cell(backbone: str, method: str, gpu: int) -> dict:
 
 def waves() -> list[list[dict]]:
     result = []
-    for first, second in METHOD_PAIRS:
-        # Each GPU hosts one MetaFi++ and one WiFlow process.
-        result.append([cell("metafiplusplus", first, 0),
-                       cell("wiflow", second, 0),
-                       cell("wiflow", first, 1),
-                       cell("metafiplusplus", second, 1)])
+    for wave_index, methods in enumerate(METHOD_GROUPS):
+        # The first two waves fill three slots per GPU. Flip the 2:1 model
+        # mix between waves so the smoke exercises both memory topologies.
+        wave = []
+        for method_index, method in enumerate(methods):
+            metafi_gpu = (method_index + wave_index) % 2
+            wave.append(cell("metafiplusplus", method, metafi_gpu))
+            wave.append(cell("wiflow", method, 1 - metafi_gpu))
+        result.append(wave)
     return result
 
 
@@ -190,7 +193,7 @@ def plan(args, dry_worker: dict | None = None) -> dict:
                   repo_dir=str(repo), dataset_root=str(dataset),
                   action_npy=str(action), outdir=str(out),
                   source_binding=source_binding(repo),
-                  waves=waves(), jobs_per_gpu=2,
+                  waves=waves(), jobs_per_gpu=JOBS_PER_GPU,
                   selection="scratch 200 epochs; fixed final199; TEST after all training",
                   no_automatic_retry=True, no_batch_fallback=True, no_amp=True,
                   runtime=dict(python=platform.python_version(),
@@ -260,7 +263,7 @@ def run_wave(args, cells: list[dict], *, mode: str, wave_index: int,
         env = os.environ.copy()
         if mode == "smoke":
             env.update(PIW_SMOKE_BARRIER_DIR=str(folder),
-                       PIW_SMOKE_CELL=name, PIW_SMOKE_COUNT="4")
+                       PIW_SMOKE_CELL=name, PIW_SMOKE_COUNT=str(len(cells)))
         command = [sys.executable, "-u",
                    str(args.repo_dir.resolve() / "ATKBackd/run_piw_two_models_attacks.py"),
                    "--dataset-root", str(args.dataset_root.resolve()),
@@ -310,8 +313,10 @@ def gate_value(args, saved: dict, *, attempt: str, smoke_reports: list[dict],
                  dataset_lists_sha256=dataset_quick_binding(dataset),
                  preflight=input_report, gpus=gpus,
                  smoke_attempt=attempt, smoke_reports=smoke_reports,
-                 concurrency=dict(workers=4, jobs_per_gpu=2,
-                                  topology="one MetaFi++ and one WiFlow per GPU"))
+                 concurrency=dict(peak_workers=2 * JOBS_PER_GPU,
+                                  jobs_per_gpu=JOBS_PER_GPU,
+                                  wave_sizes=[len(wave) for wave in saved["waves"]],
+                                  topology="balanced MetaFi++/WiFlow mix per GPU"))
     value["gate_sha256"] = canonical_sha(value)
     return value
 
@@ -341,7 +346,18 @@ def validate_gate(args, saved: dict) -> dict:
         raise ValueError("CUDA GPU identities changed after smoke")
     if canonical_sha({k: v for k, v in actual.items() if k != "gate_sha256"}) != actual["gate_sha256"]:
         raise ValueError("Prepared gate content changed")
-    for report in actual["smoke_reports"]:
+    expected_concurrency = dict(peak_workers=2 * JOBS_PER_GPU,
+                                jobs_per_gpu=JOBS_PER_GPU,
+                                wave_sizes=[len(wave) for wave in saved["waves"]],
+                                topology="balanced MetaFi++/WiFlow mix per GPU")
+    if (saved.get("jobs_per_gpu") != JOBS_PER_GPU or
+            actual.get("concurrency") != expected_concurrency or
+            len(actual.get("smoke_reports", [])) != len(saved["waves"])):
+        raise ValueError("Three-slot PiW smoke/schedule gate changed")
+    for index, (report, wave) in enumerate(zip(actual["smoke_reports"], saved["waves"])):
+        if (report.get("wave") != index or
+                report.get("cells") != [entry["id"] for entry in wave]):
+            raise ValueError(f"Smoke wave{index} does not cover the scheduled cells")
         wave_index = report["wave"]
         folder = smoke_attempt_folder(out, actual["smoke_attempt"], wave_index)
         for name, expected in report["logs"].items():
@@ -359,7 +375,7 @@ def export_results(out: Path, gate: dict) -> dict:
     expected_plan = gate["preflight"]["plan_sha256"]
     rows = []
     for backbone in BACKBONES:
-        for method in ("clean", *(item for pair in METHOD_PAIRS for item in pair
+        for method in ("clean", *(item for group in METHOD_GROUPS for item in group
                                   if item != "clean")):
             folder = out / "attacks" / backbone / "seed42" / method
             path = folder / "evaluation.json"
@@ -448,7 +464,7 @@ def main(argv=None) -> int:
             gate = gate_value(args, saved, attempt=attempt, smoke_reports=reports,
                               input_report=full_input, gpus=gpus)
             atomic_new_json(out / "prelaunch_gate.json", gate)
-        print("PREPARED_ONLY: full PiW input audit + all 16 actual-model four-way B32 smoke passes; no full training launched")
+        print("PREPARED_ONLY: full PiW input audit + all 16 actual-model B32 smoke passes (up to three/GPU); no full training launched")
         return 0
     saved = read_plan(args)
     validate_gate(args, saved)

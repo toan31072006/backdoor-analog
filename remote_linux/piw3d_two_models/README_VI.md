@@ -34,22 +34,22 @@ Trên checkout phát triển, tạo ZIP bằng
 `python remote_tools/Build-PiW3DTwoModelsBundle.py --output <new-code-zip>`.
 Sau khi upload lên Vast, đối chiếu SHA256 do builder in ra trước khi giải
 nén. Giải nén vào một **thư mục mới**, ví dụ
-`/workspace/piw3d_code_v1/backdoor-analog`; chạy `verify_bundle.py` sau đó.
+`/workspace/piw3d_code_3pergpu_v2/backdoor-analog`; chạy `verify_bundle.py` sau đó.
 Không ghi đè checkout MM-Fi hiện có.
 
-Môi trường mặc định là `/workspace/venvs/mmfi/bin/python`; cần PyTorch có CUDA,
-NumPy, SciPy và PyYAML. Đổi bằng `PIW_PYTHON` nếu có venv PiW riêng. Launcher
+Launcher dùng `python` đang active (ví dụ `/venv/main/bin/python`); cần PyTorch có CUDA,
+NumPy, SciPy và PyYAML. Đặt `PIW_PYTHON` nếu muốn chọn venv PiW riêng. Launcher
 không tự cài package hay thay recipe.
 
 ```bash
-cd /workspace/piw3d_code_v1/backdoor-analog
+cd /workspace/piw3d_code_3pergpu_v2/backdoor-analog
 python3 remote_linux/piw3d_two_models/verify_bundle.py --root .
 bash remote_linux/piw3d_two_models/start.sh --dry-run
 bash remote_linux/piw3d_two_models/start.sh --prepare-only
 ```
 
-`--prepare-only` chỉ kiểm dữ liệu/recipe và chạy **bốn process thật đồng thời**
-trong bốn đợt: hai job mỗi GPU, một MetaFi++ và một WiFlow trên từng GPU.
+`--prepare-only` chỉ kiểm dữ liệu/recipe và chạy **tối đa sáu process thật đồng thời**
+trong ba đợt: ba job mỗi GPU ở hai đợt đầu, hai job mỗi GPU ở đợt cuối.
 Mỗi phương pháp phải qua smoke với batch vật lý 32, backward và barrier cùng
 lúc. Nếu OOM hay lỗi, xem log trong `smoke/<attempt>/waveN/logs/`; bộ chạy dừng,
 không tự giảm batch/đổi AMP/retry. Việc kiểm hash toàn bộ dataset có thể mất
@@ -64,13 +64,13 @@ Khi thấy `PREPARED_ONLY` và đã xem gate, chạy lệnh **riêng**:
 
 ```bash
 bash remote_linux/piw3d_two_models/start.sh --launch
-tail -F /workspace/runs/piw3d_two_models_s42_v1/controller.log
+tail -F /workspace/runs/piw3d_two_models_s42_3pergpu_v2/controller.log
 ```
 
 Theo dõi từng cell:
 
 ```bash
-find /workspace/runs/piw3d_two_models_s42_v1/logs -type f -name '*.log' \
+find /workspace/runs/piw3d_two_models_s42_3pergpu_v2/logs -type f -name '*.log' \
   -exec sh -c 'echo "===== $1 ====="; tail -n 5 "$1"' _ {} \;
 bash remote_linux/piw3d_two_models/start.sh --status
 ```

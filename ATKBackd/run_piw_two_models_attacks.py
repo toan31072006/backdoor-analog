@@ -643,7 +643,7 @@ def _barrier(device, phase):
     deadline = time.monotonic() + 240
     while len(list(root.glob('*.json'))) < count:
         if time.monotonic() > deadline:
-            raise RuntimeError(f'PiW four-worker {phase} barrier timeout')
+            raise RuntimeError(f'PiW {count}-worker {phase} barrier timeout')
         time.sleep(.1)
 
 
@@ -745,7 +745,7 @@ def main(argv=None):
         gate = json.loads((Path(cfg['outdir']) / 'prelaunch_gate.json').read_text(
             encoding='utf-8'))
         if gate.get('preflight', {}).get('plan_sha256') != saved['plan_sha256']:
-            raise ValueError('Exact four-way GPU smoke gate missing/foreign')
+            raise ValueError('Exact PiW GPU smoke gate missing/foreign')
         if args.evaluate_only:
             evaluate_cell(saved, backbone, method, args.device)
         else:

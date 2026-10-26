@@ -4,12 +4,12 @@ set -euo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd -- "$HERE/../.." && pwd)
-PYTHON_BIN=${PIW_PYTHON:-/workspace/venvs/mmfi/bin/python}
+PYTHON_BIN=${PIW_PYTHON:-$(command -v python || true)}
 DATA_HOME=${PIW_DATA_HOME:-/workspace/piw3d}
-OUTDIR=${PIW_OUTDIR:-/workspace/runs/piw3d_two_models_s42_v1}
+OUTDIR=${PIW_OUTDIR:-/workspace/runs/piw3d_two_models_s42_3pergpu_v2}
 DATASET_ROOT=${PIW_DATASET_ROOT:-$DATA_HOME/datasets/Person-in-WiFi-3D_processed_v1}
 ACTION_NPY=${PIW_ACTION_NPY:-$DATA_HOME/actions/data_bend.npy}
-SESSION=${PIW_TMUX_SESSION:-piw3d-two-models-s42-v1}
+SESSION=${PIW_TMUX_SESSION:-piw3d-two-models-s42-3pergpu-v2}
 
 usage() {
     cat <<'EOF'
@@ -17,7 +17,7 @@ Usage: bash remote_linux/piw3d_two_models/start.sh MODE
 MODE: --dry-run | --prepare-only | --launch | --status
 Environment: PIW_PYTHON, PIW_DATA_HOME, PIW_DATASET_ROOT,
              PIW_ACTION_NPY, PIW_OUTDIR, PIW_TMUX_SESSION.
-Prepare audits full PiW data and smokes 4 processes (2/GPU), but does not train.
+Prepare audits full PiW data and smokes up to 6 processes (3/GPU), but does not train.
 Launch requires that gate and starts the controller in a detached tmux session.
 EOF
 }
@@ -55,7 +55,7 @@ if [[ "$MODE" == --launch ]]; then
     printf -v QUOTED '%q ' "$PYTHON_BIN" -u "${ARGS[@]}" --launch
     printf -v QUOTED_LOG '%q' "$LOG"
     tmux new-session -d -s "$SESSION" "exec $QUOTED >> $QUOTED_LOG 2>&1"
-    echo "STARTED tmux $SESSION; training waves 2/GPU, then evaluation waves"
+    echo "STARTED tmux $SESSION; training waves up to 3/GPU, then evaluation waves"
     echo "Monitor: tail -F $LOG"
     echo "Cells: $OUTDIR/logs/{train,evaluate}/*.log"
     echo 'Running is not proof of completion. No automatic retry or batch fallback.'
