@@ -6,10 +6,10 @@ HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd -- "$HERE/../.." && pwd)
 PYTHON_BIN=${PIW_PYTHON:-$(command -v python || true)}
 DATA_HOME=${PIW_DATA_HOME:-/workspace/piw3d}
-OUTDIR=${PIW_OUTDIR:-/workspace/runs/piw3d_two_models_s42_3pergpu_v2}
+OUTDIR=${PIW_OUTDIR:-/workspace/runs/piw3d_two_models_s42_3pergpu_v2_smokefix}
 DATASET_ROOT=${PIW_DATASET_ROOT:-$DATA_HOME/datasets/Person-in-WiFi-3D_processed_v1}
 ACTION_NPY=${PIW_ACTION_NPY:-$DATA_HOME/actions/data_bend.npy}
-SESSION=${PIW_TMUX_SESSION:-piw3d-two-models-s42-3pergpu-v2}
+SESSION=${PIW_TMUX_SESSION:-piw3d-two-models-s42-3pergpu-v2-smokefix}
 
 usage() {
     cat <<'EOF'

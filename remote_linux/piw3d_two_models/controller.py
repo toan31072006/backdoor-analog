@@ -30,7 +30,7 @@ JOBS_PER_GPU = 3
 PROFILE = "EXPLORATORY_PIW3D_TWO_MODELS_S42_3PERGPU_V2"
 DEFAULT_REPO = Path(__file__).resolve().parents[2]
 DEFAULT_HOME = Path("/workspace/piw3d")
-DEFAULT_OUT = Path("/workspace/runs/piw3d_two_models_s42_3pergpu_v2")
+DEFAULT_OUT = Path("/workspace/runs/piw3d_two_models_s42_3pergpu_v2_smokefix")
 
 
 def file_sha(path: Path) -> str:

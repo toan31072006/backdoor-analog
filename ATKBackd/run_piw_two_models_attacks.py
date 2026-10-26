@@ -649,6 +649,7 @@ def _barrier(device, phase):
 
 def smoke_cell(saved, backbone, method, device):
     import torch
+    from torch.utils.data import default_collate
     _seed(device)
     model = _build(backbone, device).train()
     opt = _optimizer(model, backbone)
@@ -672,8 +673,9 @@ def smoke_cell(saved, backbone, method, device):
     if len(indices) != BATCH:
         raise ValueError('Could not construct the physical PiW B32 smoke batch')
     samples = [data[i] for i in indices]
-    batch = {key: torch.as_tensor(np.stack([row[key] for row in samples]))
-             for key in samples[0]}
+    # Match the training DataLoader: the Clean dataset also carries string
+    # sample names, which must remain metadata rather than becoming tensors.
+    batch = default_collate(samples)
     if method == 'tsba_adapted':
         trigger = trigger.to(device)
         trigger_opt = torch.optim.Adam(trigger.parameters(),
@@ -681,7 +683,7 @@ def smoke_cell(saved, backbone, method, device):
     else:
         trigger_opt = None
     torch.cuda.reset_peak_memory_stats(device)
-    # All four physical B32 tensors/models must be resident before backward.
+    # All scheduled physical B32 tensors/models must be resident before backward.
     resident = batch['csi'].to(device, dtype=torch.float32)
     _barrier(device, 'ready')
     del resident
