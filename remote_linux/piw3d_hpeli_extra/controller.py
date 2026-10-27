@@ -1,4 +1,4 @@
-"""Vast controller for two exploratory HPE-Li / PiW3D attack controls.
+"""Controller for two exploratory HPE-Li / PiW3D attack controls.
 
 The scientific worker is ATKBackd/run_piw_hpeli_two_extra.py. This module
 only validates a fixed two-GPU execution and schedules its two independent
@@ -20,7 +20,10 @@ import uuid
 
 
 PROFILE = "EXPLORATORY_PIW3D_HPELI_TWO_EXTRA_S42_V1"
-CELLS = (("tsba_adapted", "cuda:0"), ("smooth_lf_csi", "cuda:1"))
+HOST_CELLS = {
+    "vast2": (("tsba_adapted", "cuda:0"), ("smooth_lf_csi", "cuda:1")),
+    "van4090": (("tsba_adapted", "cuda:0"), ("smooth_lf_csi", "cuda:0")),
+}
 REPO_DEFAULT = Path(__file__).resolve().parents[2]
 HOME_DEFAULT = Path("/workspace/piw3d")
 OUT_DEFAULT = Path("/workspace/runs/piw3d_hpeli_two_extra_s42_v1")
@@ -93,24 +96,34 @@ def paths(args):
     return repo, dataset, action, reference, out
 
 
-def selected_sources(repo: Path) -> dict[str, str]:
+def cells(args):
+    return HOST_CELLS[args.host_profile]
+
+
+def selected_sources(repo: Path, host_profile: str) -> dict[str, str]:
     selected = (repo / WORKER,
                 repo / "remote_linux/piw3d_hpeli_extra/controller.py",
                 repo / "remote_linux/piw3d_hpeli_extra/start.sh")
+    if host_profile == "van4090":
+        selected += (repo / "remote_tools/Start-PiWHPELiTwoExtra4090.ps1",
+                     repo / "remote_tools/Export-PiWHPELiV3CleanReference.py")
     if any(not path.is_file() or path.is_symlink() for path in selected):
         raise ValueError("PiW HPE-Li launcher source is missing or linked")
     return {path.relative_to(repo).as_posix(): sha(path) for path in selected}
 
 
-def gpu_identity() -> list[dict]:
+def gpu_identity(host_profile: str) -> list[dict]:
     import torch
-    if not torch.cuda.is_available() or torch.cuda.device_count() != 2:
-        raise RuntimeError("This profile needs exactly two visible CUDA GPUs")
+    expected_count = 1 if host_profile == "van4090" else 2
+    expected_name = "4090" if host_profile == "van4090" else "5090"
+    min_bytes = (22 if host_profile == "van4090" else 30) * 2**30
+    if not torch.cuda.is_available() or torch.cuda.device_count() != expected_count:
+        raise RuntimeError(f"{host_profile} needs exactly {expected_count} visible CUDA GPU(s)")
     result = []
-    for index in range(2):
+    for index in range(expected_count):
         props = torch.cuda.get_device_properties(index)
-        if "5090" not in props.name or props.total_memory < 30 * 2**30:
-            raise RuntimeError(f"cuda:{index} must be RTX 5090 with >=30 GiB")
+        if expected_name not in props.name or props.total_memory < min_bytes:
+            raise RuntimeError(f"cuda:{index} must be RTX {expected_name} with sufficient VRAM")
         result.append(dict(index=index, name=props.name,
                            total_memory=props.total_memory,
                            capability=[props.major, props.minor],
@@ -136,7 +149,8 @@ def worker_command(args, *extra: str) -> list[str]:
     repo, dataset, action, reference, out = paths(args)
     return [sys.executable, "-u", str(repo / WORKER),
             "--dataset-root", str(dataset), "--action-npy", str(action),
-            "--reference-archive", str(reference), "--outdir", str(out), *extra]
+            "--reference-archive", str(reference), "--outdir", str(out),
+            "--host-profile", args.host_profile, *extra]
 
 
 def worker_dry_run(args) -> dict:
@@ -161,7 +175,7 @@ def smoke(args, attempt: str) -> list[dict]:
     folder.mkdir(parents=True, exist_ok=False)
     children = []
     try:
-        for method, device in CELLS:
+        for method, device in cells(args):
             log = folder / f"{method}.log"
             with log.open("x", encoding="utf-8") as stream:
                 child = subprocess.Popen(
@@ -213,7 +227,7 @@ def prepare(args) -> None:
         if gate_path(out).exists():
             raise ValueError("Gate already exists; use --check-only or choose a new output")
         require_idle_gpus()
-        identity = gpu_identity()
+        identity = gpu_identity(args.host_profile)
         dry = worker_dry_run(args)
         subprocess.run(worker_command(args, "--preflight-only"), check=True)
         plan = out / "plan.json"
@@ -222,13 +236,15 @@ def prepare(args) -> None:
             raise RuntimeError("Worker preflight omitted plan.json or preflight_receipt.json")
         attempt = uuid.uuid4().hex
         records = smoke(args, attempt)
-        gate = dict(schema=1, profile=PROFILE, cells=list(map(list, CELLS)),
-                    worker_dry_run=dry, sources=selected_sources(repo),
+        gate = dict(schema=1, profile=PROFILE, host_profile=args.host_profile,
+                    cells=list(map(list, cells(args))),
+                    worker_dry_run=dry, sources=selected_sources(repo, args.host_profile),
                     plan_sha256=sha(plan), preflight_receipt_sha256=sha(receipt),
                     archive_sha256=sha(reference), action_sha256=sha(action),
                     dataset_lists_sha256=quick_inputs(dataset),
                     gpus=identity, smoke_attempt=attempt, smoke=records,
-                    policy=dict(seed=42, jobs_per_gpu=1, physical_batch=32,
+                    policy=dict(seed=42, jobs_per_gpu=2 if args.host_profile == "van4090" else 1,
+                                physical_batch=32,
                                 epochs=200, final_epoch=199, no_automatic_retry=True,
                                 no_batch_fallback=True, test_checkpoint_selection=False,
                                 status="EXPLORATORY_ONE_SEED_PIW3D_HPELI_TWO_EXTRA"))
@@ -244,9 +260,10 @@ def validate_gate(args) -> dict:
     if gate.get("gate_sha256") != object_sha(
             {key: value for key, value in gate.items() if key != "gate_sha256"}):
         raise ValueError("Controller gate digest differs")
-    if gate.get("profile") != PROFILE or gate.get("cells") != list(map(list, CELLS)):
+    if (gate.get("profile") != PROFILE or gate.get("host_profile") != args.host_profile or
+            gate.get("cells") != list(map(list, cells(args)))):
         raise ValueError("Controller profile/cells differ")
-    if gate["sources"] != selected_sources(repo):
+    if gate["sources"] != selected_sources(repo, args.host_profile):
         raise ValueError("PiW source bytes changed after prepare")
     if gate["worker_dry_run"] != worker_dry_run(args):
         raise ValueError("Worker dry-run plan differs")
@@ -256,7 +273,7 @@ def validate_gate(args) -> dict:
             gate["action_sha256"] != sha(action) or
             gate["dataset_lists_sha256"] != quick_inputs(dataset)):
         raise ValueError("PiW input/plan/preflight bytes changed after prepare")
-    if gate["gpus"] != gpu_identity():
+    if gate["gpus"] != gpu_identity(args.host_profile):
         raise ValueError("GPU identity changed after smoke")
     if len(gate["smoke"]) != 2 or any(
             row["log_sha256"] != sha(Path(row["log_path"])) for row in gate["smoke"]):
@@ -270,7 +287,7 @@ def launch_workers(args, phase: str):
     folder.mkdir(parents=True, exist_ok=True)
     children = []
     try:
-        for method, device in CELLS:
+        for method, device in cells(args):
             result = out / "hpeli/seed42" / method / "evaluation.json"
             if result.exists():
                 subprocess.run(worker_command(args, "--cell", method,
@@ -321,28 +338,30 @@ def launch(args):
     with controller_lock(out):
         require_idle_gpus()
         launch_workers(args, "train")
-        for method, _ in CELLS:
+        for method, _ in cells(args):
             if not (out / "hpeli/seed42" / method / "checkpoint.pt").is_file():
                 raise RuntimeError(f"Training returned without checkpoint: {method}")
         launch_workers(args, "evaluate")
-        for method, device in CELLS:
+        for method, device in cells(args):
             subprocess.run(worker_command(args, "--cell", method,
                 "--device", device, "--verify-cell"), check=True)
         atomic_new_json(out / "controller_complete.json",
             dict(profile=PROFILE, gate_sha256=json.loads(gate_path(out).read_text())["gate_sha256"],
-                 methods=[method for method, _ in CELLS], status="COMPLETE_EXPLORATORY_S42"))
+                 methods=[method for method, _ in cells(args)],
+                 status="COMPLETE_EXPLORATORY_S42"))
     print("COMPLETE_EXPLORATORY_S42; two HPE-Li baseline victims evaluated", flush=True)
 
 
 def status(args) -> None:
     out = args.outdir.resolve()
     rows = []
-    for method, device in CELLS:
+    for method, device in cells(args):
         folder = out / "hpeli/seed42" / method
         rows.append(dict(method=method, device=device,
                          checkpoint=(folder / "checkpoint.pt").is_file(),
                          evaluated=(folder / "evaluation.json").is_file()))
-    print(json.dumps(dict(profile=PROFILE, gate=gate_path(out).is_file(),
+    print(json.dumps(dict(profile=PROFILE, host_profile=args.host_profile,
+                          gate=gate_path(out).is_file(),
                           complete=(out / "controller_complete.json").is_file(),
                           cells=rows), indent=2))
 
@@ -354,7 +373,17 @@ def unlock_stale(args) -> None:
     if match is None:
         raise ValueError("Unknown controller lock format")
     pid = int(match.group(1))
-    if Path("/proc").joinpath(str(pid)).exists():
+    if os.name == "nt":
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if handle:
+            kernel.CloseHandle(handle)
+            raise RuntimeError(f"PID {pid} still exists; inspect it before unlocking")
+        if kernel.GetLastError() != 87:  # ERROR_INVALID_PARAMETER: PID not found
+            raise RuntimeError(f"Cannot prove PID {pid} exited; inspect it before unlocking")
+    elif Path("/proc").joinpath(str(pid)).exists():
         raise RuntimeError(f"PID {pid} still exists; inspect it before unlocking")
     require_idle_gpus()
     archived = out / f"controller.lock.stale.{uuid.uuid4().hex[:12]}"
@@ -370,6 +399,7 @@ def main(argv=None):
     parser.add_argument("--action-npy", type=Path)
     parser.add_argument("--reference-archive", type=Path)
     parser.add_argument("--outdir", type=Path, default=OUT_DEFAULT)
+    parser.add_argument("--host-profile", choices=tuple(HOST_CELLS), default="vast2")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--prepare-only", action="store_true")
@@ -387,7 +417,8 @@ def main(argv=None):
     if args.status:
         status(args)
     elif args.dry_run:
-        print(json.dumps(dict(profile=PROFILE, cells=list(map(list, CELLS)),
+        print(json.dumps(dict(profile=PROFILE, host_profile=args.host_profile,
+                              cells=list(map(list, cells(args))),
                               worker=worker_dry_run(args)), indent=2))
         print("DRY_RUN_ONLY; no data hash/CUDA/training/output writes")
     elif args.prepare_only:

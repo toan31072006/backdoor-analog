@@ -31,7 +31,10 @@ from piw_v2_adapter import (PoisonedPairs as A1Pairs, build_trigger as build_a1,
 HERE = Path(__file__).resolve().parent
 PROFILE = 'piw_hpeli_two_extra_s42_portable_v1'
 METHODS = ('smooth_lf_csi', 'tsba_adapted')
-DEVICES = {'smooth_lf_csi': 'cuda:1', 'tsba_adapted': 'cuda:0'}
+HOST_DEVICES = {
+    'vast2': {'smooth_lf_csi': 'cuda:1', 'tsba_adapted': 'cuda:0'},
+    'van4090': {'smooth_lf_csi': 'cuda:0', 'tsba_adapted': 'cuda:0'},
+}
 DOSES = (0., .2, .4, .6, .8, 1.)
 SOURCE_NAMES = tuple(dict.fromkeys((
     'run_piw_hpeli_two_extra.py', 'run_piw_hpeli_clean.py',
@@ -74,9 +77,11 @@ def _paths(args):
 
 def _config(args):
     home, root, output, _archive, action = _paths(args)
-    cfg = v3.configuration(home, output, root, action, device='cpu', jobs_per_gpu=1)
+    jobs = 2 if args.host_profile == 'van4090' else 1
+    cfg = v3.configuration(home, output, root, action, device='cpu', jobs_per_gpu=jobs)
     cfg.pop('device')
-    cfg.update(profile=PROFILE, roles=list(METHODS), jobs_per_gpu=1,
+    cfg.update(profile=PROFILE, roles=list(METHODS), jobs_per_gpu=jobs,
+        host_profile=args.host_profile,
         initialization='independent scratch HPE-Li victims; no v3 warm start',
         selection='fixed final199; TEST only after own final checkpoint',
         status='EXPLORATORY_PIW_HPELI_TWO_ADAPTED_ATTACKS_ONE_SEED',
@@ -87,7 +92,7 @@ def _config(args):
                   warmup_epochs=10, generator_steps=4),
         smooth_lf=dict(eps=.185, seed=42, low_subcarriers=3,
                        low_packets=2),
-        devices=copy.deepcopy(DEVICES))
+        devices=copy.deepcopy(HOST_DEVICES[args.host_profile]))
     return cfg
 
 
@@ -98,7 +103,8 @@ def _plan(args):
         raise FileNotFoundError('Portable HPE-Li v3 reference and action NPY are required')
     result = dict(schema=1, profile=PROFILE, cfg=cfg,
         reference_archive=str(archive), reference_archive_sha256=_sha(archive),
-        action_sha256=_sha(action), methods=list(METHODS), devices=DEVICES,
+        action_sha256=_sha(action), methods=list(METHODS),
+        devices=HOST_DEVICES[args.host_profile],
         sources={name: _sha(HERE / name) for name in SOURCE_NAMES},
         runtime=base.runtime_versions(),
         policy=dict(seed=42, epochs=200, final_epoch=199, batch_size=32,
@@ -344,7 +350,7 @@ def preflight(args):
         input_fingerprint=inputs['fingerprint'], input_stat_fingerprint=stats,
         reference_archive_sha256=candidate['reference_archive_sha256'],
         n_train=len(ds['training']), n_test=len(ds['validation']),
-        methods=list(METHODS), devices=DEVICES,
+        methods=list(METHODS), devices=candidate['devices'],
         note='Full PiW data and portable v3 Clean/A1 artifact audit; CPU only'))
     print('PREFLIGHT_PASS; no training launched', flush=True)
     return candidate
@@ -599,6 +605,7 @@ def _args(argv=None):
     parser.add_argument('--reference-archive', type=Path, required=True)
     parser.add_argument('--action-npy', type=Path, required=True)
     parser.add_argument('--device', default='cuda:0')
+    parser.add_argument('--host-profile', choices=tuple(HOST_DEVICES), default='vast2')
     parser.add_argument('--cell', choices=METHODS)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--dry-run', action='store_true')
