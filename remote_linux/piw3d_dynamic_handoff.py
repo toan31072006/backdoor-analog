@@ -187,7 +187,7 @@ def eligible(pending: list[str], active: dict, cells: dict[str, dict], gpu: str)
         if sum(x['backbone'] == cell['backbone'] for x in on_gpu) >= MAX_PER_BACKBONE:
             continue
         # The exact wave-2 operators were only smoked with two workers/GPU.
-        if cell['wave'] == 2 and len(on_gpu) >= 1:
+        if cell['wave'] == 2 and len(on_gpu) >= 2:
             continue
         return name
     return None
