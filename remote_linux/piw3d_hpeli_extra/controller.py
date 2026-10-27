@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import csv
 import hashlib
 import json
+import ntpath
 import os
 from pathlib import Path
 import re
@@ -131,13 +133,43 @@ def gpu_identity(host_profile: str) -> list[dict]:
     return result
 
 
+def gpu_process_conflicts(output: str, *, windows: bool, own_pid: int) -> list[tuple[int, str]]:
+    """WDDM reports desktop apps as compute apps; only Python blocks on Windows.
+
+    The paired CUDA smoke is the capacity gate after this process check. Linux
+    keeps the stricter policy of refusing every other GPU compute process.
+    """
+    conflicts = []
+    for row in csv.reader(output.splitlines()):
+        if not row:
+            continue
+        if len(row) != 2:
+            raise RuntimeError(f"Cannot classify nvidia-smi process row: {row}")
+        try:
+            pid = int(row[0].strip())
+        except ValueError as error:
+            raise RuntimeError(f"Invalid nvidia-smi process PID: {row[0]}") from error
+        name = row[1].strip()
+        if pid == own_pid:
+            continue
+        if windows:
+            executable = ntpath.basename(name.replace("/", "\\")).lower()
+            if executable in ("", "n/a"):
+                raise RuntimeError(f"Cannot identify GPU process PID={pid}; inspect it")
+            if not executable.startswith(("python", "ipython", "jupyter")):
+                continue
+        conflicts.append((pid, name))
+    return conflicts
+
+
 def require_idle_gpus() -> None:
-    report = subprocess.run(["nvidia-smi", "--query-compute-apps=pid",
+    report = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,process_name",
                              "--format=csv,noheader,nounits"],
                             capture_output=True, text=True, check=True, timeout=30)
-    pids = [line.strip() for line in report.stdout.splitlines() if line.strip()]
-    if pids:
-        raise RuntimeError(f"GPU compute processes are active: {pids}. Wait for the current Vast run to finish")
+    conflicts = gpu_process_conflicts(report.stdout, windows=os.name == "nt",
+                                      own_pid=os.getpid())
+    if conflicts:
+        raise RuntimeError(f"Other GPU compute process(es) are active: {conflicts}; inspect before training")
 
 
 def quick_inputs(dataset: Path) -> dict[str, str]:
