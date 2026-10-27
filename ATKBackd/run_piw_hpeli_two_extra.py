@@ -34,6 +34,7 @@ METHODS = ('smooth_lf_csi', 'tsba_adapted')
 HOST_DEVICES = {
     'vast2': {'smooth_lf_csi': 'cuda:1', 'tsba_adapted': 'cuda:0'},
     'van4090': {'smooth_lf_csi': 'cuda:0', 'tsba_adapted': 'cuda:0'},
+    'van4090_serial': {'smooth_lf_csi': 'cuda:0', 'tsba_adapted': 'cuda:0'},
 }
 DOSES = (0., .2, .4, .6, .8, 1.)
 SOURCE_NAMES = tuple(dict.fromkeys((

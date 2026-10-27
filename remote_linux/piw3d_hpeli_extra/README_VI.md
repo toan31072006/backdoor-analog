@@ -1,5 +1,28 @@
 # PiW3D HPE-Li: Smooth-LF-CSI và TSBA adapted, seed 42
 
+## Chạy lần lượt trên máy Vân khi TDBA còn dùng GPU
+
+Chế độ `-Serial` chạy một victim HPE-Li mỗi lần trên RTX 4090: Smooth-LF-CSI
+train và đánh giá xong rồi mới đến TSBA adapted. Nó dùng run riêng
+`runs\piw_hpeli_two_extra_s42_4090_serial_v1`, không sửa run hai job cũ.
+Nếu TDBA `eval_offsets.py --strategies uniform` còn dùng GPU, truyền PID GPU
+của nó bằng `-AllowTDBAPid`; controller xác minh command line của PID đó và
+vẫn từ chối các Python GPU process khác. Nếu TDBA đã xong, bỏ tham số PID.
+
+```powershell
+$S = "$env:USERPROFILE\code\remote_tools\Start-PiWHPELiTwoExtra4090.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Prepare -Serial -AllowTDBAPid 46416
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Launch -Serial -AllowTDBAPid 46416
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Status -Serial -AllowTDBAPid 46416
+```
+
+`46416` chỉ là PID ở phiên đã kiểm tra, không phải giá trị cố định cho lần chạy
+khác. `Prepare` kiểm tra dữ liệu và chạy smoke physical batch 32 lần lượt trên
+GPU đang có tải; nếu thiếu bộ nhớ, nó dừng mà không train. `Launch` cần dùng
+cùng PID đã truyền lúc Prepare để gate khớp. Nếu PID đã thoát sau Prepare,
+vẫn truyền cùng số PID cho Launch; controller chỉ cho phép PID đó nếu nó còn
+hiện trong danh sách GPU và đúng lệnh TDBA.
+
 Run này huấn luyện hai victim HPE-Li độc lập trên Person-in-WiFi-3D: `smooth_lf_csi` và `tsba_adapted`. Mỗi victim dùng 200 epoch (cuối là epoch 199), batch 32, AdamW `lr=0.001`, cùng train/test, poison identities, dose và target hai khớp chân của run HPE-Li v3 đã hoàn tất. Clean v3 chỉ được tải để làm đối chứng khi đánh giá; không dùng để khởi tạo victim. Đây là **thử nghiệm thích nghi một seed**, không phải bảng đầy đủ của bài báo gốc.
 
 ## Chạy trên máy Vân, một RTX 4090

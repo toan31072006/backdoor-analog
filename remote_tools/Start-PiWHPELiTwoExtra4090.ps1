@@ -18,14 +18,23 @@ param(
     [string]$ReferenceArchive = '',
     [string]$Outdir = '',
     [string]$EnvironmentPrefix = '',
-    [string]$CodeRoot = ''
+    [string]$CodeRoot = '',
+    [switch]$Serial,
+    [int]$AllowTDBAPid = 0
 )
 $ErrorActionPreference = 'Stop'
+if ($AllowTDBAPid -lt 0 -or ($AllowTDBAPid -gt 0 -and !$Serial)) {
+    throw 'AllowTDBAPid requires -Serial and a positive PID.'
+}
 if (!$DatasetRoot) { $DatasetRoot = Join-Path $DataHome 'datasets\Person-in-WiFi-3D_processed_v1' }
 if (!$ActionNpy) { $ActionNpy = Join-Path $DataHome 'actions\data_bend.npy' }
 if (!$ReferenceDir) { $ReferenceDir = Join-Path $DataHome 'runs\piw_hpeli_body_axis_s42_lr001_v3' }
 if (!$ReferenceArchive) { $ReferenceArchive = Join-Path $DataHome 'references\piw_hpeli_v3_clean_reference.zip' }
-if (!$Outdir) { $Outdir = Join-Path $DataHome 'runs\piw_hpeli_two_extra_s42_4090_v1' }
+if (!$Outdir) {
+    $runName = if ($Serial) { 'piw_hpeli_two_extra_s42_4090_serial_v1' }
+               else { 'piw_hpeli_two_extra_s42_4090_v1' }
+    $Outdir = Join-Path $DataHome (Join-Path 'runs' $runName)
+}
 if (!$EnvironmentPrefix) { $EnvironmentPrefix = Join-Path $DataHome 'envs\dose-backdoor' }
 if (!$CodeRoot) { $CodeRoot = Split-Path -Parent $PSScriptRoot }
 foreach ($name in @('DataHome','DatasetRoot','ActionNpy','ReferenceDir',
@@ -65,10 +74,11 @@ if ($Mode -eq 'Prepare') { Export-ReferenceIfMissing }
 if ($Mode -ne 'Status' -and !(Test-Path -LiteralPath $ReferenceArchive -PathType Leaf)) {
     throw "Reference ZIP missing: $ReferenceArchive. Run -Mode Prepare."
 }
+$profile = if ($Serial) { 'van4090_serial' } else { 'van4090' }
 $baseArgs = @('-u',$controller,'--repo-dir',$CodeRoot,'--data-home',$DataHome,
               '--dataset-root',$DatasetRoot,'--action-npy',$ActionNpy,
               '--reference-archive',$ReferenceArchive,'--outdir',$Outdir,
-              '--host-profile','van4090')
+              '--host-profile',$profile,'--allow-tdba-pid',"$AllowTDBAPid")
 $flags = @{DryRun='--dry-run';Prepare='--prepare-only';CheckOnly='--check-only';
            Status='--status';UnlockStale='--unlock-stale'}
 if ($Mode -ne 'Launch') {

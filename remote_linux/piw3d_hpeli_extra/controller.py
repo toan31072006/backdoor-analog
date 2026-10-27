@@ -1,8 +1,8 @@
 """Controller for two exploratory HPE-Li / PiW3D attack controls.
 
 The scientific worker is ATKBackd/run_piw_hpeli_two_extra.py. This module
-only validates a fixed two-GPU execution and schedules its two independent
-seed-42 cells. No model, attack, target, optimizer or metric is defined here.
+validates the host and schedules two independent seed-42 cells, concurrently
+or one at a time. No model, attack, target, optimizer or metric is defined here.
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ PROFILE = "EXPLORATORY_PIW3D_HPELI_TWO_EXTRA_S42_V1"
 HOST_CELLS = {
     "vast2": (("tsba_adapted", "cuda:0"), ("smooth_lf_csi", "cuda:1")),
     "van4090": (("tsba_adapted", "cuda:0"), ("smooth_lf_csi", "cuda:0")),
+    "van4090_serial": (("smooth_lf_csi", "cuda:0"), ("tsba_adapted", "cuda:0")),
 }
 REPO_DEFAULT = Path(__file__).resolve().parents[2]
 HOME_DEFAULT = Path("/workspace/piw3d")
@@ -106,7 +107,7 @@ def selected_sources(repo: Path, host_profile: str) -> dict[str, str]:
     selected = (repo / WORKER,
                 repo / "remote_linux/piw3d_hpeli_extra/controller.py",
                 repo / "remote_linux/piw3d_hpeli_extra/start.sh")
-    if host_profile == "van4090":
+    if host_profile.startswith("van4090"):
         selected += (repo / "remote_tools/Start-PiWHPELiTwoExtra4090.ps1",
                      repo / "remote_tools/Export-PiWHPELiV3CleanReference.py")
     if any(not path.is_file() or path.is_symlink() for path in selected):
@@ -116,9 +117,10 @@ def selected_sources(repo: Path, host_profile: str) -> dict[str, str]:
 
 def gpu_identity(host_profile: str) -> list[dict]:
     import torch
-    expected_count = 1 if host_profile == "van4090" else 2
-    expected_name = "4090" if host_profile == "van4090" else "5090"
-    min_bytes = (22 if host_profile == "van4090" else 30) * 2**30
+    van = host_profile.startswith("van4090")
+    expected_count = 1 if van else 2
+    expected_name = "4090" if van else "5090"
+    min_bytes = (22 if van else 30) * 2**30
     if not torch.cuda.is_available() or torch.cuda.device_count() != expected_count:
         raise RuntimeError(f"{host_profile} needs exactly {expected_count} visible CUDA GPU(s)")
     result = []
@@ -162,14 +164,39 @@ def gpu_process_conflicts(output: str, *, windows: bool, own_pid: int) -> list[t
     return conflicts
 
 
-def require_idle_gpus() -> None:
+def tdba_command_line(pid: int) -> str:
+    if os.name != "nt":
+        raise RuntimeError("TDBA coexistence is only available on Van's Windows host")
+    command = ("Get-CimInstance Win32_Process -Filter 'ProcessId={0}' | "
+               "Select-Object -ExpandProperty CommandLine").format(pid)
+    report = subprocess.run(["powershell", "-NoProfile", "-Command", command],
+                            capture_output=True, text=True, check=True, timeout=30)
+    return report.stdout.strip()
+
+
+def require_idle_gpus(args=None) -> None:
     report = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,process_name",
                              "--format=csv,noheader,nounits"],
                             capture_output=True, text=True, check=True, timeout=30)
     conflicts = gpu_process_conflicts(report.stdout, windows=os.name == "nt",
                                       own_pid=os.getpid())
+    allowed_pid = getattr(args, "allow_tdba_pid", 0) if args is not None else 0
+    if allowed_pid:
+        if getattr(args, "host_profile", None) != "van4090_serial":
+            raise RuntimeError("TDBA coexistence requires the serial 4090 profile")
+        matching = [(pid, name) for pid, name in conflicts if pid == allowed_pid]
+        if matching:
+            line = tdba_command_line(allowed_pid).lower()
+            if not ("eval_offsets.py" in line and "--strategies uniform" in line):
+                raise RuntimeError(f"Allowed PID {allowed_pid} is not the expected TDBA job")
+            conflicts = [(pid, name) for pid, name in conflicts if pid != allowed_pid]
     if conflicts:
         raise RuntimeError(f"Other GPU compute process(es) are active: {conflicts}; inspect before training")
+
+
+def batches(args):
+    selected = cells(args)
+    return tuple((cell,) for cell in selected) if args.host_profile == "van4090_serial" else (selected,)
 
 
 def quick_inputs(dataset: Path) -> dict[str, str]:
@@ -205,9 +232,16 @@ def smoke(args, attempt: str) -> list[dict]:
     out = args.outdir.resolve()
     folder = out / "smoke" / attempt
     folder.mkdir(parents=True, exist_ok=False)
+    records = []
+    for batch in batches(args):
+        records.extend(smoke_batch(args, folder, batch))
+    return records
+
+
+def smoke_batch(args, folder: Path, batch) -> list[dict]:
     children = []
     try:
-        for method, device in cells(args):
+        for method, device in batch:
             log = folder / f"{method}.log"
             with log.open("x", encoding="utf-8") as stream:
                 child = subprocess.Popen(
@@ -258,7 +292,7 @@ def prepare(args) -> None:
     with controller_lock(out):
         if gate_path(out).exists():
             raise ValueError("Gate already exists; use --check-only or choose a new output")
-        require_idle_gpus()
+        require_idle_gpus(args)
         identity = gpu_identity(args.host_profile)
         dry = worker_dry_run(args)
         subprocess.run(worker_command(args, "--preflight-only"), check=True)
@@ -276,6 +310,7 @@ def prepare(args) -> None:
                     dataset_lists_sha256=quick_inputs(dataset),
                     gpus=identity, smoke_attempt=attempt, smoke=records,
                     policy=dict(seed=42, jobs_per_gpu=2 if args.host_profile == "van4090" else 1,
+                                allowed_tdba_pid=args.allow_tdba_pid,
                                 physical_batch=32,
                                 epochs=200, final_epoch=199, no_automatic_retry=True,
                                 no_batch_fallback=True, test_checkpoint_selection=False,
@@ -295,6 +330,8 @@ def validate_gate(args) -> dict:
     if (gate.get("profile") != PROFILE or gate.get("host_profile") != args.host_profile or
             gate.get("cells") != list(map(list, cells(args)))):
         raise ValueError("Controller profile/cells differ")
+    if gate["policy"].get("allowed_tdba_pid") != args.allow_tdba_pid:
+        raise ValueError("Allowed TDBA PID differs from prepared gate")
     if gate["sources"] != selected_sources(repo, args.host_profile):
         raise ValueError("PiW source bytes changed after prepare")
     if gate["worker_dry_run"] != worker_dry_run(args):
@@ -317,9 +354,15 @@ def launch_workers(args, phase: str):
     out = args.outdir.resolve()
     folder = out / "logs" / phase
     folder.mkdir(parents=True, exist_ok=True)
+    for batch in batches(args):
+        launch_batch(args, phase, folder, batch)
+
+
+def launch_batch(args, phase: str, folder: Path, batch):
+    out = args.outdir.resolve()
     children = []
     try:
-        for method, device in cells(args):
+        for method, device in batch:
             result = out / "hpeli/seed42" / method / "evaluation.json"
             if result.exists():
                 subprocess.run(worker_command(args, "--cell", method,
@@ -368,15 +411,27 @@ def launch(args):
     _, _, _, _, out = paths(args)
     validate_gate(args)
     with controller_lock(out):
-        require_idle_gpus()
-        launch_workers(args, "train")
-        for method, _ in cells(args):
-            if not (out / "hpeli/seed42" / method / "checkpoint.pt").is_file():
-                raise RuntimeError(f"Training returned without checkpoint: {method}")
-        launch_workers(args, "evaluate")
-        for method, device in cells(args):
-            subprocess.run(worker_command(args, "--cell", method,
-                "--device", device, "--verify-cell"), check=True)
+        require_idle_gpus(args)
+        if args.host_profile == "van4090_serial":
+            for batch in batches(args):
+                method, device = batch[0]
+                for phase in ("train", "evaluate"):
+                    folder = out / "logs" / phase
+                    folder.mkdir(parents=True, exist_ok=True)
+                    launch_batch(args, phase, folder, batch)
+                    if phase == "train" and not (out / "hpeli/seed42" / method / "checkpoint.pt").is_file():
+                        raise RuntimeError(f"Training returned without checkpoint: {method}")
+                subprocess.run(worker_command(args, "--cell", method,
+                    "--device", device, "--verify-cell"), check=True)
+        else:
+            launch_workers(args, "train")
+            for method, _ in cells(args):
+                if not (out / "hpeli/seed42" / method / "checkpoint.pt").is_file():
+                    raise RuntimeError(f"Training returned without checkpoint: {method}")
+            launch_workers(args, "evaluate")
+            for method, device in cells(args):
+                subprocess.run(worker_command(args, "--cell", method,
+                    "--device", device, "--verify-cell"), check=True)
         atomic_new_json(out / "controller_complete.json",
             dict(profile=PROFILE, gate_sha256=json.loads(gate_path(out).read_text())["gate_sha256"],
                  methods=[method for method, _ in cells(args)],
@@ -417,7 +472,7 @@ def unlock_stale(args) -> None:
             raise RuntimeError(f"Cannot prove PID {pid} exited; inspect it before unlocking")
     elif Path("/proc").joinpath(str(pid)).exists():
         raise RuntimeError(f"PID {pid} still exists; inspect it before unlocking")
-    require_idle_gpus()
+    require_idle_gpus(args)
     archived = out / f"controller.lock.stale.{uuid.uuid4().hex[:12]}"
     os.replace(lock, archived)
     print(f"STALE_LOCK_ARCHIVED {archived}", flush=True)
@@ -432,6 +487,8 @@ def main(argv=None):
     parser.add_argument("--reference-archive", type=Path)
     parser.add_argument("--outdir", type=Path, default=OUT_DEFAULT)
     parser.add_argument("--host-profile", choices=tuple(HOST_CELLS), default="vast2")
+    parser.add_argument("--allow-tdba-pid", type=int, default=0,
+                        help="Only with van4090_serial: allow this verified TDBA GPU PID")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--prepare-only", action="store_true")
@@ -440,6 +497,8 @@ def main(argv=None):
     mode.add_argument("--status", action="store_true")
     mode.add_argument("--unlock-stale", action="store_true")
     args = parser.parse_args(argv)
+    if args.allow_tdba_pid < 0 or (args.allow_tdba_pid and args.host_profile != "van4090_serial"):
+        raise ValueError("--allow-tdba-pid requires van4090_serial and a positive PID")
     args.dataset_root = args.dataset_root or args.data_home / "datasets/Person-in-WiFi-3D_processed_v1"
     args.action_npy = args.action_npy or args.data_home / "actions/data_bend.npy"
     args.reference_archive = (args.reference_archive or
