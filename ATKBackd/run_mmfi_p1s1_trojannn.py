@@ -14,6 +14,7 @@ import ntpath
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -42,7 +43,7 @@ def configuration(home):
     return cfg
 
 
-def build_plan(home, outdir, clean_checkpoint, device='cuda:0'):
+def build_plan(home, outdir, clean_checkpoint, device='cuda:0', allow_concurrent_a1=False):
     from attack.trojannn_mmfi import TrojanNNConfig
     from dataclasses import asdict
     home, outdir, reference = (Path(p).resolve() for p in (home, outdir, clean_checkpoint))
@@ -71,6 +72,15 @@ def build_plan(home, outdir, clean_checkpoint, device='cuda:0'):
                 'Native patch intensity and realized noise are not equal-budget with A1.',
                 'Historical Clean lacks training-time input hashes; present inputs are audited, not retrospectively proven.',
                 'One seed; no across-seed SD or full-table completion claim.']))
+    plan['execution_policy'] = dict(
+        mode='trojannn_plus_exact_p3s3_a1' if allow_concurrent_a1 else 'exclusive',
+        max_trojannn_workers=1, max_total_training_workers=2 if allow_concurrent_a1 else 1,
+        authorized_a1_runner=ntpath.join(ntpath.dirname(str(home)), 'code', 'ATKBackd',
+                                       'run_mmfi_p3_splits.py') if allow_concurrent_a1 else None,
+        authorized_a1_outdirs=[str(home/'runs'/name) for name in (
+            'mmfi_p3s3_hpeli_a1_s42_4090_with_sig_v1',
+            'mmfi_p3s3_hpeli_a1_s42_4090_v1')] if allow_concurrent_a1 else [],
+        note='Execution sharing only; A1 is never started, stopped, resumed, or modified here.')
     plan['plan_sha256'] = digest(plan)
     return plan
 
@@ -142,7 +152,167 @@ def execution():
     return _setup_execution('cuda:0')
 
 
-def classify_gpu(report, windows_names=None, own_pid=None):
+def parse_windows_commandline(text):
+    """Strict subset emitted by our Windows launcher, not a shell interpreter."""
+    token = r'(?:"[^"\r\n]*"|[^\s"\r\n]+)'
+    if (not isinstance(text, str) or any(ord(c) < 32 for c in text)
+            or not re.fullmatch(r'\s*'+token+r'(?:\s+'+token+r')*\s*', text)):
+        raise ValueError('Cannot parse exact Windows command line')
+    result = [m.group()[1:-1] if m.group().startswith('"') else m.group()
+              for m in re.finditer(token, text)]
+    if any(not value for value in result):
+        raise ValueError('Cannot parse empty Windows argument')
+    return result
+
+
+def _windows_path(value):
+    return ntpath.normcase(ntpath.normpath(str(value).replace('/', '\\')))
+
+
+def _a1_environments(plan):
+    return {_windows_path(ntpath.join(plan['home'], suffix)) for suffix in (
+        r'envs\dose-backdoor\python.exe', r'envs\mmfi-p3\Scripts\python.exe')}
+
+
+def a1_peer(record, plan):
+    """Match only the historical A1-only launch, not arbitrary Python/SIG work.
+
+    This matches a process record; authorized_a1_peers also validates its
+    executable/venv ancestry. The guard prevents accidental contention and is
+    not an adversarial process-authentication boundary.
+    """
+    if plan.get('execution_policy', {}).get('mode') != 'trojannn_plus_exact_p3s3_a1':
+        return False
+    try:
+        if (type(record.get('ProcessId')) is not int or record['ProcessId'] <= 0
+                or type(record.get('ParentProcessId')) is not int
+                or record['ParentProcessId'] < 0
+                or str(record.get('Name', '')).lower() != 'python.exe'):
+            return False
+        argv = parse_windows_commandline(record.get('CommandLine'))
+        executable = record.get('ExecutablePath')
+        if (len(argv) != 17 or argv[1] != '-u' or not executable
+                or not ntpath.isabs(argv[0]) or not ntpath.isabs(executable)
+                or ntpath.basename(argv[0]).lower() != 'python.exe'
+                or ntpath.basename(executable).lower() != 'python.exe'
+                or _windows_path(argv[0]) != _windows_path(executable)):
+            return False
+        expected_runner = ntpath.join(ntpath.dirname(plan['home']), 'code', 'ATKBackd',
+                                      'run_mmfi_p3_splits.py')
+        if _windows_path(argv[2]) != _windows_path(expected_runner):
+            return False
+        names = argv[3::2]
+        if len(set(names)) != len(names):
+            return False
+        options = dict(zip(names, argv[4::2]))
+        expected = {'--data-home', '--outdir', '--device', '--workers',
+                    '--jobs-per-gpu', '--mode', '--_cell'}
+        if set(options) != expected:
+            return False
+        allowed_outputs = {ntpath.join(plan['home'], 'runs', n) for n in (
+            'mmfi_p3s3_hpeli_a1_s42_4090_with_sig_v1',
+            'mmfi_p3s3_hpeli_a1_s42_4090_v1')}
+        return (_windows_path(options['--data-home']) == _windows_path(plan['home'])
+            and _windows_path(options['--outdir']) in {_windows_path(p) for p in allowed_outputs}
+            and options['--device'] == 'cuda:0' and options['--workers'] == '0'
+            and options['--jobs-per-gpu'] == '1' and options['--mode'] == 'launch'
+            and options['--_cell'] == 'p3_s3_a1')
+    except (ValueError, TypeError, KeyError):
+        return False
+
+
+def authorized_a1_peers(records, plan):
+    """At most one A1 worker, including its ordinary Windows venv proxy chain."""
+    candidates = {r['ProcessId']: r for r in (records or []) if a1_peer(r, plan)}
+    if not candidates:
+        return set()
+    roots = [r for r in candidates.values() if r['ParentProcessId'] not in candidates]
+    if len(roots) != 1:
+        return set()
+    root = roots[0]
+    root_argv = parse_windows_commandline(root['CommandLine'])
+    envs = _a1_environments(plan)
+    if (_windows_path(root_argv[0]) not in envs
+            or _windows_path(root['ExecutablePath']) != _windows_path(root_argv[0])):
+        return set()
+    # The same approved output must be used by every proxy/worker in the chain.
+    root_options = dict(zip(root_argv[3::2], root_argv[4::2]))
+    children = {}
+    for record in candidates.values():
+        children.setdefault(record['ParentProcessId'], []).append(record['ProcessId'])
+        argv = parse_windows_commandline(record['CommandLine'])
+        options = dict(zip(argv[3::2], argv[4::2]))
+        if any((_windows_path(options[k]) != _windows_path(root_options[k]))
+               if k in ('--data-home', '--outdir') else options[k] != root_options[k]
+               for k in root_options):
+            return set()
+        if (_windows_path(argv[0]) not in envs
+                and _windows_path(argv[0]) != _windows_path(record['ExecutablePath'])):
+            return set()
+    if any(len(ids) > 1 for parent, ids in children.items() if parent in candidates):
+        return set()
+    seen = set()
+    current = root['ProcessId']
+    while current not in seen:
+        seen.add(current)
+        descendants = children.get(current, [])
+        if not descendants:
+            break
+        current = descendants[0]
+    return seen if seen == set(candidates) else set()
+
+
+def pending_experiment_conflicts(records, plan, own_pid):
+    """Also see known workers still loading on CPU, before their CUDA allocation.
+
+    This is a snapshot/coordination guard, not an OS resource reservation: a
+    separately launched external job can always appear after this check.
+    """
+    records = {r.get('ProcessId'): r for r in (records or [])}
+    exempt = authorized_a1_peers(list(records.values()), plan) | {own_pid}
+    # A normal Windows venv may keep one launcher ancestor. Exempt only that
+    # same exact invocation, not another TrojanNN output/worker or its children.
+    current = records.get(own_pid)
+    if current:
+        try:
+            own_args = parse_windows_commandline(current.get('CommandLine'))
+            own_script = _windows_path(__file__)
+            while (len(own_args) > 2 and own_args[1] == '-u'
+                   and _windows_path(own_args[2]) == own_script):
+                parent = records.get(current.get('ParentProcessId'))
+                if not parent or parent['ProcessId'] in exempt:
+                    break
+                args = parse_windows_commandline(parent.get('CommandLine'))
+                if (args[1:] != own_args[1:]
+                        or str(parent.get('Name', '')).lower() != 'python.exe'):
+                    break
+                exempt.add(parent['ProcessId'])
+                current = parent
+        except (ValueError, TypeError, KeyError):
+            pass
+    conflicts = []
+    for pid, record in records.items():
+        if pid in exempt or str(record.get('Name', '')).lower() not in ('python.exe', 'pythonw.exe'):
+            continue
+        line = str(record.get('CommandLine') or '')
+        try:
+            args = parse_windows_commandline(line)
+        except ValueError:
+            args = []
+        known = False
+        for value in args[1:]:
+            name = ntpath.basename(value).lower()
+            if (name.endswith('.py') and name.startswith(('run_mmfi', 'run_piw', 'run_a1', 'run_hpeli'))
+                    or name in ('train.py', 'train_backdoor.py', 'eval_offsets.py')
+                    or (name == 'controller.py' and 'piw_metafi_remaining_3090' in value.lower())):
+                known = True
+                break
+        if known:
+            conflicts.append((pid, line))
+    return conflicts
+
+
+def classify_gpu(report, windows_names=None, own_pid=None, *, plan=None, windows_processes=None):
     """Fail closed for unknown/compute names; known Windows desktop peers only.
 
     Process-name checks prevent accidental contention, not adversarial spoofing.
@@ -154,6 +324,7 @@ def classify_gpu(report, windows_names=None, own_pid=None):
         'crossdeviceresume.exe','copilot.exe','copilotapp.exe','copilotapphost.exe',
         'phoneexperiencehost.exe','teams.exe','ms-teams.exe','teamviewer.exe','logonui.exe',
         'anydesk.exe','system'}
+    permitted = authorized_a1_peers(windows_processes, plan) if plan else set()
     conflicts = []
     for row in csv.reader(report.splitlines()):
         if not row: continue
@@ -161,6 +332,7 @@ def classify_gpu(report, windows_names=None, own_pid=None):
             raise ValueError(f'Cannot parse GPU process: {row}')
         pid, name = int(row[0]), row[1].strip()
         if pid == own_pid: continue
+        if windows_names is not None and pid in permitted: continue
         if windows_names is not None:
             name = windows_names.get(pid, name)
             if ntpath.basename(name.replace('/','\\')).lower() in desktop: continue
@@ -168,20 +340,27 @@ def classify_gpu(report, windows_names=None, own_pid=None):
     return conflicts
 
 
-def require_idle():
+def require_idle(plan=None):
     report = subprocess.run(['nvidia-smi','--query-compute-apps=pid,process_name',
         '--format=csv,noheader,nounits'],capture_output=True,text=True,check=True,timeout=30)
     names = None
+    records = None
     if os.name == 'nt':
-        script = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); @(Get-CimInstance Win32_Process | Select-Object ProcessId,Name) | ConvertTo-Json -Compress"
+        script = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); @(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine) | ConvertTo-Json -Compress"
         result = subprocess.run(['powershell','-NoProfile','-Command',script],
             capture_output=True,encoding='utf-8',check=True,timeout=30)
         records = json.loads(result.stdout.lstrip('\ufeff'))
         if not isinstance(records,list): records=[records]
         names = {int(r['ProcessId']):r['Name'] for r in records}
-    conflicts = classify_gpu(report.stdout,names,os.getpid())
+    conflicts = classify_gpu(report.stdout,names,os.getpid(),plan=plan,windows_processes=records)
+    if plan is not None:
+        conflicts.extend(pending_experiment_conflicts(records,plan,os.getpid()))
     if conflicts:
         raise ValueError(f'Other/unknown GPU work active; no process stopped: {conflicts}')
+    permitted = authorized_a1_peers(records, plan) if plan else set()
+    if permitted:
+        print(f'AUTHORIZED_A1_PEER PIDs={sorted(permitted)}; left running. '
+              'At most one TrojanNN + one A1; no SIG/other workers.',flush=True)
 
 
 def trigger_binding(plan, env):
@@ -223,7 +402,7 @@ def prepare(plan):
     from attack.trojannn_mmfi import optimize_trigger
     from attack.poison import collate
     from train_backdoor import _victim_update
-    audit(plan); env=execution(); root=Path(plan['outdir'])
+    audit(plan); require_idle(plan); env=execution(); root=Path(plan['outdir'])
     if (root/'gpu_gate.json').exists():
         gate_check(plan)
         print('ALREADY_PREPARED; frozen trigger/gate retained; no training',flush=True)
@@ -236,6 +415,7 @@ def prepare(plan):
             trigger=trigger.state_dict(),provenance=trigger.provenance()))
         del model
     trigger=load_trigger(plan,env)
+    require_idle(plan)
     model,opt,pairs=components(plan,trigger)
     selected=sorted(pairs.poison_idx)[:4]
     selected += [i for i in range(len(pairs)) if i not in pairs.poison_idx][:28]
@@ -429,9 +609,13 @@ def main(argv=None):
     parser.add_argument('--clean-checkpoint',type=Path,required=True)
     parser.add_argument('--device',default='cuda:0')
     parser.add_argument('--mode',choices=('prepare','check','launch','status','export'),required=True)
+    parser.add_argument('--allow-concurrent-a1',action='store_true',
+        help='Permit only the existing historical MM-Fi P3S3 A1-only peer; no SIG/other work.')
     args=parser.parse_args(argv)
-    out=args.outdir or args.data_home/'runs/mmfi_p1s1_hpeli_trojannn_s42_v1'
-    plan=build_plan(args.data_home,out,args.clean_checkpoint,args.device)
+    run_name = ('mmfi_p1s1_hpeli_trojannn_s42_with_a1_v1' if args.allow_concurrent_a1
+                else 'mmfi_p1s1_hpeli_trojannn_s42_v1')
+    out=args.outdir or args.data_home/'runs'/run_name
+    plan=build_plan(args.data_home,out,args.clean_checkpoint,args.device,args.allow_concurrent_a1)
     root=Path(plan['outdir'])
     if args.mode=='status':
         import torch
@@ -443,12 +627,14 @@ def main(argv=None):
     if args.mode=='export': export(plan); return
     from run_mmfi_tables import _cell_lock
     with _cell_lock(Path(plan['home'])/'tools/trojannn_gpu_locks/cuda0'), _cell_lock(root/'.controller'):
-        require_idle()
+        require_idle(plan)
         if shutil.disk_usage(plan['home']).free<5*2**30: raise ValueError('Need at least 5GiB free')
         if args.mode=='prepare': prepare(plan)
         elif args.mode=='check': gate_check(plan); print('VERIFIED_PRELAUNCH_GATE; no training launched')
         else:
-            env=gate_check(plan); train(plan,env); evaluate(plan,env); export(plan)
+            env=gate_check(plan)
+            require_idle(plan); train(plan,env)
+            require_idle(plan); evaluate(plan,env); export(plan)
 
 
 if __name__=='__main__':

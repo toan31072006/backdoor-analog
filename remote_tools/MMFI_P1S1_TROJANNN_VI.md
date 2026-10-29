@@ -1,7 +1,9 @@
 # TrojanNN adapted: HPE-Li / MM-Fi P1S1 / seed 42
 
-Chỉ chạy **P1S1**, một job trên `cuda:0`. Không chạy P3S3, không đụng các
-job A1/SIG/MetaFi hoặc kết quả lịch sử. Đây là một hàng bổ sung cho comparison,
+Chỉ chạy **P1S1**, một TrojanNN job trên `cuda:0`. Không chạy P3S3 bằng runner này.
+Mặc định GPU độc quyền; cờ `-AllowConcurrentA1` chỉ cho phép chia sẻ với đúng
+peer A1 HPE-Li/MM-Fi P3S3 đã kiểm tra. Không dừng/khởi động lại/sửa A1, SIG,
+MetaFi hoặc kết quả lịch sử. Đây là một hàng bổ sung cho comparison,
 không phải tuyên bố đã hoàn thành cả bảng hay đã có kết quả TrojanNN.
 
 ## Material Passport
@@ -10,6 +12,8 @@ không phải tuyên bố đã hoàn thành cả bảng hay đã có kết quả
 - Status: implementation/CPU verification; không phải full-data/CUDA result.
 - Phạm vi được duyệt: code + test + push; người dùng tự Prepare/Launch.
 - T1 extension riêng, chưa gộp/thay thế các hàng hoặc kết quả lịch sử.
+- Cập nhật execution 2026-10-30: người dùng cho phép một TrojanNN P1S1 chạy
+  cùng một A1 P3S3 trên Vân4090. Không đổi recipe/split/seed/trigger/metric.
 
 ## Điều kiện
 
@@ -22,9 +26,17 @@ không phải tuyên bố đã hoàn thành cả bảng hay đã có kết quả
   `C:\Users\Van\backdooranalog\runs\mmfi_three_tables_4090_win_fresh_v1\seed42\clean\checkpoint.pt`.
   Nếu không có, chỉ truyền đường dẫn checkpoint đúng bằng `-CleanCheckpoint`;
   không lấy checkpoint A1, PiW3D, P3S3 hay backbone khác thay thế.
-- GPU chưa chạy một job tính toán khác. Không tắt AnyDesk/TeamViewer để chạy;
+- Mặc định GPU chưa chạy một job tính toán khác. Chỉ khi truyền rõ
+  `-AllowConcurrentA1`, runner mới cho phép đúng peer A1 đã nhận diện bằng
+  executable/command line/device/output và quan hệ parent/proxy; không chấp nhận SIG hay process
+  Python khác. Cờ phải giống nhau ở Prepare/CheckOnly/Launch/Status/Export.
+  Các worker thí nghiệm đã nhận diện còn nạp dữ liệu trên CPU cũng bị kiểm tra,
+  không chỉ process đã cấp phát CUDA trong `nvidia-smi`. Đây là kiểm tra snapshot,
+  không thể ngăn một chương trình bên ngoài tự khởi chạy thêm sau đó.
+  Không tắt AnyDesk/TeamViewer để chạy;
   runner phân biệt ứng dụng desktop với công việc CUDA và chặn process chưa xác định.
-  Helper không kill process, không có cờ bỏ qua guard.
+  Helper không kill process, không có cờ bỏ qua guard tổng quát. Hai job không
+  bảo đảm vừa VRAM hoặc nhanh hơn; mỗi victim vẫn physical batch32/FP32/workers0.
 
 TrojanNN là **model-informed adaptation**: đọc clean reference để chọn neuron
 và tối ưu một trigger phổ quát. Sau đó đóng băng trigger, huấn luyện victim
@@ -63,19 +75,24 @@ Runner kiểm tra recipe/fingerprint/state/SHA và audit toàn bộ dữ liệu 
 
 ## Lệnh trên PowerShell máy Vân
 
-Nếu repo nằm ở `C:\Users\Van\code`, chạy cả block này. Nếu repo ở chỗ khác,
-chỉ sửa `$Repo` cho đúng. Không pull vào thư mục có thay đổi chưa lưu mà không
-kiểm tra; `--ff-only` sẽ dừng nếu không fast-forward được. Không cập nhật source
-checkout đang được một job sử dụng; chờ job đó xong hoặc dùng checkout riêng.
+Chạy bằng checkout riêng **`C:\Users\Van\code_trojannn`**, không `git pull` vào
+`C:\Users\Van\code` mà A1 hiện tại đang dùng. Nếu checkout TrojanNN đã tồn tại,
+`--ff-only` sẽ dừng nếu không fast-forward được; không reset/stash/xóa local edits.
+Log A1 cuối được gửi có epoch27/49; ảnh GPU nhàn rỗi và log cũ không chứng minh
+A1 còn sống. Kiểm tra process/log chỉ đọc trước, không tự khởi động lại A1.
 
 ```powershell
 & {
     $ErrorActionPreference = 'Stop'
-    $Repo = 'C:\Users\Van\code'
-    git -C $Repo pull --ff-only
-    if ($LASTEXITCODE -ne 0) { throw 'Pull loi; dung.' }
+    $Repo = 'C:\Users\Van\code_trojannn'
+    if (Test-Path -LiteralPath $Repo) {
+        git -C $Repo pull --ff-only
+    } else {
+        git clone https://github.com/toan31072006/backdoor-analog.git $Repo
+    }
+    if ($LASTEXITCODE -ne 0) { throw 'Git loi; dung.' }
     $S = Join-Path $Repo 'remote_tools\Start-MMFiP1S1TrojanNN.ps1'
-    powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Prepare
+    powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Prepare -AllowConcurrentA1
     if ($LASTEXITCODE -ne 0) { throw 'Prepare loi; chua Launch.' }
 }
 ```
@@ -84,20 +101,21 @@ checkout đang được một job sử dụng; chờ job đó xong hoặc dùng 
 CUDA; **chưa train full victim**. Xem output/receipt rồi mới chạy:
 
 ```powershell
-$S = 'C:\Users\Van\code\remote_tools\Start-MMFiP1S1TrojanNN.ps1'
-powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Launch
+$S = 'C:\Users\Van\code_trojannn\remote_tools\Start-MMFiP1S1TrojanNN.ps1'
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Launch -AllowConcurrentA1
 ```
 
 Nếu dùng Python hoặc clean checkpoint ở vị trí khác, dùng **cùng bộ tham số**
 cho Prepare/Launch/Status/Export, ví dụ:
 
 ```powershell
-$S = 'C:\Users\Van\code\remote_tools\Start-MMFiP1S1TrojanNN.ps1'
+$S = 'C:\Users\Van\code_trojannn\remote_tools\Start-MMFiP1S1TrojanNN.ps1'
 $Opt = @{
     DataHome = 'C:\Users\Van\backdooranalog'
     PythonExe = 'C:\Users\Van\backdooranalog\envs\dose-backdoor\python.exe'
     CleanCheckpoint = 'C:\Users\Van\backdooranalog\runs\mmfi_three_tables_4090_win_fresh_v1\seed42\clean\checkpoint.pt'
-    Outdir = 'C:\Users\Van\backdooranalog\runs\mmfi_p1s1_hpeli_trojannn_s42_v1'
+    Outdir = 'C:\Users\Van\backdooranalog\runs\mmfi_p1s1_hpeli_trojannn_s42_with_a1_v1'
+    AllowConcurrentA1 = $true
 }
 & $S -Mode Status @Opt
 ```
@@ -105,13 +123,20 @@ $Opt = @{
 `Launch` kiểm tra lại gate trước khi chạy ẩn; source/input/trigger/runtime không
 khớp thì dừng, không tự hạ batch, chuyển AMP, retry hay sửa checkpoint. Resume
 chỉ dùng output và hợp đồng đã chuẩn bị tương ứng. Không chạy hai helper cùng lúc.
+Không truyền cờ concurrent thì giữ default độc quyền, output lịch sử
+`mmfi_p1s1_hpeli_trojannn_s42_v1`; có cờ thì default output mới
+`mmfi_p1s1_hpeli_trojannn_s42_with_a1_v1`. Không chuyển qua lại giữa hai profile
+để vượt guard hoặc migrate checkpoint. `Start-Process -WindowStyle Hidden`
+không bảo đảm sống sau khi ngắt SSH: giữ cửa sổ SSH mở và máy client không sleep.
+Prepare/Launch không tự tạo Scheduled Task/tmux, không retry hoặc tự hạ batch
+khi thiếu VRAM. Mỗi experiment có lock riêng; chỉ tối đa một TrojanNN worker.
 
 ## Xem tiến trình và xuất bảng
 
 ```powershell
-$S = 'C:\Users\Van\code\remote_tools\Start-MMFiP1S1TrojanNN.ps1'
-powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Status
-$R = 'C:\Users\Van\backdooranalog\runs\mmfi_p1s1_hpeli_trojannn_s42_v1'
+$S = 'C:\Users\Van\code_trojannn\remote_tools\Start-MMFiP1S1TrojanNN.ps1'
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Status -AllowConcurrentA1
+$R = 'C:\Users\Van\backdooranalog\runs\mmfi_p1s1_hpeli_trojannn_s42_with_a1_v1'
 Get-ChildItem -LiteralPath "$R\logs" -File -Filter '*.log' |
     Sort-Object LastWriteTime -Descending | Select-Object -First 3 |
     ForEach-Object { $_.FullName; Get-Content -LiteralPath $_.FullName -Tail 12 -Encoding UTF8 }
@@ -120,7 +145,7 @@ Get-ChildItem -LiteralPath "$R\logs" -File -Filter '*.log' |
 Khi evaluate hoàn tất:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Export
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Export -AllowConcurrentA1
 ```
 
 Giữ T-MPJPE và Target-PCK tại dose1, Clean MPJPE/PA-MPJPE và DCE trung bình năm
@@ -135,6 +160,12 @@ và quoting, resume toy khớp tuyệt đối weights/momentum/RNG. Checkpoint C
 P1S1 lịch sử thật đọc/fingerprint/strict-state đạt; hai bước tối ưu CPU dùng
 checkpoint đó đạt finite. Không dùng các bước smoke này làm trigger final hay
 kết quả TEST; Prepare trên máy chạy sẽ tạo trigger1000-step theo preset đã khóa.
+
+Verification execution-sharing 2026-10-30: **198 tests passed** trong một lượt,
+gồm parser Windows/CIM giả lập, ancestry/proxy và CPU-loading guards, khóa policy,
+CLI/PowerShell forwarding, operator/recipe/resume regression. Independent review
+không thấy blocker còn lại. Chưa chạy full TRAIN hoặc smoke hai process CUDA
+thực trên Vân4090; không suy hiệu quả hay VRAM fit từ các test local này.
 
 Nguồn thuật toán: [BackdoorBench TrojanNN](https://github.com/SCLBD/BackdoorBench/blob/f02e3534645f0ee63d6848653062cd6c0d6c400d/attack/trojannn.py),
 [TrojanNN, NDSS 2018](https://www.ndss-symposium.org/wp-content/uploads/2018/02/ndss2018_03A-5_Liu_paper.pdf).

@@ -2,7 +2,9 @@
 .SYNOPSIS
 Prepare or run only TrojanNN adapted / HPE-Li / MM-Fi P1S1 / seed42.
 .DESCRIPTION
-One worker on one GPU. Uses an existing matching clean P1S1 checkpoint only
+One TrojanNN worker on one GPU. Default is exclusive; -AllowConcurrentA1
+permits only the separately verified HPE-Li/MM-Fi P3S3 A1 peer on cuda:0.
+Uses an existing matching clean P1S1 checkpoint only
 to construct the model-informed trigger; the poisoned victim starts fresh.
 No environment installation, process killing, or automatic P3S3 scheduling.
 #>
@@ -14,13 +16,19 @@ param(
     [string]$Outdir = '',
     [string]$CleanCheckpoint = '',
     [Alias('Python')][string]$PythonExe = '',
-    [ValidatePattern('^cuda:[0-9]+$')][string]$Device = 'cuda:0'
+    [ValidatePattern('^cuda:[0-9]+$')][string]$Device = 'cuda:0',
+    [switch]$AllowConcurrentA1
 )
 $ErrorActionPreference = 'Stop'
 $Repo = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $DataHome = [IO.Path]::GetFullPath($DataHome)
 if (!$Outdir) {
-    $Outdir = Join-Path $DataHome 'runs\mmfi_p1s1_hpeli_trojannn_s42_v1'
+    $RunName = if ($AllowConcurrentA1) {
+        'mmfi_p1s1_hpeli_trojannn_s42_with_a1_v1'
+    } else {
+        'mmfi_p1s1_hpeli_trojannn_s42_v1'
+    }
+    $Outdir = Join-Path $DataHome (Join-Path 'runs' $RunName)
 }
 if (!$CleanCheckpoint) {
     $CleanCheckpoint = Join-Path $DataHome 'runs\mmfi_three_tables_4090_win_fresh_v1\seed42\clean\checkpoint.pt'
@@ -54,6 +62,7 @@ if ($Mode -in @('Prepare','CheckOnly','Launch') -and
 }
 $Common = @('-u',$Runner,'--data-home',$DataHome,'--outdir',$Outdir,
             '--clean-checkpoint',$CleanCheckpoint,'--device',$Device)
+if ($AllowConcurrentA1) { $Common += '--allow-concurrent-a1' }
 $env:PYTHONUTF8 = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $env:MKL_THREADING_LAYER = 'SEQUENTIAL'
@@ -103,3 +112,4 @@ if ($Child.WaitForExit(1500)) {
 "STDOUT=$Stdout"
 "STDERR=$Stderr"
 'A live PID is not proof of progress. Inspect changing epoch logs or use -Mode Status.'
+'Hidden Start-Process does not guarantee survival after SSH disconnect; keep this SSH session open.'
