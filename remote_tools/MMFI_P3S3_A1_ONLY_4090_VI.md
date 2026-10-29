@@ -71,13 +71,18 @@ Sau pull bản sửa, chạy:
 powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode RefreshDesktopGate -AllowConcurrentSIG
 ```
 
-Chỉ hỗ trợ gate từ chính wrapper d5f1b1f đã publish, khi chưa có checkpoint A1.
+Chỉ hỗ trợ gate từ chính wrapper d5f1b1f hoặc 1b4dde8 đã publish, khi chưa có checkpoint A1.
 Mọi field cũ ngoài hash wrapper phải giữ nguyên: runner, plan, full-split audit,
 smoke receipt, runtime, GPU, data paths và policy SIG. Nó giữ bản sao gate cũ,
 chạy lại một B32 smoke với tải SIG/desktop hiện tại (không audit lại toàn bộ
 split), rồi lưu receipt refresh. Không sửa checkpoint hoặc công thức A1/SIG.
 Khi hiện DESKTOP_GATE_REFRESHED, dùng lệnh Launch -AllowConcurrentSIG như trên.
 Không tự sửa/xóa gate để ép launch nếu refresh bị từ chối.
+
+Nếu bản 1b4dde8 báo `Replace: The path is not of a legal form`, full training
+chưa launch và gate cũ còn nguyên. Pull bản sửa rồi chạy lại RefreshDesktopGate;
+bản sửa truyền đường dẫn backup thật cho .NET File.Replace trên PowerShell 5.1.
+Không cần chạy Prepare lại, xóa gate, hay dừng SIG/AnyDesk.
 
 Khi có `PREPARED_ONLY`, chạy riêng:
 

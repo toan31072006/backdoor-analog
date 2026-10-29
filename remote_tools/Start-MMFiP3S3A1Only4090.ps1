@@ -130,14 +130,16 @@ function Assert-GpuPolicy {
     if ($SIGIds.Count -eq 1) { Write-Host "AUTHORIZED_SIG_PEER PID=$($SIGIds[0]); left running. At most one A1 + one SIG." }
 }
 function Assert-DesktopGateUpgrade($SavedGate,$CurrentGate) {
-    # Only the exact published d5f1b1f wrapper (LF or Git's Windows CRLF) is
+    # Only the exact published d5f1b1f / 1b4dde8 wrappers (LF or Windows CRLF) are
     # eligible. No arbitrary source/gate/runtime change is grandfathered in.
     $Predecessors = @(
         '9e6953da833683cc0968ddf3a76c3a28bfc777b589570103353bc8f1a5caf565',
-        '61fbb0788458880b9cd2f6dfc529d199f9cf034ce2694229e538221479ae4eae'
+        '61fbb0788458880b9cd2f6dfc529d199f9cf034ce2694229e538221479ae4eae',
+        '927dd17c737fa8ffdf255201ea8806ec8ee3231118ff85fd25041d177441f8a6',
+        'ffc2cce50372dd7c496246e5eb588d7a14e94f72bc6e8ddfcaff6b6830152b99'
     )
     if ([string]$SavedGate.wrapper_sha256 -notin $Predecessors) {
-        throw 'Gate is not from the exact pre-AnyDesk launcher; refusing refresh.'
+        throw 'Gate is not from an exact supported desktop-refresh predecessor; refusing refresh.'
     }
     $Comparison = $SavedGate | ConvertTo-Json -Depth 12 | ConvertFrom-Json
     $Comparison.wrapper_sha256 = $CurrentGate.wrapper_sha256
@@ -225,10 +227,11 @@ if ($Mode -eq 'RefreshDesktopGate') {
     Assert-DesktopGateUpgrade $SavedObject $CurrentObject
     $Stamp = (Get-Date -Format 'yyyyMMdd_HHmmss_fff') + '_' + [guid]::NewGuid().ToString('N').Substring(0,8)
     $Backup = Join-Path $Outdir "a1_only_4090_gate.before_anydesk.$Stamp.json"
-    [IO.File]::Copy($GatePath,$Backup,$false)
     $Temporary = $GatePath + '.desktop-refresh.' + $Stamp + '.saving'
     [IO.File]::WriteAllText($Temporary,($CurrentObject | ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
-    [IO.File]::Replace($Temporary,$GatePath,$null)
+    # Windows PowerShell 5.1 can bind $null to an empty backup path here.
+    # Supply a real, unique backup path: Replace preserves the old gate atomically.
+    [IO.File]::Replace($Temporary,$GatePath,$Backup)
     $Receipt = [ordered]@{ scope='prelaunch_anydesk_desktop_only'; previous_gate_backup=$Backup;
         previous_wrapper_sha256=$SavedObject.wrapper_sha256; current_wrapper_sha256=$CurrentObject.wrapper_sha256;
         unchanged_scientific_receipts=$CurrentObject.files; current_b32_smoke_passed=$true;

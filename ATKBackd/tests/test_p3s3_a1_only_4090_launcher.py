@@ -160,7 +160,12 @@ def test_desktop_gate_refresh_allows_only_pinned_wrapper_hash_change():
     invalid.append([unknown,current])
     crlf = copy.deepcopy(old)
     crlf['wrapper_sha256'] = '61fbb0788458880b9cd2f6dfc529d199f9cf034ce2694229e538221479ae4eae'.upper()
-    payload = base64.b64encode(json.dumps(dict(valid=[[old,current],[crlf,current]],invalid=invalid)).encode()).decode()
+    valid = [[old,current],[crlf,current]]
+    for sha in ('927dd17c737fa8ffdf255201ea8806ec8ee3231118ff85fd25041d177441f8a6',
+                'ffc2cce50372dd7c496246e5eb588d7a14e94f72bc6e8ddfcaff6b6830152b99'):
+        predecessor = copy.deepcopy(old);predecessor['wrapper_sha256'] = sha
+        valid.append([predecessor,current])
+    payload = base64.b64encode(json.dumps(dict(valid=valid,invalid=invalid)).encode()).decode()
     path = str(SCRIPT).replace("'","''")
     command = f"""
 $d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{payload}'))|ConvertFrom-Json
@@ -180,10 +185,32 @@ foreach($pair in $d.invalid){{$blocked=$false;try{{Assert-DesktopGateUpgrade $pa
     assert refresh.count('Assert-DesktopGateUpgrade') == 2
     assert "Invoke-Legacy 'gpu-smoke'" in refresh
     assert "Invoke-Legacy 'preflight'" not in refresh
-    assert '[IO.File]::Copy($GatePath,$Backup,$false)' in refresh
-    assert '[IO.File]::Replace' in refresh
+    assert '[IO.File]::Replace($Temporary,$GatePath,$Backup)' in refresh
+    assert '[IO.File]::Replace($Temporary,$GatePath,$null)' not in refresh
     assert 'checkpoint.pt' in refresh
     assert 'Start-Process' not in refresh
+
+
+@pytest.mark.skipif(os.name != 'nt' or not shutil.which('powershell'),reason='Windows PowerShell required')
+def test_real_powershell_gate_replace_preserves_backup(tmp_path):
+    # Execute the exact production Replace statement on real files, not a mock.
+    gate = tmp_path/'a1 gate.json'
+    temporary = tmp_path/'new gate.saving'
+    backup = tmp_path/'old gate.backup.json'
+    gate.write_bytes(b'old gate')
+    temporary.write_bytes(b'new gate')
+    source = SCRIPT.read_text(encoding='utf-8')
+    statement = next(line.strip() for line in source.splitlines()
+                     if line.strip().startswith('[IO.File]::Replace('))
+    command = "$ErrorActionPreference='Stop';" + ''.join(
+        "$"+name+"='"+str(path).replace("'","''")+"';"
+        for name,path in [('GatePath',gate),('Temporary',temporary),('Backup',backup)]) + statement
+    result = subprocess.run(['powershell','-NoProfile','-Command',command],
+                            capture_output=True,text=True,timeout=30)
+    assert result.returncode == 0,result.stdout+result.stderr
+    assert gate.read_bytes() == b'new gate'
+    assert backup.read_bytes() == b'old gate'
+    assert not temporary.exists()
 
 
 @pytest.mark.skipif(os.name != 'nt' or not shutil.which('powershell'),reason='Windows PowerShell required')
