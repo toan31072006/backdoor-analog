@@ -45,7 +45,7 @@ DESKTOP = {'explorer.exe', 'dwm.exe', 'searchhost.exe', 'startmenuexperiencehost
            'shellexperiencehost.exe', 'shellhost.exe', 'applicationframehost.exe',
            'textinputhost.exe', 'lockapp.exe', 'logonui.exe', 'systemsettings.exe',
            'code.exe', 'chrome.exe', 'msedge.exe', 'msedgewebview2.exe',
-           'windowsterminal.exe', 'taskmgr.exe', 'snippingtool.exe', 'teamviewer.exe',
+           'windowsterminal.exe', 'taskmgr.exe', 'snippingtool.exe', 'teamviewer.exe', 'anydesk.exe',
            'ms-teams.exe', 'phoneexperiencehost.exe', 'crossdeviceresume.exe',
            'copilot.exe', 'copilotapp.exe', 'sihost.exe'}
 
@@ -143,7 +143,32 @@ def bootstrap(out):
     return root
 
 
-def conflict_rows(text, windows=False, own_pid=None):
+HIDDEN_PROCESS_NAMES = {'[insufficient permissions]', '[not found]', '[unknown]', 'n/a'}
+
+
+def windows_process_names():
+    """Read CIM process names; never elevate, terminate, or trust unknown PIDs."""
+    script = ("$ErrorActionPreference='Stop';"
+              "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);"
+              "@(Get-CimInstance Win32_Process | Select-Object ProcessId,Name) | ConvertTo-Json -Compress")
+    report = subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',script],
+        capture_output=True,encoding='utf-8-sig',check=True,timeout=30)
+    rows = json.loads(report.stdout.strip() or '[]')
+    if isinstance(rows,dict):
+        rows = [rows]
+    if not isinstance(rows,list):
+        raise ValueError('Cannot identify GPU processes: unexpected Windows CIM response')
+    result = {}
+    for row in rows:
+        if (not isinstance(row,dict) or type(row.get('ProcessId')) is not int or
+                row['ProcessId'] < 0 or not isinstance(row.get('Name'),str) or
+                not row['Name'].strip() or row['ProcessId'] in result):
+            raise ValueError('Cannot identify GPU processes: invalid/duplicate Windows CIM row')
+        result[row['ProcessId']] = row['Name'].strip()
+    return result
+
+
+def conflict_rows(text, windows=False, own_pid=None, process_names=None):
     result = []
     for row in csv.reader(text.splitlines()):
         if not row:
@@ -153,6 +178,8 @@ def conflict_rows(text, windows=False, own_pid=None):
         pid, name = int(row[0]), row[1].strip()
         if pid == own_pid:
             continue
+        if windows and name.casefold() in HIDDEN_PROCESS_NAMES:
+            name = (process_names or {}).get(pid,name)
         exe = ntpath.basename(name.replace('/', '\\')).lower()
         if windows and exe in DESKTOP:
             continue
@@ -165,6 +192,10 @@ def require_idle():
         '--format=csv,noheader,nounits'], capture_output=True, text=True,
         check=True, timeout=30)
     conflicts = conflict_rows(report.stdout, os.name == 'nt', os.getpid())
+    if os.name == 'nt' and any(name.casefold() in HIDDEN_PROCESS_NAMES for _,name in conflicts):
+        names = windows_process_names()
+        conflicts = conflict_rows(report.stdout,True,os.getpid(),process_names=names)
+        print('GPU_PROCESS_NAMES_RESOLVED_VIA_WINDOWS; unknown/compute processes remain blocked',flush=True)
     if conflicts:
         raise ValueError(f'Other GPU work active; no process stopped: {conflicts}')
 

@@ -88,6 +88,13 @@ PowerShell 5.1: phép tính dung lượng ZIP >8 GB dùng explicit Int64 ở c�
 MethodArgumentConversionInvalidCastArgument trước khi tải/train. Chỉ cập nhật
 Get-PiW3DProcessedData.ps1; không xóa ZIP/.part, checkpoint hoặc env để sửa lỗi.
 
+Nếu NVIDIA WDDM trả `[Insufficient Permissions]` thay cho tên executable,
+controller đọc ProcessId/Name qua Windows CIM để phân loại theo desktop
+allowlist (bao gồm AnyDesk/TeamViewer). Không cần tắt ứng dụng remote hoặc
+chạy quyền admin. PID không resolve được, Python và executable ngoài allowlist
+vẫn bị chặn; lỗi CIM không tự bỏ guard. Đây là kiểm tra đồng chạy theo tên
+process, không phải security boundary chống chương trình cố tình đổi tên.
+
 Importer chỉ nhận đúng 12 member và bốn hash checkpoint đã biết, không overwrite
 file import khác nội dung. Import cả backup Smooth để giữ hồ sơ nhưng không
 train nó. Chuẩn bị kiểm full source/data/ordered IDs và physical B32 CUDA;

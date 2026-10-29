@@ -436,6 +436,63 @@ def test_gpu_desktop_filter_preserves_unknown_or_other_compute_conflicts():
         c.conflict_rows("unknown\n")
 
 
+def test_wddm_hidden_names_resolve_only_known_desktop_pids():
+    hidden = '2052, [Insufficient Permissions]\n6352, [Insufficient Permissions]\n19072, [Insufficient Permissions]\n42, [Insufficient Permissions]\n43, [Insufficient Permissions]\n'
+    names = {2052:'dwm.exe',6352:'AnyDesk.exe',19072:'TeamViewer.exe',42:'python.exe'}
+    assert c.conflict_rows(hidden,True,process_names=names) == [(42,'python.exe'),(43,'[Insufficient Permissions]')]
+    assert len(c.conflict_rows(hidden,False,process_names=names)) == 5
+    # A CIM name must never override an actual compute name NVIDIA could read.
+    assert c.conflict_rows('42, python.exe\n',True,process_names={42:'chrome.exe'}) == [(42,'python.exe')]
+
+
+def test_windows_cim_names_parse_array_singleton_and_utf8(monkeypatch):
+    for payload,expected in [('[{"ProcessId":1,"Name":"AnyDesk.exe"},{"ProcessId":2,"Name":"python.exe"}]',{1:'AnyDesk.exe',2:'python.exe'}),
+                             ('{"ProcessId":7,"Name":"chrome.exe"}',{7:'chrome.exe'}),('',{})]:
+        def run(command,**kwargs):
+            assert command[:3] == ['powershell.exe','-NoProfile','-NonInteractive']
+            assert 'Get-CimInstance Win32_Process' in command[-1]
+            assert 'Stop-Process' not in command[-1]
+            assert kwargs['encoding'] == 'utf-8-sig'
+            assert kwargs['check'] is True
+            return SimpleNamespace(stdout=payload)
+        monkeypatch.setattr(c.subprocess,'run',run)
+        assert c.windows_process_names() == expected
+
+
+@pytest.mark.parametrize('payload',['null','42','{"ProcessId":"7","Name":"chrome.exe"}',
+    '[{"ProcessId":7,"Name":"chrome.exe"},{"ProcessId":7,"Name":"python.exe"}]',
+    '{"ProcessId":7,"Name":null}','not json'])
+def test_invalid_windows_cim_response_is_never_accepted(monkeypatch,payload):
+    monkeypatch.setattr(c.subprocess,'run',lambda *a,**k: SimpleNamespace(stdout=payload))
+    with pytest.raises(ValueError):
+        c.windows_process_names()
+
+
+@pytest.mark.parametrize('resolved,blocked',[
+    ({2052:'dwm.exe',6352:'AnyDesk.exe'},False),
+    ({2052:'dwm.exe',6352:'python.exe'},True),
+    ({2052:'dwm.exe'},True)])
+def test_require_idle_resolves_wddm_without_bypassing_training_guard(monkeypatch,resolved,blocked):
+    monkeypatch.setattr(c,'os',SimpleNamespace(name='nt',getpid=lambda:999))
+    monkeypatch.setattr(c.subprocess,'run',lambda *a,**k: SimpleNamespace(stdout='2052, [Insufficient Permissions]\n6352, [Insufficient Permissions]\n'))
+    monkeypatch.setattr(c,'windows_process_names',lambda: resolved)
+    if blocked:
+        with pytest.raises(ValueError,match='Other GPU work active'):
+            c.require_idle()
+    else:
+        c.require_idle()
+
+
+def test_cim_failure_never_falls_back_to_ignoring_unknown_gpu_jobs(monkeypatch):
+    monkeypatch.setattr(c,'os',SimpleNamespace(name='nt',getpid=lambda:999))
+    monkeypatch.setattr(c.subprocess,'run',lambda *a,**k: SimpleNamespace(stdout='42, [Insufficient Permissions]\n'))
+    def fail():
+        raise OSError('CIM denied')
+    monkeypatch.setattr(c,'windows_process_names',fail)
+    with pytest.raises(OSError,match='CIM denied'):
+        c.require_idle()
+
+
 def test_lock_rejects_overlap_and_releases_on_error(tmp_path):
     with pytest.raises(RuntimeError, match="release"):
         with c.lock(tmp_path):
