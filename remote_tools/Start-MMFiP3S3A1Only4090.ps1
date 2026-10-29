@@ -12,12 +12,16 @@ param(
     [string]$Mode = 'Inspect',
     [string]$DataHome = (Join-Path $env:USERPROFILE 'backdooranalog'),
     [string]$Outdir = '',
-    [Alias('Python')][string]$PythonExe = ''
+    [Alias('Python')][string]$PythonExe = '',
+    [switch]$AllowConcurrentSIG
 )
 $ErrorActionPreference = 'Stop'
 $Repo = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $DataHome = [IO.Path]::GetFullPath($DataHome)
-if (!$Outdir) { $Outdir = Join-Path $DataHome 'runs\mmfi_p3s3_hpeli_a1_s42_4090_v1' }
+if (!$Outdir) {
+    $RunName = if ($AllowConcurrentSIG) { 'mmfi_p3s3_hpeli_a1_s42_4090_with_sig_v1' } else { 'mmfi_p3s3_hpeli_a1_s42_4090_v1' }
+    $Outdir = Join-Path $DataHome (Join-Path 'runs' $RunName)
+}
 $Outdir = [IO.Path]::GetFullPath($Outdir)
 if (!$PythonExe) {
     foreach ($Candidate in @(
@@ -45,6 +49,8 @@ $env:OMP_NUM_THREADS='2'
 $env:MKL_NUM_THREADS='2'
 $CellFolder = Join-Path $Outdir 'p3_s3\a1'
 $GatePath = Join-Path $Outdir 'a1_only_4090_gate.json'
+$SIGRunner = Join-Path $Repo 'ATKBackd\run_mmfi_p3_s3_three_attacks_4090.py'
+$SIGOutdir = Join-Path $DataHome 'runs\mmfi_p3s3_three_attacks_s42_4090_v1'
 
 function Read-Json([string]$Path) { [IO.File]::ReadAllText($Path) | ConvertFrom-Json }
 function Invoke-Legacy([string]$Phase) {
@@ -61,7 +67,28 @@ function Get-HostBinding {
     if (($Runtime | ConvertFrom-Json).actual_gpu -notmatch 'RTX 4090') { throw 'Torch cuda:0 is not RTX4090.' }
     return [ordered]@{ computer=$env:COMPUTERNAME; gpu=$GpuRows[0].Trim(); runtime=($Runtime -join "`n").Trim(); python_sha256=(Get-FileHash -LiteralPath $PythonExe -Algorithm SHA256).Hash }
 }
-function Assert-Idle {
+function Test-ExactArgument([string]$CommandLine,[string]$Name,[string]$Value) {
+    $NamePattern = '(?i)(?:^|\s)"?' + [regex]::Escape($Name) + '"?(?=\s|$)'
+    if ([regex]::Matches($CommandLine,$NamePattern).Count -ne 1) { return $false }
+    $Pattern = '(?i)(?:^|\s)"?' + [regex]::Escape($Name) + '"?\s+(?:"' +
+        [regex]::Escape($Value) + '"|' + [regex]::Escape($Value) + ')(?=\s|$)'
+    return $CommandLine -match $Pattern
+}
+function Test-AuthorizedSIG($Process) {
+    if (!$Process -or $Process.Name -notin @('python.exe','pythonw.exe')) { return $false }
+    $Line = [string]$Process.CommandLine
+    $ScriptPattern = '(?i)(?:^|\s)(?:"' + [regex]::Escape($SIGRunner) + '"|' +
+        [regex]::Escape($SIGRunner) + ')(?=\s|$)'
+    if ($Line -notmatch $ScriptPattern) { return $false }
+    foreach ($Pair in @(
+        @('--data-home',$DataHome),@('--outdir',$SIGOutdir),@('--device','cuda:0'),
+        @('--jobs-per-gpu','1'),@('--mode','cell'),@('--work','train'),@('--method','sig_source')
+    )) {
+        if (!(Test-ExactArgument $Line $Pair[0] $Pair[1])) { return $false }
+    }
+    return $true
+}
+function Assert-GpuPolicy {
     $Rows = @(& nvidia-smi '--query-compute-apps=pid,process_name' '--format=csv,noheader,nounits')
     if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect GPU processes.' }
     $Desktop = @('explorer.exe','dwm.exe','searchhost.exe','startmenuexperiencehost.exe',
@@ -69,13 +96,26 @@ function Assert-Idle {
         'lockapp.exe','logonui.exe','systemsettings.exe','code.exe','chrome.exe','msedge.exe',
         'msedgewebview2.exe','windowsterminal.exe','taskmgr.exe','snippingtool.exe','teamviewer.exe',
         'ms-teams.exe','phoneexperiencehost.exe','crossdeviceresume.exe','copilot.exe','copilotapp.exe','copilotapphost.exe')
+    $SIGIds = @()
     foreach ($Row in $Rows) {
         if (!$Row.Trim()) { continue }
         if ($Row -notmatch '^\s*([0-9]+)\s*,\s*(.+?)\s*$') { throw "Unidentified GPU process: $Row" }
+        $GpuProcessId = [int]$Matches[1]
         $Executable = [IO.Path]::GetFileName($Matches[2]).ToLowerInvariant()
-        if ([int]$Matches[1] -eq 4 -and $Executable -eq 'system') { continue }
-        if ($Executable -notin $Desktop) { throw "Other GPU work active: $Row. No process was stopped." }
+        if ($GpuProcessId -eq 4 -and $Executable -eq 'system') { continue }
+        if ($Executable -in $Desktop) { continue }
+        if ($AllowConcurrentSIG) {
+            $Candidate = Get-CimInstance Win32_Process -Filter "ProcessId=$GpuProcessId"
+            if (Test-AuthorizedSIG $Candidate) {
+                $SIGIds += $GpuProcessId
+                continue
+            }
+        }
+        throw "Other GPU work active: $Row. Only the explicitly authorized SIG peer may share; no process was stopped."
     }
+    $SIGIds = @($SIGIds | Select-Object -Unique)
+    if ($SIGIds.Count -gt 1) { throw 'Multiple SIG workers found; only one authorized peer is allowed.' }
+    if ($SIGIds.Count -eq 1) { Write-Host "AUTHORIZED_SIG_PEER PID=$($SIGIds[0]); left running. At most one A1 + one SIG." }
 }
 function Get-GateBinding {
     $Files = [ordered]@{}
@@ -96,12 +136,16 @@ function Get-GateBinding {
     }
     return [ordered]@{ scope='a1_only_hpeli_mmfi_p3s3_s42_4090_v1'; cell='p3_s3_a1';
         data_home=$DataHome; outdir=$Outdir; files=$Files;
+        execution_policy=([ordered]@{ allow_concurrent_sig=[bool]$AllowConcurrentSIG;
+            maximum_a1_workers=1; maximum_sig_workers=([int][bool]$AllowConcurrentSIG);
+            allowed_sig_runner=$SIGRunner; allowed_sig_outdir=$SIGOutdir });
         wrapper_sha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash;
         runner_sha256=(Get-FileHash -LiteralPath $Runner -Algorithm SHA256).Hash;
         host_binding=(Get-HostBinding) }
 }
 if ($Mode -eq 'Inspect' -or $Mode -eq 'Status') {
-    "SCOPE: only A1 / HPE-Li / MM-Fi P3S3 / seed42; one GPU job. No training launched."
+    "SCOPE: only A1 / HPE-Li / MM-Fi P3S3 / seed42; one A1 worker. No training launched."
+    "AllowConcurrentSIG: $([bool]$AllowConcurrentSIG); other training jobs remain blocked."
     "Python: $PythonExe"
     "Dataset expected: $DataHome\datasets\Compress"
     "Motion prior: $DataHome\actions\data_bend.npy"
@@ -116,7 +160,7 @@ if ($Mode -eq 'Inspect' -or $Mode -eq 'Status') {
     if (Test-Path -LiteralPath $Report) { (Read-Json $Report).metrics | Format-List }
     return
 }
-Assert-Idle
+Assert-GpuPolicy
 if ($Mode -eq 'Prepare') {
     $null = Get-HostBinding
     if (Test-Path -LiteralPath $GatePath) { throw 'Already prepared; use CheckOnly/Launch, not another Prepare.' }
@@ -124,7 +168,9 @@ if ($Mode -eq 'Prepare') {
         throw 'Output already contains a checkpoint; choose a NEW Outdir instead of changing historical receipts.'
     }
     Invoke-Legacy 'preflight'
+    Assert-GpuPolicy
     Invoke-Legacy 'gpu-smoke'
+    Assert-GpuPolicy
     $Binding = Get-GateBinding
     $Json = $Binding | ConvertTo-Json -Depth 12
     [IO.File]::WriteAllText($GatePath,$Json,[Text.UTF8Encoding]::new($false))
@@ -136,6 +182,7 @@ $Saved = (Read-Json $GatePath) | ConvertTo-Json -Depth 12 -Compress
 $Current = (Get-GateBinding) | ConvertTo-Json -Depth 12 -Compress
 if ($Saved -ne $Current) { throw 'Code/data receipt/runtime/GPU/scope gate changed; refusing launch.' }
 if ($Mode -eq 'CheckOnly') { 'VERIFIED_PRELAUNCH_GATE; no training launched.'; return }
+Assert-GpuPolicy
 
 # Crucial: use the verified historical cell entry, NOT its six-cell controller.
 $Arguments = @($Common + @('--mode','launch','--_cell','p3_s3_a1'))

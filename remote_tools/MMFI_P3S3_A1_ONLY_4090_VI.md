@@ -32,6 +32,33 @@ Preflight gốc kiểm coverage/ordered identities của split và prior, không
 toàn bộ nội dung CSI/pose. Không chỉnh dữ liệu giữa Prepare và Launch; đây
 không phải xác nhận rằng mọi byte của dataset đã được audit lại.
 
+## Giữ SIG và chạy A1 song song (user yêu cầu riêng)
+
+Thêm `-AllowConcurrentSIG` ở cả Prepare/CheckOnly/Launch/Status. Đây là **hai
+job trên một GPU: một A1 + một SIG**, không còn là GPU-exclusive. Không đổi
+scientific recipe A1 hoặc SIG. Cờ này chỉ chấp nhận đúng một GPU process có
+command line runner `run_mmfi_p3_s3_three_attacks_4090.py` trong checkout này,
+`--method sig_source --mode cell --work train --device cuda:0`, đúng DataHome,
+outdir `runs/mmfi_p3s3_three_attacks_s42_4090_v1` và jobs-per-gpu1. Input-Aware,
+process Python khác hoặc nhiều SIG worker vẫn bị chặn. Không dừng SIG.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Prepare -AllowConcurrentSIG
+```
+
+Khi có PREPARED_ONLY:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Launch -AllowConcurrentSIG
+```
+
+Nhánh có SIG dùng output riêng
+`runs/mmfi_p3s3_hpeli_a1_s42_4090_with_sig_v1`, gate bind cả execution policy.
+Không reuse gate GPU-exclusive cũ. Smoke B32 không tự sửa batch/AMP/recipe nếu
+thiếu bộ nhớ. Nếu SIG kết thúc trước Launch thì A1 vẫn được chạy một mình.
+Không bảo đảm hai job nhanh hơn hoặc cùng vừa VRAM; chưa có xác minh CUDA
+concurrent trên máy Vân. Không pull/sửa source của SIG trong lúc nó đang train.
+
 Khi có `PREPARED_ONLY`, chạy riêng:
 
 ```powershell

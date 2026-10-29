@@ -1,5 +1,7 @@
 """CPU/PowerShell checks for the one-cell historical A1 handoff; no GPU run."""
 from pathlib import Path
+import base64
+import json
 import os
 import re
 import shutil
@@ -50,6 +52,9 @@ def test_scope_host_and_recipe_are_bound():
                   'cfg.seed -ne 42','cfg.epochs -ne 50','cfg.rho -ne 0.1',
                   'cfg.lr -ne 0.001'):
         assert token in source
+    assert '[switch]$AllowConcurrentSIG' in source
+    assert 'maximum_sig_workers' in source
+    assert 'mmfi_p3s3_hpeli_a1_s42_4090_with_sig_v1' in source
 
 
 @pytest.mark.skipif(os.name != 'nt' or not shutil.which('powershell'),reason='Windows PowerShell required')
@@ -74,6 +79,58 @@ def test_read_only_modes_never_create_outputs(tmp_path,mode):
     assert result.returncode == 0,result.stdout+result.stderr
     assert 'only A1 / HPE-Li / MM-Fi P3S3 / seed42' in result.stdout
     assert not home.exists()
+
+
+@pytest.mark.skipif(os.name != 'nt' or not shutil.which('powershell'),reason='Windows PowerShell required')
+def test_authorized_sig_peer_policy_rejects_every_other_training_job():
+    home = r'C:\Users\Van\backdooranalog'
+    runner = r'C:\Users\Van\code\ATKBackd\run_mmfi_p3_s3_three_attacks_4090.py'
+    output = home+r'\runs\mmfi_p3s3_three_attacks_s42_4090_v1'
+    args = ['python.exe','-u',runner,'--data-home',home,'--outdir',output,
+            '--device','cuda:0','--jobs-per-gpu','1','--mode','cell',
+            '--work','train','--method','sig_source']
+    plain = ' '.join(args)
+    valid = [plain, ' '.join('"'+a+'"' for a in args)]
+    invalid = [plain.replace('--method sig_source','--method '+m)
+               for m in ('input_aware','badnets','sig_source_extra')]
+    invalid += [plain.replace('--mode cell','--mode launch'),
+        plain.replace('--work train','--work smoke'),
+        plain.replace('--device cuda:0','--device cuda:1'),
+        plain.replace('--jobs-per-gpu 1','--jobs-per-gpu 2'),
+        plain.replace(output,output+'_other'),plain.replace(runner,runner.replace('code','other-code')),
+        plain+' --method input_aware',plain.replace('--outdir '+output,'')]
+    payload = base64.b64encode(json.dumps(dict(home=home,runner=runner,out=output,
+        valid=valid,invalid=invalid)).encode()).decode()
+    ps_path = str(SCRIPT).replace("'","''")
+    command = f"""
+$d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{payload}'))|ConvertFrom-Json
+$DataHome=$d.home;$SIGRunner=$d.runner;$SIGOutdir=$d.out
+$ast=[System.Management.Automation.Language.Parser]::ParseFile('{ps_path}',[ref]$null,[ref]$null)
+$nodes=$ast.FindAll({{param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Test-ExactArgument','Test-AuthorizedSIG','Assert-GpuPolicy')}},$true)
+foreach($n in $nodes){{Invoke-Expression $n.Extent.Text}}
+foreach($line in $d.valid){{if(!(Test-AuthorizedSIG ([pscustomobject]@{{Name='python.exe';CommandLine=$line}}))){{throw 'Valid SIG rejected'}}}}
+foreach($line in $d.invalid){{if(Test-AuthorizedSIG ([pscustomobject]@{{Name='python.exe';CommandLine=$line}})){{throw ('Wrong job accepted: '+$line)}}}}
+$script:FakeRows=@();$script:FakeProcesses=@()
+function nvidia-smi {{ $global:LASTEXITCODE=0; return $script:FakeRows }}
+function Get-CimInstance {{param($ClassName,$Filter) $idValue=[int]($Filter -replace 'ProcessId=',''); return $script:FakeProcesses|Where-Object {{$_.ProcessId -eq $idValue}} }}
+$AllowConcurrentSIG=$true
+$script:FakeRows=@('14504, C:\\env\\python.exe')
+$script:FakeProcesses=@([pscustomobject]@{{ProcessId=14504;Name='python.exe';CommandLine=$d.valid[0]}})
+Assert-GpuPolicy
+$AllowConcurrentSIG=$false;$blocked=$false
+try{{Assert-GpuPolicy}}catch{{$blocked=$true}};if(!$blocked){{throw 'Default exclusive guard weakened'}}
+$AllowConcurrentSIG=$true;$script:FakeProcesses[0].CommandLine=$d.invalid[0];$blocked=$false
+try{{Assert-GpuPolicy}}catch{{$blocked=$true}};if(!$blocked){{throw 'Input-Aware was allowed'}}
+$script:FakeRows=@('14504, C:\\env\\python.exe','40232, C:\\env\\python.exe')
+$script:FakeProcesses=@([pscustomobject]@{{ProcessId=14504;Name='python.exe';CommandLine=$d.valid[0]}},[pscustomobject]@{{ProcessId=40232;Name='python.exe';CommandLine=$d.valid[0]}})
+$blocked=$false;try{{Assert-GpuPolicy}}catch{{$blocked=$true}};if(!$blocked){{throw 'Two SIG workers were allowed'}}
+$script:FakeRows=@('12724, C:\\Windows\\explorer.exe');Assert-GpuPolicy
+'SIG_POLICY_TESTS_PASSED'
+"""
+    result = subprocess.run(['powershell','-NoProfile','-Command',command],
+                            capture_output=True,text=True,timeout=30)
+    assert result.returncode == 0,result.stdout+result.stderr
+    assert 'SIG_POLICY_TESTS_PASSED' in result.stdout
 
 
 @pytest.mark.skipif(os.name != 'nt' or not shutil.which('powershell'),reason='Windows PowerShell required')
