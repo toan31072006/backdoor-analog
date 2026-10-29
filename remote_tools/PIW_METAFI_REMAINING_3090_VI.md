@@ -1,5 +1,9 @@
 # PiW3D / MetaFi++ AdamW: chạy nốt trên RTX 3090
 
+User chỉ yêu cầu **FTrojan/BPP/FIBA/WaNet** và không train Clean/A1: xem
+[hướng dẫn bốn attack](PIW_METAFI_FOUR_ATTACKS_3090_VI.md), dùng
+`-FourAttacksOnly` ở mọi phase. Default không có cờ vẫn là sáu hàng bên dưới.
+
 Chỉ **một worker trên `cuda:0`**, chạy tuần tự sáu hàng: Clean reference,
 Proposed A1, FTrojan-CSI, BppAttack-CSI, FIBA-CSI và WaNet-CSI. **Không chạy TSBA
 adapted hoặc Smooth LF-CSI**. Đây là nhánh Person-in-WiFi-3D, không phải MM-Fi.

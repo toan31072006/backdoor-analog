@@ -536,7 +536,7 @@ def test_deleted_migrated_checkpoint_cannot_be_restarted_from_epoch0(args, plan,
     monkeypatch.setattr(c, "code_binding", lambda: {})
     gate = dict(profile=c.PROFILE, method=args.method, plan_sha256=plan["plan_sha256"],
         execution=execution, input_stat_fingerprint="stats", code={}, physical_batch=32,
-        prepared_only=True, checkpoint_selection={"path": "original.pt"})
+        prepared_only=True, checkpoint_selection={"path": "original.pt"},queue_scope=c.queue_scope(args))
     c.write(c.gate_path(args, args.method), gate)
     with pytest.raises(ValueError, match="refusing an epoch0 restart"):
         c.check_gate(args, w, {}, plan, execution, "stats")
@@ -591,3 +591,100 @@ def test_prepare_migration_preserves_model_optimizer_rng_trigger_after_mutating_
     assert receipt["model_optimizer_rng_trigger_unchanged"] is True
     assert receipt["no_bitwise_cross_platform_trajectory_guarantee"] is True
     assert c.read(c.gate_path(args, args.method))["prepared_only"] is True
+
+
+def test_four_attack_scope_does_not_modify_the_original_scientific_scope(args):
+    args.four_attacks_only = True
+    assert c.selected_methods(args) == ('ftrojan','bpp_source','fiba','wanet_source')
+    assert c.queue_scope(args)['training_only'] is True
+    assert c.METHODS == ('clean','a1','ftrojan','bpp_source','fiba','wanet_source')
+    cmd = c.command(args,'ftrojan','train')
+    assert '--four-attacks-only' in cmd
+    assert cmd.count('--four-attacks-only') == 1
+
+
+def test_four_attack_prepare_only_schedules_four_smokes(args,monkeypatch):
+    setup_controller_mock(args,monkeypatch)
+    events = []
+    def run(command,**kwargs):
+        method = command[command.index('--method')+1]
+        work = command[command.index('--work')+1]
+        events.append((method,work))
+        assert '--four-attacks-only' in command
+        c.write(c.gate_path(args,method),{'checkpoint_selection':{'epoch':84,'path':'backup'}})
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(c.subprocess,'run',run)
+    assert c.main(cli(args,'prepare')+['--four-attacks-only']) == 0
+    assert events == [(m,'prepare') for m in c.NATIVE]
+    scope = c.read(args.out/'execution_scope.json')
+    assert scope['selected_methods'] == list(c.NATIVE)
+    assert scope['excluded_methods'] == ['clean','a1','tsba_adapted','smooth_lf_csi']
+    assert scope['queue_scope']['training_only'] is True
+
+
+def test_four_attack_queue_has_no_clean_a1_evaluate_or_retry(args,monkeypatch,capsys):
+    setup_controller_mock(args,monkeypatch)
+    events = []
+    def run(command,**kwargs):
+        assert '--four-attacks-only' in command
+        events.append((command[command.index('--method')+1],command[command.index('--work')+1]))
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(c.subprocess,'run',run)
+    monkeypatch.setattr(c,'summarize',lambda _: pytest.fail('No comparison without Clean reference'))
+    monkeypatch.setattr(c,'summarize_training',lambda _: events.append(('summary','trained_only')))
+    assert c.main(cli(args,'launch')+['--four-attacks-only']) == 0
+    assert events == [(m,phase) for phase in ('check','train') for m in c.NATIVE]+[('summary','trained_only')]
+    out = capsys.readouterr().out
+    assert 'ALL_FOUR_TRAINED_NOT_EVALUATED' in out
+    assert 'ALL_SIX_COMPLETE' not in out
+
+
+def test_four_attack_queue_failure_stops_pending_without_retry(args,monkeypatch):
+    setup_controller_mock(args,monkeypatch)
+    events = []
+    def run(command,**kwargs):
+        event = (command[command.index('--method')+1],command[command.index('--work')+1])
+        events.append(event)
+        return SimpleNamespace(returncode=1 if event == ('bpp_source','train') else 0)
+    monkeypatch.setattr(c.subprocess,'run',run)
+    monkeypatch.setattr(c,'summarize_training',lambda _: pytest.fail('Failed queue cannot finish'))
+    with pytest.raises(RuntimeError,match='no retry/later jobs'):
+        c.main(cli(args,'launch')+['--four-attacks-only'])
+    assert [m for m,phase in events if phase == 'train'] == ['ftrojan','bpp_source']
+
+
+@pytest.mark.parametrize('method,work',[('clean','train'),('a1','prepare'),('ftrojan','evaluate')])
+def test_four_attack_internal_cell_rejects_expanded_scope(args,method,work):
+    with pytest.raises(SystemExit):
+        c.main(cli(args,'cell')+['--four-attacks-only','--method',method,'--work',work])
+
+
+def test_scope_change_invalidates_existing_cell_gate(args,plan,monkeypatch):
+    monkeypatch.setattr(c,'code_binding',lambda: {})
+    execution = {'gpu_name':'RTX 3090'}
+    gate = dict(profile=c.PROFILE,method=args.method,plan_sha256=plan['plan_sha256'],
+        execution=execution,input_stat_fingerprint='stats',code={},physical_batch=32,
+        prepared_only=True,queue_scope=c.queue_scope(args))
+    c.write(c.gate_path(args,args.method),gate)
+    args.four_attacks_only = True
+    with pytest.raises(ValueError,match='prelaunch gate changed'):
+        c.check_gate(args,SimpleNamespace(),{},plan,execution,'stats')
+
+
+def test_training_summary_binds_four_final_checkpoints_without_fake_metrics(args):
+    args.four_attacks_only = True
+    for method in c.NATIVE:
+        folder = c.run_out(args,method)/'attacks/metafiplusplus/seed42'/method
+        folder.mkdir(parents=True)
+        checkpoint = folder/'checkpoint.pt'
+        checkpoint.write_bytes(method.encode())
+        c.write(folder/'trained_final199.json',dict(profile=c.PROFILE,status='TRAINED_NOT_EVALUATED',
+            epoch=199,checkpoint_sha256=c.sha(checkpoint),plan_sha256='plan'))
+    c.summarize_training(args)
+    result = c.read(args.out/'training_results.json')
+    assert result['status'] == 'TRAINED_NOT_EVALUATED'
+    assert [r['method'] for r in result['rows']] == list(c.NATIVE)
+    assert all('metrics' not in r for r in result['rows'])
+    checkpoint.write_bytes(b'tampered')
+    with pytest.raises(ValueError,match='receipt mismatch'):
+        c.summarize_training(args)

@@ -20,7 +20,8 @@ param(
     [Alias('Out')]
     [string]$Outdir = '',
     [Alias('Python')]
-    [string]$PythonExe = ''
+    [string]$PythonExe = '',
+    [switch]$FourAttacksOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,7 +35,8 @@ if (!$CheckpointHome) {
     $CheckpointHome = Join-Path $DataHome 'imports\piw_metafi_adamw_unfinished'
 }
 if (!$Outdir) {
-    $Outdir = Join-Path $DataHome 'runs\piw_metafi_remaining_s42_3090_v1'
+    $RunName = if ($FourAttacksOnly) { 'piw_metafi_four_attacks_s42_3090_v1' } else { 'piw_metafi_remaining_s42_3090_v1' }
+    $Outdir = Join-Path $DataHome (Join-Path 'runs' $RunName)
 }
 $DatasetRoot = [IO.Path]::GetFullPath($DatasetRoot)
 $ActionNpy = [IO.Path]::GetFullPath($ActionNpy)
@@ -82,6 +84,7 @@ $env:MKL_NUM_THREADS = '2'
 $Common = @('-u', $Runner, '--data-home', $DataHome,
             '--dataset', $DatasetRoot, '--action', $ActionNpy,
             '--out', $Outdir, '--checkpoint-home', $CheckpointHome)
+if ($FourAttacksOnly) { $Common += '--four-attacks-only' }
 
 function Invoke-Phase([string]$Phase) {
     & $PythonExe @Common '--mode' $Phase
@@ -132,6 +135,11 @@ if ($Child.HasExited) {
 Write-Host "STARTED controller PID=$($Child.Id); max one worker on cuda:0."
 Write-Host "Controller stdout: $Stdout"
 Write-Host "Controller stderr: $Stderr"
-Write-Host 'Included: Clean, A1, FTrojan-CSI, BppAttack-CSI, FIBA-CSI, WaNet-CSI.'
+if ($FourAttacksOnly) {
+    Write-Host 'Included: FTrojan-CSI, BppAttack-CSI, FIBA-CSI, WaNet-CSI only.'
+    Write-Host 'No Clean/A1 training. Final checkpoints saved; evaluation needs matching Clean AdamW later.'
+} else {
+    Write-Host 'Included: Clean, A1, FTrojan-CSI, BppAttack-CSI, FIBA-CSI, WaNet-CSI.'
+}
 Write-Host 'Excluded: TSBA adapted and Smooth LF-CSI. Use -Mode Status to confirm progress.'
 Write-Host 'An alive PID is not proof of training progress; inspect changing cell logs.'

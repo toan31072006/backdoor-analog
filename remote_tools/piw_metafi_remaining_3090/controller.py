@@ -50,6 +50,15 @@ DESKTOP = {'explorer.exe', 'dwm.exe', 'searchhost.exe', 'startmenuexperiencehost
            'copilot.exe', 'copilotapp.exe', 'sihost.exe'}
 
 
+def selected_methods(args):
+    return NATIVE if getattr(args, 'four_attacks_only', False) else METHODS
+
+
+def queue_scope(args):
+    return dict(selected_methods=list(selected_methods(args)),
+                training_only=bool(getattr(args, 'four_attacks_only', False)))
+
+
 def sha(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -474,7 +483,7 @@ def prepare_cell(args, w, cfg, saved, execution, stats):
     write(gate_path(args,method),dict(profile=PROFILE,method=method,
         plan_sha256=saved['plan_sha256'],execution=execution,input_stat_fingerprint=stats,
         code=code_binding(),checkpoint_selection=selection,physical_batch=32,
-        smoke_loss=loss,prepared_only=True))
+        smoke_loss=loss,prepared_only=True,queue_scope=queue_scope(args)))
     print(f'PREPARED_ONLY {method}; source_epoch={selection["epoch"]}; no full training',flush=True)
 
 
@@ -482,7 +491,7 @@ def check_gate(args,w,cfg,saved,execution,stats):
     gate = read(gate_path(args,args.method))
     expected = dict(profile=PROFILE,method=args.method,plan_sha256=saved['plan_sha256'],
                     execution=execution,input_stat_fingerprint=stats,code=code_binding(),
-                    physical_batch=32,prepared_only=True)
+                    physical_batch=32,prepared_only=True,queue_scope=queue_scope(args))
     if any(gate.get(k) != v for k,v in expected.items()):
         raise ValueError('Source/data/runtime/GPU/prelaunch gate changed')
     path = w.cell_dir(cfg,'metafiplusplus',args.method)/'checkpoint.pt'
@@ -597,16 +606,23 @@ def cell(args):
 
 
 def command(args,method,work):
-    return [sys.executable,'-u',str(HERE/'controller.py'),'--mode','cell',
+    result = [sys.executable,'-u',str(HERE/'controller.py'),'--mode','cell',
         '--method',method,'--work',work,'--data-home',str(args.data_home),
         '--dataset',str(args.dataset),'--action',str(args.action),'--out',str(args.out),
         '--checkpoint-home',str(args.checkpoint_home)]
+    if getattr(args, 'four_attacks_only', False):
+        result.append('--four-attacks-only')
+    return result
 
 
 def inspect(args):
     print('SELECTED_SCOPE: MetaFi++ PiW3D AdamW; serial 1 job/cuda:0; TSBA/Smooth excluded')
+    print('QUEUE_SCOPE:', queue_scope(args))
+    if getattr(args, 'four_attacks_only', False):
+        print('Only FTrojan/BPP/FIBA/WaNet; no Clean/A1 training. '
+              'Evaluation deferred until a matching final199 Clean AdamW is supplied.')
     print('No training launched. Existing AdamW checkpoints are audited during Prepare.')
-    for method in METHODS:
+    for method in selected_methods(args):
         paths = candidate_paths(args,method)
         print(method, 'candidate_checkpoints=',[str(p) for p in paths])
         target = run_out(args,method)/'attacks/metafiplusplus/seed42'/method
@@ -644,6 +660,23 @@ def summarize(args):
         path.write_text(content,encoding='utf-8')
 
 
+def summarize_training(args):
+    """Four trained victims are not four evaluated comparison rows."""
+    rows = []
+    for method in selected_methods(args):
+        folder = run_out(args,method)/'attacks/metafiplusplus/seed42'/method
+        receipt = read(folder/'trained_final199.json')
+        if (receipt.get('status') != 'TRAINED_NOT_EVALUATED' or
+                receipt.get('epoch') != 199 or
+                receipt.get('checkpoint_sha256') != sha(folder/'checkpoint.pt')):
+            raise ValueError(f'{method}: final training checkpoint/receipt mismatch')
+        rows.append(dict(method=method,checkpoint=str(folder/'checkpoint.pt'),**receipt))
+    write(args.out/'training_results.json',dict(profile=PROFILE,
+        status='TRAINED_NOT_EVALUATED',queue_scope=queue_scope(args),rows=rows,
+        evaluation_requires='Matching MetaFi++ PiW3D final199 Clean AdamW checkpoint and plan; '
+                            'no SGD replacement and no implicit Clean/A1 training.'))
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--mode',required=True,choices=('inspect','prepare','check','launch','status','cell'))
@@ -651,7 +684,12 @@ def main(argv=None):
         p.add_argument('--'+name,type=Path,required=True)
     p.add_argument('--method',choices=METHODS)
     p.add_argument('--work',choices=('prepare','check','train','evaluate'))
+    p.add_argument('--four-attacks-only',action='store_true',
+        help='Train only FTrojan/BPP/FIBA/WaNet serially; no Clean/A1 or evaluation.')
     args = p.parse_args(argv)
+    if args.four_attacks_only and args.mode == 'cell' and (
+            args.method not in NATIVE or args.work == 'evaluate'):
+        p.error('Four-attacks-only permits only native attack prepare/check/train cells')
     for key in ('data_home','dataset','action','out','checkpoint_home'):
         setattr(args,key,getattr(args,key).resolve())
     if args.out == args.dataset or args.out in args.dataset.parents or args.dataset in args.out.parents:
@@ -674,13 +712,14 @@ def main(argv=None):
             raise ValueError('At least 4 GiB free required for six victims/atomic saves')
         logs = args.out/'logs'; logs.mkdir(exist_ok=True)
         if args.mode in ('check','launch'):
-            for method in METHODS:
+            for method in selected_methods(args):
                 subprocess.run(command(args,method,'check'),check=True)
         if args.mode == 'check':
             print('VERIFIED_PRELAUNCH_GATE; no training launched',flush=True); return 0
-        phases = ('prepare',) if args.mode == 'prepare' else ('train','evaluate')
+        phases = (('prepare',) if args.mode == 'prepare' else
+                  ('train',) if args.four_attacks_only else ('train','evaluate'))
         for phase in phases:
-            for method in METHODS:
+            for method in selected_methods(args):
                 require_idle()
                 if phase == 'prepare' and gate_path(args,method).exists():
                     subprocess.run(command(args,method,'check'),check=True)
@@ -693,17 +732,25 @@ def main(argv=None):
                     tail = '\n'.join(log.read_text(encoding='utf-8',errors='replace').splitlines()[-12:])
                     raise RuntimeError(f'{method}/{phase} failed; no retry/later jobs: {log}\n{tail}')
         if args.mode == 'launch':
-            summarize(args)
+            if args.four_attacks_only:
+                summarize_training(args)
+            else:
+                summarize(args)
         else:
             write(args.out/'execution_scope.json',dict(profile=PROFILE,
-                selected_methods=list(METHODS),excluded_methods=['tsba_adapted','smooth_lf_csi'],
+                selected_methods=list(selected_methods(args)),
+                excluded_methods=(['clean','a1'] if args.four_attacks_only else [])+
+                                 ['tsba_adapted','smooth_lf_csi'],
+                queue_scope=queue_scope(args),
                 backbone='metafiplusplus',dataset='person-in-wifi-3d',seed=42,
                 gpu='cuda:0',jobs_per_gpu=1,recipe=RECIPE,physical_batch=32,final_epoch=199,
-                checkpoint_selections={m:read(gate_path(args,m))['checkpoint_selection'] for m in METHODS},
+                checkpoint_selections={m:read(gate_path(args,m))['checkpoint_selection'] for m in selected_methods(args)},
                 code=code_binding(),
                 note='Legacy scientific plans retain their original method lists for provenance; '
-                     'only these six rows are scheduled. Not the complete eight-row paper table.'))
-        print('PREPARED_ONLY; no full training' if args.mode == 'prepare' else 'ALL_SIX_COMPLETE',flush=True)
+                     'only the explicit queue scope is scheduled. Not the complete eight-row paper table.'))
+        print('PREPARED_ONLY; no full training' if args.mode == 'prepare' else
+              'ALL_FOUR_TRAINED_NOT_EVALUATED' if args.four_attacks_only else
+              'ALL_SIX_COMPLETE',flush=True)
     return 0
 
 
