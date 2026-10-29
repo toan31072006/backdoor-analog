@@ -1,6 +1,7 @@
 """CPU/PowerShell checks for the one-cell historical A1 handoff; no GPU run."""
 from pathlib import Path
 import base64
+import copy
 import json
 import os
 import re
@@ -106,7 +107,7 @@ def test_authorized_sig_peer_policy_rejects_every_other_training_job():
 $d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{payload}'))|ConvertFrom-Json
 $DataHome=$d.home;$SIGRunner=$d.runner;$SIGOutdir=$d.out
 $ast=[System.Management.Automation.Language.Parser]::ParseFile('{ps_path}',[ref]$null,[ref]$null)
-$nodes=$ast.FindAll({{param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Test-ExactArgument','Test-AuthorizedSIG','Assert-GpuPolicy')}},$true)
+$nodes=$ast.FindAll({{param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Test-ExactArgument','Test-AuthorizedSIG','Test-AnyDeskDesktopPath','Assert-GpuPolicy')}},$true)
 foreach($n in $nodes){{Invoke-Expression $n.Extent.Text}}
 foreach($line in $d.valid){{if(!(Test-AuthorizedSIG ([pscustomobject]@{{Name='python.exe';CommandLine=$line}}))){{throw 'Valid SIG rejected'}}}}
 foreach($line in $d.invalid){{if(Test-AuthorizedSIG ([pscustomobject]@{{Name='python.exe';CommandLine=$line}})){{throw ('Wrong job accepted: '+$line)}}}}
@@ -125,12 +126,64 @@ $script:FakeRows=@('14504, C:\\env\\python.exe','40232, C:\\env\\python.exe')
 $script:FakeProcesses=@([pscustomobject]@{{ProcessId=14504;Name='python.exe';CommandLine=$d.valid[0]}},[pscustomobject]@{{ProcessId=40232;Name='python.exe';CommandLine=$d.valid[0]}})
 $blocked=$false;try{{Assert-GpuPolicy}}catch{{$blocked=$true}};if(!$blocked){{throw 'Two SIG workers were allowed'}}
 $script:FakeRows=@('12724, C:\\Windows\\explorer.exe');Assert-GpuPolicy
+$AllowConcurrentSIG=$false
+$script:FakeRows=@('30540, '+(Join-Path ${{env:ProgramFiles(x86)}} 'AnyDesk\\AnyDesk.exe'));Assert-GpuPolicy
+$script:FakeRows=@('30540, C:\\Temp\\AnyDesk.exe');$script:FakeProcesses=@();$blocked=$false
+try{{Assert-GpuPolicy}}catch{{$blocked=$true}};if(!$blocked){{throw 'Arbitrary AnyDesk basename was allowed'}}
 'SIG_POLICY_TESTS_PASSED'
 """
     result = subprocess.run(['powershell','-NoProfile','-Command',command],
                             capture_output=True,text=True,timeout=30)
     assert result.returncode == 0,result.stdout+result.stderr
     assert 'SIG_POLICY_TESTS_PASSED' in result.stdout
+
+
+@pytest.mark.skipif(os.name != 'nt' or not shutil.which('powershell'),reason='Windows PowerShell required')
+def test_desktop_gate_refresh_allows_only_pinned_wrapper_hash_change():
+    old = dict(scope='a1_only_hpeli_mmfi_p3s3_s42_4090_v1',cell='p3_s3_a1',
+        wrapper_sha256='9e6953da833683cc0968ddf3a76c3a28bfc777b589570103353bc8f1a5caf565',
+        runner_sha256='unchanged-runner',data_home='same-home',outdir='same-output',
+        files={'plan':'same-plan','preflight':'same-input-audit','gpu_smoke':'same-smoke'},
+        execution_policy={'allow_concurrent_sig':True,'maximum_sig_workers':1},
+        host_binding={'gpu':'same-gpu-uuid','runtime':'same-packages','python_sha256':'same-python'})
+    current = copy.deepcopy(old)
+    current['wrapper_sha256'] = 'new-wrapper'
+    invalid = []
+    for key in ('scope','cell','runner_sha256','data_home','outdir'):
+        changed = copy.deepcopy(current);changed[key] = 'tampered';invalid.append([old,changed])
+    for section,key in [('files','plan'),('files','preflight'),('files','gpu_smoke'),
+                        ('execution_policy','allow_concurrent_sig'),
+                        ('execution_policy','maximum_sig_workers'),
+                        ('host_binding','gpu'),('host_binding','runtime'),('host_binding','python_sha256')]:
+        changed = copy.deepcopy(current);changed[section][key] = 'tampered';invalid.append([old,changed])
+    unknown = copy.deepcopy(old);unknown['wrapper_sha256'] = 'not-approved'
+    invalid.append([unknown,current])
+    crlf = copy.deepcopy(old)
+    crlf['wrapper_sha256'] = '61fbb0788458880b9cd2f6dfc529d199f9cf034ce2694229e538221479ae4eae'.upper()
+    payload = base64.b64encode(json.dumps(dict(valid=[[old,current],[crlf,current]],invalid=invalid)).encode()).decode()
+    path = str(SCRIPT).replace("'","''")
+    command = f"""
+$d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{payload}'))|ConvertFrom-Json
+$ast=[System.Management.Automation.Language.Parser]::ParseFile('{path}',[ref]$null,[ref]$null)
+$node=$ast.FindAll({{param($n)$n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-DesktopGateUpgrade'}},$true)[0]
+Invoke-Expression $node.Extent.Text
+foreach($pair in $d.valid){{Assert-DesktopGateUpgrade $pair[0] $pair[1]}}
+foreach($pair in $d.invalid){{$blocked=$false;try{{Assert-DesktopGateUpgrade $pair[0] $pair[1]}}catch{{$blocked=$true}};if(!$blocked){{throw 'Changed gate was accepted'}}}}
+'DESKTOP_REFRESH_TESTS_PASSED'
+"""
+    result = subprocess.run(['powershell','-NoProfile','-Command',command],
+                            capture_output=True,text=True,timeout=30)
+    assert result.returncode == 0,result.stdout+result.stderr
+    assert 'DESKTOP_REFRESH_TESTS_PASSED' in result.stdout
+    source = SCRIPT.read_text(encoding='utf-8')
+    refresh = source[source.index("if ($Mode -eq 'RefreshDesktopGate')"):source.index("if ($Saved -ne $Current)")]
+    assert refresh.count('Assert-DesktopGateUpgrade') == 2
+    assert "Invoke-Legacy 'gpu-smoke'" in refresh
+    assert "Invoke-Legacy 'preflight'" not in refresh
+    assert '[IO.File]::Copy($GatePath,$Backup,$false)' in refresh
+    assert '[IO.File]::Replace' in refresh
+    assert 'checkpoint.pt' in refresh
+    assert 'Start-Process' not in refresh
 
 
 @pytest.mark.skipif(os.name != 'nt' or not shutil.which('powershell'),reason='Windows PowerShell required')

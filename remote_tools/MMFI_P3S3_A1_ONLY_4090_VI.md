@@ -59,6 +59,26 @@ thiếu bộ nhớ. Nếu SIG kết thúc trước Launch thì A1 vẫn được
 Không bảo đảm hai job nhanh hơn hoặc cùng vừa VRAM; chưa có xác minh CUDA
 concurrent trên máy Vân. Không pull/sửa source của SIG trong lúc nó đang train.
 
+## Nếu Launch bị chặn bởi AnyDesk sau khi Prepare đã PASS
+
+Không tắt AnyDesk: đó có thể là đường remote hiện tại. Bản sửa nhận diện đúng
+`AnyDesk/AnyDesk.exe` dưới Program Files hoặc Program Files (x86), không miễn
+kiểm tra mọi process trùng basename hoặc mọi Python process.
+
+Sau pull bản sửa, chạy:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode RefreshDesktopGate -AllowConcurrentSIG
+```
+
+Chỉ hỗ trợ gate từ chính wrapper d5f1b1f đã publish, khi chưa có checkpoint A1.
+Mọi field cũ ngoài hash wrapper phải giữ nguyên: runner, plan, full-split audit,
+smoke receipt, runtime, GPU, data paths và policy SIG. Nó giữ bản sao gate cũ,
+chạy lại một B32 smoke với tải SIG/desktop hiện tại (không audit lại toàn bộ
+split), rồi lưu receipt refresh. Không sửa checkpoint hoặc công thức A1/SIG.
+Khi hiện DESKTOP_GATE_REFRESHED, dùng lệnh Launch -AllowConcurrentSIG như trên.
+Không tự sửa/xóa gate để ép launch nếu refresh bị từ chối.
+
 Khi có `PREPARED_ONLY`, chạy riêng:
 
 ```powershell

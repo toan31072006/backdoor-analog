@@ -8,7 +8,7 @@ controller. Prepare runs no full training. Historical outputs are untouched.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Inspect','Prepare','CheckOnly','Launch','Status')]
+    [ValidateSet('Inspect','Prepare','RefreshDesktopGate','CheckOnly','Launch','Status')]
     [string]$Mode = 'Inspect',
     [string]$DataHome = (Join-Path $env:USERPROFILE 'backdooranalog'),
     [string]$Outdir = '',
@@ -88,6 +88,17 @@ function Test-AuthorizedSIG($Process) {
     }
     return $true
 }
+function Test-AnyDeskDesktopPath([string]$ProcessPath) {
+    # WDDM lists remote-display rendering as compute. Do not stop the remote
+    # access application, and do not exempt arbitrary executables by basename.
+    foreach ($Root in @($env:ProgramFiles,${env:ProgramFiles(x86)})) {
+        if ($Root -and [string]::Equals($ProcessPath,
+                (Join-Path $Root 'AnyDesk\AnyDesk.exe'),[StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
 function Assert-GpuPolicy {
     $Rows = @(& nvidia-smi '--query-compute-apps=pid,process_name' '--format=csv,noheader,nounits')
     if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect GPU processes.' }
@@ -104,6 +115,7 @@ function Assert-GpuPolicy {
         $Executable = [IO.Path]::GetFileName($Matches[2]).ToLowerInvariant()
         if ($GpuProcessId -eq 4 -and $Executable -eq 'system') { continue }
         if ($Executable -in $Desktop) { continue }
+        if (Test-AnyDeskDesktopPath $Matches[2]) { continue }
         if ($AllowConcurrentSIG) {
             $Candidate = Get-CimInstance Win32_Process -Filter "ProcessId=$GpuProcessId"
             if (Test-AuthorizedSIG $Candidate) {
@@ -116,6 +128,23 @@ function Assert-GpuPolicy {
     $SIGIds = @($SIGIds | Select-Object -Unique)
     if ($SIGIds.Count -gt 1) { throw 'Multiple SIG workers found; only one authorized peer is allowed.' }
     if ($SIGIds.Count -eq 1) { Write-Host "AUTHORIZED_SIG_PEER PID=$($SIGIds[0]); left running. At most one A1 + one SIG." }
+}
+function Assert-DesktopGateUpgrade($SavedGate,$CurrentGate) {
+    # Only the exact published d5f1b1f wrapper (LF or Git's Windows CRLF) is
+    # eligible. No arbitrary source/gate/runtime change is grandfathered in.
+    $Predecessors = @(
+        '9e6953da833683cc0968ddf3a76c3a28bfc777b589570103353bc8f1a5caf565',
+        '61fbb0788458880b9cd2f6dfc529d199f9cf034ce2694229e538221479ae4eae'
+    )
+    if ([string]$SavedGate.wrapper_sha256 -notin $Predecessors) {
+        throw 'Gate is not from the exact pre-AnyDesk launcher; refusing refresh.'
+    }
+    $Comparison = $SavedGate | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $Comparison.wrapper_sha256 = $CurrentGate.wrapper_sha256
+    if (($Comparison | ConvertTo-Json -Depth 12 -Compress) -cne
+            ($CurrentGate | ConvertTo-Json -Depth 12 -Compress)) {
+        throw 'Something besides the desktop-wrapper hash changed; refusing refresh.'
+    }
 }
 function Get-GateBinding {
     $Files = [ordered]@{}
@@ -178,8 +207,37 @@ if ($Mode -eq 'Prepare') {
     return
 }
 if (!(Test-Path -LiteralPath $GatePath)) { throw 'Missing A1-only gate; run Prepare first.' }
-$Saved = (Read-Json $GatePath) | ConvertTo-Json -Depth 12 -Compress
-$Current = (Get-GateBinding) | ConvertTo-Json -Depth 12 -Compress
+$SavedObject = Read-Json $GatePath
+$CurrentObject = Get-GateBinding
+$Saved = $SavedObject | ConvertTo-Json -Depth 12 -Compress
+$Current = $CurrentObject | ConvertTo-Json -Depth 12 -Compress
+if ($Mode -eq 'RefreshDesktopGate') {
+    if ($Saved -ceq $Current) { 'DESKTOP_GATE_ALREADY_CURRENT; no training launched.'; return }
+    if (Test-Path -LiteralPath (Join-Path $CellFolder 'checkpoint.pt')) {
+        throw 'A1 checkpoint already exists; this prelaunch-only desktop refresh is not applicable.'
+    }
+    Assert-DesktopGateUpgrade $SavedObject $CurrentObject
+    # Keep the full split audit, but retest B32 with the current SIG/desktop
+    # load. The scientific runner also revalidates its complete source plan.
+    Invoke-Legacy 'gpu-smoke'
+    Assert-GpuPolicy
+    $CurrentObject = Get-GateBinding
+    Assert-DesktopGateUpgrade $SavedObject $CurrentObject
+    $Stamp = (Get-Date -Format 'yyyyMMdd_HHmmss_fff') + '_' + [guid]::NewGuid().ToString('N').Substring(0,8)
+    $Backup = Join-Path $Outdir "a1_only_4090_gate.before_anydesk.$Stamp.json"
+    [IO.File]::Copy($GatePath,$Backup,$false)
+    $Temporary = $GatePath + '.desktop-refresh.' + $Stamp + '.saving'
+    [IO.File]::WriteAllText($Temporary,($CurrentObject | ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
+    [IO.File]::Replace($Temporary,$GatePath,$null)
+    $Receipt = [ordered]@{ scope='prelaunch_anydesk_desktop_only'; previous_gate_backup=$Backup;
+        previous_wrapper_sha256=$SavedObject.wrapper_sha256; current_wrapper_sha256=$CurrentObject.wrapper_sha256;
+        unchanged_scientific_receipts=$CurrentObject.files; current_b32_smoke_passed=$true;
+        checkpoint_modified=$false; full_training_started=$false }
+    [IO.File]::WriteAllText((Join-Path $Outdir "desktop_gate_refresh.$Stamp.json"),
+        ($Receipt | ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
+    'DESKTOP_GATE_REFRESHED; previous gate backed up; B32 retested; no training launched.'
+    return
+}
 if ($Saved -ne $Current) { throw 'Code/data receipt/runtime/GPU/scope gate changed; refusing launch.' }
 if ($Mode -eq 'CheckOnly') { 'VERIFIED_PRELAUNCH_GATE; no training launched.'; return }
 Assert-GpuPolicy
