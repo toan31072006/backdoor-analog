@@ -31,7 +31,7 @@ if (!(Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
     $DownloadDrive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($ZipPath))
     $Part = $ZipPath + '.part'
     $HaveBytes = if (Test-Path -LiteralPath $Part -PathType Leaf) { (Get-Item -LiteralPath $Part).Length } else { 0 }
-    if ($DownloadDrive.AvailableFreeSpace -lt ([math]::Max(0,$ExpectedBytes-$HaveBytes) + 4GB)) {
+    if ($DownloadDrive.AvailableFreeSpace -lt ([math]::Max([long]0,[long]($ExpectedBytes-$HaveBytes)) + 4GB)) {
         throw 'Not enough free disk for the 8.58 GB ZIP plus safety margin. Choose -ZipPath on a larger drive.'
     }
     $ToolEnv = Join-Path $DataHome 'tools\gdown-backup-env'

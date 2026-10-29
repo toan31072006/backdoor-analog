@@ -83,6 +83,11 @@ phải truyền cùng `-DatasetRoot`. Có sẵn hai list thì bộ tải không 
 nhưng **không** gọi đó là full audit; Prepare mới kiểm full ordered/content.
 Nếu giải nén dở, không tự overwrite hoặc xóa thư mục để retry.
 
+PowerShell 5.1: phép tính dung lượng ZIP >8 GB dùng explicit Int64 ở cả hai
+đối số Math.Max; bản dd4c85a cũ có thể ép về Int32 khi file chưa tải, gây
+MethodArgumentConversionInvalidCastArgument trước khi tải/train. Chỉ cập nhật
+Get-PiW3DProcessedData.ps1; không xóa ZIP/.part, checkpoint hoặc env để sửa lỗi.
+
 Importer chỉ nhận đúng 12 member và bốn hash checkpoint đã biết, không overwrite
 file import khác nội dung. Import cả backup Smooth để giữ hồ sơ nhưng không
 train nó. Chuẩn bị kiểm full source/data/ordered IDs và physical B32 CUDA;

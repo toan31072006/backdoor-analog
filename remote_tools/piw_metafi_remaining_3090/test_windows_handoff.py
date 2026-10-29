@@ -101,6 +101,29 @@ def test_dataset_downloader_pins_exact_mirror_and_never_overwrites_partial_data(
     assert 'No overwrite/extraction' in source
 
 
+def test_real_large_zip_remaining_bytes_use_int64_math_overload():
+    # Exercise the exact production AST expression with the actual >8 GB ZIP,
+    # not the small fixture ZIP that masked the original PowerShell overload bug.
+    path = str(DATA).replace("'","''")
+    command = f"""
+$ErrorActionPreference='Stop'
+$ast=[System.Management.Automation.Language.Parser]::ParseFile('{path}',[ref]$null,[ref]$null)
+$nodes=@($ast.FindAll({{param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Member.Value -eq 'Max'}},$true))
+if($nodes.Count -ne 1){{throw 'Expected exactly one remaining-byte Max expression'}}
+$ExpectedBytes=[long]8577781802
+foreach($HaveBytes in @([long]0,[long]1,[long]1073741824,[long]6442450944,[long]8577781801,[long]8577781802,[long]8577781803)){{
+    $actual=Invoke-Expression $nodes[0].Extent.Text
+    $expected=if($HaveBytes -lt $ExpectedBytes){{$ExpectedBytes-$HaveBytes}}else{{[long]0}}
+    if($actual -ne $expected -or $actual -isnot [long]){{throw ('Wrong Int64 byte calculation at '+$HaveBytes)}}
+    if(($actual + 4GB) -lt 4GB){{throw 'Safety margin overflow'}}
+}}
+'INT64_LARGE_ZIP_CHECK_PASSED'
+"""
+    result = run_ps(command)
+    assert result.returncode == 0,result.stdout+result.stderr
+    assert 'INT64_LARGE_ZIP_CHECK_PASSED' in result.stdout
+
+
 @pytest.mark.parametrize('complete',[True,False])
 def test_existing_dataset_is_never_downloaded_or_modified(tmp_path,complete):
     root = tmp_path/'dataset'
