@@ -14,6 +14,7 @@ import importlib.util
 import io
 import json
 import math
+import ntpath
 import os
 from pathlib import Path
 import sys
@@ -24,6 +25,39 @@ CLEAN_PROFILE = 'piw_metafi_clean_vastenv_s42_4090_v1'
 CELL = Path('attacks/metafiplusplus/seed42/a1')
 CLEAN_CELL = Path('attacks/metafiplusplus/seed42/clean')
 POISON = dict(n_total=27876, n_poison=2787, n_cover=0)
+
+
+def gpu_conflicts(base, text, windows=False, own_pid=None, process_names=None):
+    """Keep the frozen guard; recognize two additional exact desktop paths.
+
+    Windows WDDM can list these desktop/device-host processes in compute-apps.
+    Never permit a same-named executable elsewhere, an unresolved PID or a
+    Python worker. Only the new A1 sidecar uses this extra classification.
+    """
+    rows = base.conflict_rows(text, windows, own_pid, process_names)
+    if not windows:
+        return rows
+    paths = {
+        ntpath.normcase(ntpath.normpath(ntpath.join(
+            os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'WUDFHost.exe'))),
+        ntpath.normcase(ntpath.normpath(ntpath.join(
+            os.environ.get('ProgramFiles', r'C:\Program Files'), 'TeamViewer', 'TeamViewer_Desktop.exe'))),
+    }
+    return [(pid, name) for pid, name in rows
+            if ntpath.normcase(ntpath.normpath(name)) not in paths]
+
+
+def require_idle(base):
+    report = base.subprocess.run(['nvidia-smi', '--query-compute-apps=pid,process_name',
+        '--format=csv,noheader,nounits'], capture_output=True, text=True,
+        check=True, timeout=30)
+    windows = os.name == 'nt'
+    conflicts = gpu_conflicts(base, report.stdout, windows, os.getpid())
+    if windows and any(name.casefold() in base.HIDDEN_PROCESS_NAMES for _, name in conflicts):
+        conflicts = gpu_conflicts(base, report.stdout, True, os.getpid(), base.windows_process_names())
+        print('GPU_PROCESS_NAMES_RESOLVED_VIA_WINDOWS; unknown/compute processes remain blocked', flush=True)
+    if conflicts:
+        raise ValueError(f'Other GPU work active; no process stopped: {conflicts}')
 
 
 def diagnostic():
@@ -389,7 +423,7 @@ def main(argv=None):
         stack.enter_context(base.lock(args.data_home / 'tools/clean_vastenv_gpu0_lock'))
         stack.enter_context(base.lock(args.out))
         stack.enter_context(probe.run_log(args))
-        base.require_idle()  # Unknown/compute conflicts are blocked, never killed.
+        require_idle(base)  # Unknown/compute conflicts are blocked, never killed.
         w = worker(args, base)
         cfg = configuration(args, w)
         ref = reference(args, base, w, cfg)

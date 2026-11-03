@@ -21,6 +21,11 @@ Không phải MM-Fi P3S3. Không sửa hay retrain Clean, không lấy Clean đ�
 - Một worker GPU, foreground, giữ SSH mở. Không tự kill/retry job, không chạy
   ghép job GPU khác. Resume bằng cùng lệnh Launch, chỉ từ checkpoint của run A1
   này (có optimizer/RNG/execution); không migrate checkpoint 3090/Vast.
+- WDDM guard nhận thêm đúng hai đường dẫn desktop:
+  `%ProgramFiles%/TeamViewer/TeamViewer_Desktop.exe` và
+  `%SystemRoot%/System32/WUDFHost.exe`. Không tắt các process này, không mở
+  quyền chạy ghép Python/job compute. Tên không xác định hoặc exe cùng tên ở
+  đường dẫn khác vẫn bị chặn. Guard frozen của Clean không bị sửa.
 
 Trên PowerShell máy Vân, sau khi lấy **checkout mới** chứa launcher:
 
@@ -54,3 +59,7 @@ hai launcher Clean 3090/4090 và controller frozen. Có kiểm tra identity các
 hàm scientific native, metric synthetic và ghép evaluation external Clean;
 PowerShell parser đạt. Không chạy train/evaluate trên GPU local hoặc remote.
 Các CPU/mock tests này không thay cho Prepare CUDA/full-data trên máy Vân.
+
+Fix WDDM guard 2026-11-03: 158 tests A1/controller passed; riêng 17 kiểm tra
+desktop/compute guard passed. Bản sửa chỉ nằm trong sidecar A1, không sửa
+source/guard frozen đã ràng buộc checkpoint Clean lịch sử.

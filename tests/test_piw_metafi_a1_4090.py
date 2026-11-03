@@ -203,6 +203,78 @@ def smoke_row():
                 generator_steps=0, peak_cuda_allocated=1, peak_cuda_reserved=2)
 
 
+@pytest.mark.parametrize('path', [
+    r'C:\Program Files\TeamViewer\TeamViewer_Desktop.exe',
+    r'C:\Windows\System32\WUDFHost.exe',
+    'c:/windows/system32/wudfhost.EXE',
+])
+def test_extra_desktop_exact_paths_allowed_only_on_windows(r, path, monkeypatch):
+    monkeypatch.setenv('SystemRoot', r'C:\Windows')
+    monkeypatch.setenv('ProgramFiles', r'C:\Program Files')
+    base = r.diagnostic().source_probe().base_module()
+    original_desktop = copy.deepcopy(base.DESKTOP)
+    line = f'40252, {path}\n'
+    assert r.gpu_conflicts(base, line, windows=True) == []
+    assert r.gpu_conflicts(base, line, windows=False) == [(40252, path)]
+    assert base.DESKTOP == original_desktop
+    assert base.conflict_rows(line, windows=True) == [(40252, path)]
+
+
+@pytest.mark.parametrize('path', [
+    'python.exe', r'C:\env\python.exe', 'pythonw.exe',
+    '[Insufficient Permissions]', '[Unknown]',
+    'WUDFHost.exe', 'TeamViewer_Desktop.exe',
+    r'C:\Temp\WUDFHost.exe', r'C:\Temp\TeamViewer_Desktop.exe',
+    r'C:\Windows\System32\WUDFHost.exe.other',
+    r'C:\Program Files\TeamViewerFake\TeamViewer_Desktop.exe',
+])
+def test_compute_unknown_and_same_named_elsewhere_still_blocked(r, path, monkeypatch):
+    monkeypatch.setenv('SystemRoot', r'C:\Windows')
+    monkeypatch.setenv('ProgramFiles', r'C:\Program Files')
+    base = r.diagnostic().source_probe().base_module()
+    assert r.gpu_conflicts(base, f'7, {path}\n', windows=True) == [(7, path)]
+
+
+def test_desktop_filter_mixed_with_compute_never_hides_python(r):
+    base = r.diagnostic().source_probe().base_module()
+    rows = ('40252, C:\\Program Files\\TeamViewer\\TeamViewer_Desktop.exe\n'
+            '31436, C:\\Windows\\System32\\WUDFHost.exe\n'
+            '42, python.exe\n43, [Insufficient Permissions]\n')
+    assert r.gpu_conflicts(base, rows, True, process_names={43: 'pythonw.exe'}) == [
+        (42, 'python.exe'), (43, 'pythonw.exe')]
+    assert r.gpu_conflicts(base, rows, True, own_pid=42, process_names={43: 'pythonw.exe'}) == [
+        (43, 'pythonw.exe')]
+
+
+def test_gpu_guard_handles_exact_user_report_without_modifying_frozen_guard(r, monkeypatch):
+    base = r.diagnostic().source_probe().base_module()
+    monkeypatch.setattr(r, 'os', NS(name='nt', getpid=lambda: 99999,
+        environ={'SystemRoot': r'C:\Windows', 'ProgramFiles': r'C:\Program Files'}))
+    report = ('40252, C:\\Program Files\\TeamViewer\\TeamViewer_Desktop.exe\n'
+              '31436, C:\\Windows\\System32\\WUDFHost.exe\n')
+    calls = []
+    def query(command, **kwargs):
+        calls.append(command)
+        return NS(stdout=report)
+    monkeypatch.setattr(base.subprocess, 'run', query)
+    original = base.require_idle
+    r.require_idle(base)
+    assert base.require_idle is original
+    assert calls == [['nvidia-smi', '--query-compute-apps=pid,process_name', '--format=csv,noheader,nounits']]
+    report += '77, python.exe\n'
+    with pytest.raises(ValueError, match='python.exe'):
+        r.require_idle(base)
+
+
+def test_gpu_guard_unknown_pid_keeps_fail_closed(r, monkeypatch):
+    base = r.diagnostic().source_probe().base_module()
+    monkeypatch.setattr(r, 'os', NS(name='nt', getpid=lambda: 99999, environ={}))
+    monkeypatch.setattr(base.subprocess, 'run', lambda *a, **k: NS(stdout='77, [Insufficient Permissions]\n'))
+    monkeypatch.setattr(base, 'windows_process_names', lambda: {})
+    with pytest.raises(ValueError, match='Insufficient Permissions'):
+        r.require_idle(base)
+
+
 def test_prepare_native_smoke_stops_without_training_and_reuses_gate(r, data, monkeypatch):
     x = data
     ref = r.reference(x.args, x.base, x.w, x.cfg)
