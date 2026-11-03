@@ -13,6 +13,7 @@ import importlib.util
 import io
 import json
 import math
+import ntpath
 import os
 from pathlib import Path
 import shutil
@@ -24,6 +25,32 @@ METHODS = ('fiba', 'wanet_source', 'ftrojan', 'bpp_source')
 NAMES = dict(fiba='FIBA-CSI', wanet_source='WaNet-CSI', ftrojan='FTrojan-CSI', bpp_source='BppAttack-CSI')
 COVERS = dict(fiba=.1, wanet_source=.2, ftrojan=0., bpp_source=.1)
 CELL = Path('attacks/metafiplusplus/seed42')
+
+
+class _DesktopGpuGuard:
+    """Extend this queue's guard without changing historical A1/Clean code."""
+
+    def __init__(self, base):
+        self.base = base
+
+    def __getattr__(self, name):
+        return getattr(self.base, name)
+
+    def conflict_rows(self, text, windows=False, own_pid=None, process_names=None):
+        rows = self.base.conflict_rows(text, windows, own_pid, process_names)
+        if not windows:
+            return rows
+        desktop = ntpath.normcase(ntpath.normpath(ntpath.join(
+            os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'),
+            'Microsoft', 'Copilot', 'Application', 'undocked_copilot', 'copilotapphost.exe')))
+        return [(pid, name) for pid, name in rows
+                if ntpath.normcase(ntpath.normpath(name)) != desktop]
+
+
+def require_idle(a1, base):
+    # Reuse the query, hidden-PID fallback and exact TeamViewer/WUDFHost rules.
+    # Only the observed full Windows Copilot desktop path is additionally allowed.
+    a1.require_idle(_DesktopGpuGuard(base))
 
 
 def a1_sidecar():
@@ -304,7 +331,7 @@ def run(args, a1, base, w, cfg, ref):
             return
         saved = create_plan(args, a1, base, w, cfg, ref)
         for method in METHODS:
-            a1.require_idle(base)
+            require_idle(a1, base)
             native_smoke(args, a1, base, w, saved, method)
         base.write(args.out / 'prelaunch_gate.json', gate_binding(args, a1, base, saved, ref))
         print('PREPARED_ONLY: reused full Clean audit + four serial CUDA B32 smokes; no full training', flush=True)
@@ -316,7 +343,7 @@ def run(args, a1, base, w, cfg, ref):
         return
     # Keep the native fixed-final policy: all four victims complete before TEST.
     for method in METHODS:
-        a1.require_idle(base)
+        require_idle(a1, base)
         path = args.out / CELL / method / 'checkpoint.pt'
         if path.exists() and own_checkpoint(base, w, saved, ref, method)['epoch'] == 199:
             print('TRAIN_FINAL199_REUSED ' + method, flush=True)
@@ -325,7 +352,7 @@ def run(args, a1, base, w, cfg, ref):
         w.train_cell(saved, 'metafiplusplus', method, 'cuda:0')
         own_checkpoint(base, w, saved, ref, method, final=True)
     for method in METHODS:
-        a1.require_idle(base)
+        require_idle(a1, base)
         evaluate(args, a1, base, w, saved, ref, method)
     summary(args, a1, base, saved, ref)
 
@@ -379,7 +406,7 @@ def main(argv=None):
         stack.enter_context(probe.run_log(args))
         if shutil.disk_usage(args.data_home).free < 5 * 2**30:
             raise ValueError('At least 5 GiB free required; no cleanup or checkpoint deletion')
-        a1.require_idle(base)
+        require_idle(a1, base)
         w = worker(args, base)
         cfg = configuration(args, w)
         ref = a1.reference(args, base, w, cfg)

@@ -53,6 +53,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Launch
 Resume dùng cùng Launch, không Prepare/git pull/reinstall. Không xóa lock hoặc
 gate để ép chạy. Nếu còn job GPU khác thì dừng, không tự tắt process.
 
+WDDM có thể liệt kê Copilot desktop trong compute-apps. Launcher bốn baseline
+cho phép đúng đường dẫn `%ProgramFiles(x86)%/Microsoft/Copilot/Application/undocked_copilot/copilotapphost.exe`
+(so khớp full path, chỉ Windows), ngoài các desktop rules hiện có. Tên file trần,
+cùng tên ở thư mục khác, PID không xác định và Python vẫn bị chặn. Không sửa
+controller hoặc sidecar A1/Clean lịch sử, không kill process hay đổi training.
+Nếu lỗi xảy ra ngay ở idle guard trước khi có plan/smokes/gate, cập nhật checkout
+launcher chưa chạy rồi gọi lại Prepare; không xóa thư mục run hoặc receipt.
+
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Status
 ```
@@ -75,3 +83,9 @@ identity, bốn operator/phase/cover-state replay, FTrojan Linux key, external
 Clean six-dose metric parity trên dữ liệu synthetic, serial scheduling,
 resume/fail-stop, recipe guards và PowerShell parser đều đạt.
 Chưa chạy full dataset/CUDA smoke/training trên máy Vân từ workspace Admin.
+
+Hotfix WDDM Copilot 2026-11-04: **232 tests đạt, exit0** trong một lượt gồm
+21 tests guard mới và 211 tests launcher/A1/controller. Exact user path,
+Windows-only/path-normalization, giữ chặn Python/PID không rõ/cùng tên nơi khác,
+CIM fallback và guard gốc không bị sửa đều được kiểm tra bằng CPU/mock.
+Không phải xác nhận CUDA smoke hoặc full training đã chạy trên Vân.
