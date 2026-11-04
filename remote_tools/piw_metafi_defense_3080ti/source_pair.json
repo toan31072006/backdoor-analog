@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "checkpoints": {
+    "clean": {
+      "profile": "piw_metafi_clean_vastenv_s42_4090_v1",
+      "method": "clean",
+      "plan_sha256": "5ffa5c13a31542309b39cb725538d4e329483c16c2c26d10fa21d6dec39be352",
+      "checkpoint_sha256": "2e61eda62f4a0292ce8a3ff9a7487018482707c1e07329d9e3cdea8783680287",
+      "epoch": 199
+    },
+    "a1": {
+      "profile": "piw_metafi_a1_vastenv_s42_4090_v1",
+      "method": "a1",
+      "plan_sha256": "d4a8f109e883efe5ed29e44c8e2bb2174a997b89df258b6cdbd743035378dd6d",
+      "checkpoint_sha256": "c0bbb2440c8d7f235b3aa3e47b49fb85a185442ce9d470482c56fadb00e7f404",
+      "epoch": 199
+    }
+  },
+  "target": {
+    "alignment": "none",
+    "axis": "normalize(clean_GT[5] - clean_GT[7])",
+    "axis_min_metres": 1e-06,
+    "dose_mode": "linear",
+    "pck_ref": [
+      6,
+      4
+    ],
+    "pivot": 7,
+    "target_joints": [
+      11,
+      13
+    ],
+    "target_pck_threshold": 0.2,
+    "theta_max_deg": 40.0,
+    "version": "piw_body_hip_axis_v2"
+  },
+  "seed": 42,
+  "action_sha256": "2e8fc11192cc3ee7ee3f5544cb3c5e19f771f7f7265dde93af8969af41a2be3e",
+  "feeder_sha256": "f159a5c595d742c530039961fdd4d11b3115ce4ce566f3107b3a18ead99a065e",
+  "trigger_sources": {
+    "piw_v2_adapter.py": "c541fba5379ba21b1df31f001a488efd78f367de73b82efeffa6b2c4d3ce8507",
+    "piw_a1_adapter.py": "80b658355ab674f482a2342de3f9c623e96ccf61a7f42f595faac22d23a36954",
+    "attack/trigger.py": "59dba11704a3d716be0ada460f5163a8f20561e348ad038e58d7fb96d1a1d4b4",
+    "attack/method_drafts.py": "65c557f96b4abbf53c366f9043100485bec935a4d7a22b69bc2f05740f8ae876",
+    "attack/tsba.py": "15fead130f47bd4ef0e87b36d4b30061d054b9f673fcf8f2278d68cf611f5038"
+  },
+  "trigger_protocol": {
+    "adaptation": "same 3x30x20 A1 gain/clip independently on three normalized amplitude blocks; phase unchanged; no second normalization",
+    "aoa_spread": 0.6,
+    "attack_eps": 0.185,
+    "dataset": "person-in-wifi-3d",
+    "dose_coupling": "paired",
+    "dose_grid": [
+      0.0,
+      0.2,
+      0.4,
+      0.6,
+      0.8,
+      1.0
+    ],
+    "dose_max": 1.0,
+    "dose_min": 0.2,
+    "experiment_name": "one-person",
+    "fc_hz": 5320000000.0,
+    "feature_shape": [
+      3,
+      180,
+      20
+    ],
+    "injection_domain": "normalized model input",
+    "link_groups": 3,
+    "method_carrier_seed": 42,
+    "method_carrier_sub_mode": 3,
+    "method_carrier_time_mode": 1,
+    "n_ant": 3,
+    "n_pkt": 20,
+    "n_sub": 30,
+    "no_peak_projection": true,
+    "original_a1_operator_reused": true,
+    "original_mmfi_full_reproduction": false,
+    "packet_rate_hz": 1000.0,
+    "phase_policy": "unchanged bit-for-bit float32",
+    "poison_select": "uniform",
+    "rho": 0.1,
+    "seed": 42,
+    "source_operator": "attack.method_drafts.MDMultiCarrierTrigger",
+    "subcarrier_spacing_hz": 312500.0,
+    "target_pck_ref": [
+      6,
+      4
+    ],
+    "target_pck_threshold": 0.2,
+    "threat_model": "digital CSI training-data poisoning",
+    "top_k": 6,
+    "trigger": "piw3d_a1_multicarrier_amplitude_adaptation",
+    "trigger_zero_mean": true
+  },
+  "source_files": {
+    "piw_metafi_frozen/metafi_plus_plus_piw3d.py": "88e21059bf7f2e647a62459b60c678e13dac31d4b1786cb646ea0ae481959383",
+    "piw_metafi_frozen/metafi_plus_plus.py": "58eded983ce1735d81410456e324fdb6e6e5daa203123d578e5f7439f879cf85",
+    "piw_metafi_frozen/metafi_channel_transformer.py": "c573538ea02bfe074ddfdc6bcd0318ecda225b57937db9bf754ace40b5f8c1ab",
+    "piw_metafi_frozen/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "piw_metafi_nad_runtime_v2.py": "b9ca4dcfda997b6feb588833d54c0565852cea901202667b49febfe72a57c2b3"
+  },
+  "assets": {
+    "model_source.zip": "7c00a487f1fe10b280796175ce6a2494e4dcae7cd15e5ca8df1dd583709021f6",
+    "source_inputs.json.gz": "6730330be9f5e6e22bb82a394b4dc6786ddb2a5b3ca2a427cc5309f241c58de9"
+  },
+  "provenance": "Fresh 4090 Clean/A1 plans and SHA-bound final199 checkpoints; no weights/raw CSI in this package",
+  "metadata_sha256": "158fd581421d938d164cc899692c2110e59eb73a0ae14f7af2bba31e18fdc9e8"
+}
