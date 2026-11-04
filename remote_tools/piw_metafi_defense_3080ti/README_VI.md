@@ -63,6 +63,14 @@ repair nhưng chưa báo kết quả phải được kiểm tra thủ công, kh�
 
 ## Điều kiện và bảo toàn nguồn
 
+Sửa preflight ngày2026-11-04: native `ordered_names_sha256` là SHA256 của
+`'\n'.join(names) + '\n'`, không phải canonical JSON. Bản đầu nhầm convention,
+nên từ chối cả list đúng trước smoke/repair. Bản sửa kiểm LF digest và so từng
+tên đúng thứ tự. Không sort/remap/drop mẫu, không nới hash nội dung, không đổi
+clean bank hoặc recipe. Không cần xóa thư mục/log của lần preflight thất bại.
+Gate bản sửa: **48 tests PASS**, gồm metadata ID thật27876TRAIN/2586TEST,
+tái hiện JSON-vs-LF false rejection và reject đảo thứ tự/thiếu/trùng ID.
+
 - Existing env: `$BASE/env/bin/python`, RTX3080Ti, một visible GPU, ít nhất8GiB disk.
   `$BASE=/media/jackson/Data/wificsi/defense_s42_3080ti` mặc định.
 - Clean: `/home/wificsi/clean_metafi4090_s42.pt`, SHA

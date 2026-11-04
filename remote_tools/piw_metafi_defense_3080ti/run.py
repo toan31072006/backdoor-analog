@@ -132,6 +132,26 @@ def compare_input_receipts(old, native):
         raise ValueError('CEI data content receipt differs from fresh 4090 training inputs')
 
 
+def verify_ordered_names(dataset, source, split):
+    """Native ordered_names_sha256 hashes LF-joined names, NOT canonical JSON.
+
+    Keep the full ordered-list comparison too: this is not permission to
+    reorder/drop frames or silently translate trusted-bank integer indices.
+    """
+    expected = source['ordered_names']
+    actual = [item['name'] for item in dataset.items]
+    if (not expected or any(not isinstance(name, str) or not name
+                            or '\n' in name or '\r' in name for name in expected)
+            or len(set(expected)) != len(expected)
+            or len(expected) != source['retained_count']):
+        raise ValueError('Invalid source ordered identities: ' + split)
+    native_sha = hashlib.sha256(('\n'.join(expected) + '\n').encode('utf-8')).hexdigest()
+    if native_sha != source['ordered_names_sha256']:
+        raise ValueError('Source ordered-name LF digest differs: ' + split)
+    if actual != expected:
+        raise ValueError('Fresh-4090 ordered identities differ: ' + split)
+
+
 def recipes():
     from vast_seed42_defense_adapter import recipe
     ft, nad = recipe(BACKBONE, 'ft'), recipe(BACKBONE, 'nad')
@@ -166,8 +186,7 @@ def context(args, modules, meta):
     compare_input_receipts(old_data, native)
     train, test = modules['run_piw'].datasets(root)
     for key, dataset in (('train_data', train), ('test_data', test)):
-        if digest([item['name'] for item in dataset.items]) != native[key]['ordered_names_sha256']:
-            raise ValueError('Fresh-4090 ordered identities differ: ' + key)
+        verify_ordered_names(dataset, native[key], key)
     bank = select_clean_bank(modules['run_piw'].pair_ids(train), 42, .05, .2)
     original_bank_path = old_folder / 'hpeli/ft/clean_bank.json'
     ft_record = read(original_bank_path.parent / 'evaluation.json')

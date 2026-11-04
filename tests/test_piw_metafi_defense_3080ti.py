@@ -55,6 +55,60 @@ def test_cross_host_content_receipt_comparison_ignores_only_text_lists():
     r.compare_input_receipts(*inputs())
 
 
+@pytest.mark.parametrize('split', ['train_data', 'test_data'])
+def test_actual_4090_names_use_native_lf_digest_not_json(split):
+    import gzip
+    with gzip.open(HERE/'source_inputs.json.gz', 'rt', encoding='utf-8') as stream:
+        record = json.load(stream)[split]
+    names = record['ordered_names']
+    dataset = SimpleNamespace(items=[{'name': n} for n in names])
+    # Reproduces the reported false rejection, without reading any raw CSI.
+    assert r.digest(names) != record['ordered_names_sha256']
+    original = list(dataset.items)
+    r.verify_ordered_names(dataset, record, split)
+    assert dataset.items == original
+    assert len(names) == (27876 if split == 'train_data' else 2586)
+
+
+@pytest.mark.parametrize('mutation', ['reordered', 'missing', 'extra', 'duplicate', 'wrong_name'])
+def test_real_order_identity_mismatches_still_fail(mutation):
+    import hashlib
+    names = ['S11_01_1', 'S11_01_2', 'S11_02_1']
+    record = dict(ordered_names=names, retained_count=3,
+        ordered_names_sha256=hashlib.sha256(('\n'.join(names)+'\n').encode()).hexdigest())
+    changed = list(names)
+    if mutation == 'reordered':
+        changed.reverse()
+    elif mutation == 'missing':
+        changed.pop()
+    elif mutation == 'extra':
+        changed.append('S11_02_2')
+    elif mutation == 'duplicate':
+        changed[1] = changed[0]
+    else:
+        changed[1] = 'S11_01_99'
+    with pytest.raises(ValueError, match='ordered identities differ'):
+        r.verify_ordered_names(SimpleNamespace(items=[{'name': n} for n in changed]), record, 'train_data')
+
+
+@pytest.mark.parametrize('mutation', ['hash', 'count', 'duplicate', 'newline'])
+def test_invalid_source_order_receipt_still_fails(mutation):
+    import hashlib
+    names = ['S11_01_1', 'S11_01_2']
+    record = dict(ordered_names=names, retained_count=2,
+        ordered_names_sha256=hashlib.sha256(('\n'.join(names)+'\n').encode()).hexdigest())
+    if mutation == 'hash':
+        record['ordered_names_sha256'] = r.digest(names)
+    elif mutation == 'count':
+        record['retained_count'] = 3
+    elif mutation == 'duplicate':
+        record['ordered_names'] = [names[0], names[0]]
+    else:
+        record['ordered_names'] = [names[0], names[1]+'\n']
+    with pytest.raises(ValueError):
+        r.verify_ordered_names(SimpleNamespace(items=[{'name': n} for n in names]), record, 'train_data')
+
+
 @pytest.mark.parametrize('mutation', ['size', 'sha256', 'missing', 'extra', 'duplicate'])
 def test_cross_host_data_mismatch_fails(mutation):
     old, native = inputs()
