@@ -2,6 +2,42 @@
 
 ## Material Passport
 
+### Latest execution update: 2026-11-06, fresh BackTime / HPE-Li, P1S1 + P3S3
+
+- User explicitly requested restarting the BackTime baseline from scratch on
+  Van's Windows RTX4090 after the3090 crash, two simultaneous split pipelines,
+  P1S1 and P3S3, seed42; approved local test then commit/push. No remote training
+  was launched by the assistant; no3090 checkpoint import, no old run mutation.
+- This is a BackTime-only exploratory extension, not a completed T1/T6 table or
+  original forecasting reproduction. Reuse the published independent MM-Fi
+  CSI/pose/dose adapter unchanged (upstream9e0a1f9deecbacfdfea9159e6e8892148b44da9f).
+  Source base798723db02f93edb4312b6f3bde9f2f450d99262; runner changes are only
+  official split dispatch/count checks and report heading, not scientific loops.
+- Each split: scratch Clean50 -> scratch BackTime attacker100/B64
+  (11clean +89alternating passes, one generator update per poison recipient)
+  -> scratch victim50/B32/final49 -> six-dose evaluation. TRAIN/TEST
+  P1S1=133056/33264 and P3S3=240570/80190; rho.1, paired U(.2,1), seed42,
+  SGD.001/momentum.9/wd0 victims, FP32/workers0. P1S1 per-action subject split
+  is not globally held-out subjects; never pool its TEST with P3S3.
+- Keep pivot1->joints[2,3], Z40deg*d, TEST0,.2,.4,.6,.8,1, Target-PCK@.2
+  with cleanGT(5,12) scale; T-MPJPE@1, Target-PCK@1, mean-positive DCE,
+  CleanMPJPE/PA, same-victim no-trigger and clean-model+trigger controls,
+  per-sample artifacts. One seed only: no across-seed SD or efficacy claim.
+- `remote_tools/Start-MMFiBackTimeTwoSplits4090.ps1` and
+  `Run-MMFiBackTimeTwoSplits4090.py`; separate new root
+  `runs/mmfi_backtime_hpeli_p1s1_p3s3_s42_4090_fresh_2jobs_v1`, one child per
+  split. Prepare audits full inputs and runs two concurrent real CUDA B64/B32
+  capacity smokes; discards weights and stops. Launch remains a separate user
+  command after the bound gate. No auto retry, batch shrink, AMP, task install,
+  process kill, or source update on the remote machine. Keep SSH/Windows awake.
+- Local CPU/synthetic/process tests are not evidence of full-data validity,
+  CUDA capacity, speed, convergence or attack success. RTX4090 Prepare has not
+  been executed here. Guide: `remote_tools/MMFI_BACKTIME_TWO_SPLITS_4090_VI.md`.
+  Local gate:389passed (37new adapter +352regression), real HPE-Li CPU/synthetic
+  B64 BackTime/B32 SGD smoke, two toy OS processes and PowerShell Inspect;
+  source `attack/backtime_mmfi.py` remains byte-identical to the base checkout.
+  Earlier seed/report decisions below remain historical provenance.
+
 ### Latest reporting update: 2026-10-19, T1--T3 three seeds
 
 - User supplied `mmfi_T1_T2_T3_s42_43_44_results_20261019_154758.zip` and

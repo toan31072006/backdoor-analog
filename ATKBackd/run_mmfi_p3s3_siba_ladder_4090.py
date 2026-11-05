@@ -194,7 +194,12 @@ def load_plan(plan):
 
 def dataset(plan, split):
     import run_mmfi_p3_splits as p3
-    return p3._dataset(plan['cfg']['siba'], split)
+    cfg = plan['cfg'][plan['methods'][0]]
+    if cfg['mmfi_protocol'] == 'protocol1' and cfg['mmfi_setting'] == 's1':
+        from data_utils.feeder import MMFI
+        return MMFI(split, cfg['dataset_root'], protocol='protocol1',
+                    setting='s1', random_ratio=.8, random_seed=0)
+    return p3._dataset(cfg, split)
 
 
 def bank_selection(n):
@@ -217,7 +222,7 @@ def audit(plan):
             return verify_inputs(plan, full_hash=True)
     elif any(p.name not in ('.controller', 'logs') for p in root.iterdir()):
         raise ValueError('Nonempty unbound output; use a new directory, do not overwrite')
-    cfg = plan['cfg']['siba']
+    cfg = plan['cfg'][plan['methods'][0]]
     action = Path(cfg['action_npy'])
     if sha(action) != ACTION_SHA or not np.isfinite(np.load(action, allow_pickle=False)).all():
         raise ValueError('Authentic finite MM-Fi motion prior required')
@@ -226,9 +231,11 @@ def audit(plan):
         raise ValueError('Full P3S3 TRAIN/TEST counts required')
     splits = {s: p3._identity_digest(ds) for s, ds in data.items()}
     a, b = splits['training']['sequence_keys'], splits['test']['sequence_keys']
-    if (len(a) != 810 or len(b) != 270 or a & b or
-            {x[1] for x in a} & {x[1] for x in b}):
-        raise ValueError('P3S3 sequence/subject separation differs')
+    p1s1 = (cfg['mmfi_protocol'], cfg['mmfi_setting']) == ('protocol1', 's1')
+    expected = (448, 112) if p1s1 else (810, 270)
+    if ((len(a), len(b)) != expected or a & b or
+            (not p1s1 and {x[1] for x in a} & {x[1] for x in b})):
+        raise ValueError('Official sequence separation differs for the selected split')
     for row in splits.values():
         row.pop('sequence_keys')
     data_root = Path(cfg['dataset_root']).resolve()
@@ -260,8 +267,8 @@ def audit(plan):
             print(f'[preflight] {i}/{len(selected)} unique files validated/hashed', flush=True)
     pairs = common.paired_data(data['training'], common.Deferred(), cfg)
     poison = pairs.manifest()
-    if poison['n_poison'] != 24057:
-        raise ValueError('Expected 24057 paired poison recipients')
+    if poison['n_poison'] != plan['contract']['n_poison']:
+        raise ValueError('Paired poison count differs from the selected split')
     selection = bank_selection(len(data['training']))
     rng = np.random.default_rng(np.random.SeedSequence([42, 1103]))
     banks = {}
@@ -288,7 +295,7 @@ def verify_inputs(plan, *, full_hash=False):
     root = Path(plan['outdir'])
     row = read(root / 'inputs.json')
     if (row['plan_sha256'] != plan['plan_sha256'] or row['action_sha256'] != ACTION_SHA
-            or sha(plan['cfg']['siba']['action_npy']) != ACTION_SHA
+            or sha(plan['cfg'][plan['methods'][0]]['action_npy']) != ACTION_SHA
             or row['full_content_sha256'] != digest(row['files'])
             or row['poison_sha256'] != digest(read(root / 'poison.json'))
             or row['banks_sha256'] != digest(row['banks'])
@@ -918,7 +925,8 @@ def export(plan, env):
         raise ValueError('All selected final49 evaluations are required')
     keys = ('t_mpjpe_mm', 'target_pck_pct', 'mean_positive_dce_mm', 'clean_mpjpe_mm', 'clean_pampjpe_mm')
     clean = rows[0]['records']['clean_reference']['metrics']
-    lines = ['# Exploratory HPE-Li / MM-Fi P3S3 / seed42', '',
+    split_label = plan['contract']['protocol'].replace('protocol', 'P') + plan['contract']['setting'].upper()
+    lines = [f'# Exploratory HPE-Li / MM-Fi {split_label} / seed42', '',
         '| Method | T-MPJPE mm | Target-PCK % | Mean DCE mm | Clean MPJPE mm | Clean PA mm |',
         '|---|---:|---:|---:|---:|---:|',
         f"| Clean reference (new surrogate) | — | — | — | {clean['clean_mpjpe_mm']:.2f} | {clean['clean_pampjpe_mm']:.2f} |"]
