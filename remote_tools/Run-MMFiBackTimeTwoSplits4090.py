@@ -49,8 +49,8 @@ def build_plan(runtime, home, root, split):
     for p in (home, root):
         runtime.reject_links(p)
     home, root = home.resolve(), root.resolve()
-    if root.parent != home / 'runs' or not root.name.startswith('mmfi_backtime_'):
-        raise ValueError('Use a NEW mmfi_backtime_* root directly under data-home/runs')
+    if root.parent.name.lower() != 'runs' or not root.name.startswith('mmfi_backtime_'):
+        raise ValueError('Use a NEW mmfi_backtime_* directory directly under a dedicated runs folder')
     # Reuse published builder defaults as data, without preparing its old queue.
     legacy = home / 'runs/mmfi_p3s3_siba_ladder_plan_template_only'
     plan = runtime.build_plan(home, legacy, backtime_policy='adaptive',
@@ -80,6 +80,7 @@ def build_plan(runtime, home, root, split):
             REPO / 'ATKBackd/run_mmfi_p3s3_siba_ladder_4090.py'),
         attacker_sha256=runtime.sha(REPO / 'ATKBackd/attack/backtime_mmfi.py'),
         gpu='NVIDIA GeForce RTX 4090', owned_workers=2, split=split,
+        output_storage_policy='local_output_volume_min_10GiB',
         checkpoint_import=False, warm_start=False, attacker_algorithm_changed=False)
     plan.pop('plan_sha256')
     plan['plan_sha256'] = runtime.digest(plan)
@@ -104,6 +105,40 @@ def require_idle(allowed=()):
         report.stdout, os.name == 'nt', os.getpid()) if pid not in set(allowed)]
     if conflicts:
         raise ValueError(f'Other or unknown GPU jobs active; nothing stopped: {conflicts}')
+
+
+def local_drive_type(anchor):
+    """Windows volume type; the storage guard accepts fixed/removable disks."""
+    import ctypes
+    function = ctypes.windll.kernel32.GetDriveTypeW
+    function.argtypes = [ctypes.c_wchar_p]
+    function.restype = ctypes.c_uint
+    return int(function(str(anchor)))
+
+
+def check_output_storage(root):
+    """Check the actual output volume, not the read-only dataset/env volume.
+
+    Does not create output directories or move/delete any existing artifact.
+    Ten GiB is a conservative entry guard, not a full-run size guarantee.
+    """
+    root = Path(root)
+    if os.name == 'nt' and local_drive_type(root.anchor) not in (2, 3):
+        raise ValueError(f'Output drive must be an available local fixed/removable disk, '
+                         f'not a network/cloud-mapped drive: {root.anchor}')
+    probe = root
+    while not probe.exists():
+        if probe.parent == probe:
+            raise ValueError(f'Output drive unavailable to Python: {root}')
+        probe = probe.parent
+    if not probe.is_dir():
+        raise ValueError(f'Output ancestor is not a directory: {probe}')
+    free = shutil.disk_usage(probe).free
+    print(f'OUTPUT_STORAGE path={root} free_GiB={free / 2**30:.2f}', flush=True)
+    if free < 10 * 2**30:
+        raise ValueError(f'Output volume has {free / 2**30:.2f} GiB free; at least10GiB '
+                         f'required for {root}. Use -Outdir on a larger local disk; '
+                         'dataset/env can remain in DataHome. Nothing deleted.')
 
 
 def bind_master(runtime, root, plan):
@@ -392,9 +427,8 @@ def main(argv=None):
         print('INSPECT_ONLY: two fresh BackTime pipelines; no data/GPU/training; keep source fixed after Prepare.')
         return
     from run_mmfi_tables import _cell_lock
+    check_output_storage(args.outdir)
     with _cell_lock(args.outdir / '.controller'):
-        if shutil.disk_usage(args.data_home).free < 10 * 2**30:
-            raise ValueError('At least10GiB free required; nothing deleted')
         bind_master(runtime, args.outdir, plan)
         if args.mode in ('preflight', 'prepare'):
             if args.mode == 'prepare':

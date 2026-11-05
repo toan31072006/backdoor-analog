@@ -4,6 +4,16 @@
 
 ### Latest execution update: 2026-11-06, fresh BackTime / HPE-Li, P1S1 + P3S3
 
+- Storage follow-up: user reported C:2GiB and U:60.36GiB after Prepare's disk
+  guard stopped the run. Allow an explicit NEW output under another local
+  disk's `runs/mmfi_backtime_*`; keep dataset/env/prior at DataHome on C:.
+  Check the actual output volume for10GiB before creating run artifacts;
+  Windows-reported network/unavailable volumes remain unsupported. No deletion,
+  migration, disk-capacity bypass or change to scientific training/metrics.
+  U: storage type/full data/CUDA remain unverified here. User runs Prepare
+  manually; it still never falls through into full training.
+  Storage follow-up gate:403passed (51adapter +352regression). Both BackTime
+  attacker and the scientific runner remain unchanged from7b87561.
 - User explicitly requested restarting the BackTime baseline from scratch on
   Van's Windows RTX4090 after the3090 crash, two simultaneous split pipelines,
   P1S1 and P3S3, seed42; approved local test then commit/push. No remote training

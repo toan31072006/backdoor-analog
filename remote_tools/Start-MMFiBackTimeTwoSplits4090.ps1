@@ -5,6 +5,7 @@ Fresh BackTime-only HPE-Li P1S1 and P3S3, two jobs on Van's RTX4090.
 Prepare stops after full input audits and concurrent CUDA B64/B32 capacity
 checks. Launch is separate and foreground: keep SSH open. No install, pull,
 kill, automatic retry, checkpoint import, batch shrink or schedule reduction.
+Outdir may be on another local disk; DataHome still supplies dataset/env/prior.
 #>
 [CmdletBinding()]
 param(

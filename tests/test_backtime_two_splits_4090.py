@@ -52,6 +52,72 @@ def test_two_plans_are_fresh_isolated_and_exact_native_recipe(tmp_path):
     assert master['plans']['p1s1']['plan_sha256'] != master['plans']['p3s3']['plan_sha256']
 
 
+def test_separate_output_volume_does_not_move_data_or_change_scientific_recipe(tmp_path):
+    home, original, before = plans(tmp_path)
+    other = tmp_path/'other_volume/runs'/a.PROFILE
+    after = a.master_plan(home, other)
+    assert not home.exists() and not other.exists()
+    for split in a.SPLITS:
+        old, new = before['plans'][split], after['plans'][split]
+        assert old['cfg'] == new['cfg']
+        assert old['contract'] == new['contract'] and old['operators'] == new['operators']
+        assert new['home'] == str(home) and Path(new['outdir']) == other/split
+        assert old['plan_sha256'] != new['plan_sha256']
+
+
+@pytest.mark.parametrize('relative', ['mmfi_backtime_without_runs',
+    'runs/not_backtime', 'other/mmfi_backtime_wrong_parent'])
+def test_custom_output_still_requires_dedicated_runs_directory(tmp_path, relative):
+    with pytest.raises(ValueError, match='dedicated runs'):
+        a.master_plan(tmp_path/'home', tmp_path/relative)
+
+
+def test_storage_checks_output_disk_not_dataset_disk_without_writes(tmp_path, monkeypatch, capsys):
+    home = tmp_path/'home'; home.mkdir()
+    other = tmp_path/'other_volume'; other.mkdir()
+    root = other/'runs'/a.PROFILE
+    checked = []
+    def space(path):
+        checked.append(Path(path))
+        return SimpleNamespace(free=(60 if Path(path) == other else 2)*2**30)
+    monkeypatch.setattr(a, 'local_drive_type', lambda anchor: 3)
+    monkeypatch.setattr(a.shutil, 'disk_usage', space)
+    a.check_output_storage(root)
+    assert checked == [other] and not root.exists()
+    assert 'free_GiB=60.00' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('free', [0, 2, 9.99])
+def test_low_output_space_stops_before_creating_run(tmp_path, monkeypatch, free):
+    root = tmp_path/'runs'/a.PROFILE
+    monkeypatch.setattr(a, 'local_drive_type', lambda anchor: 3)
+    monkeypatch.setattr(a.shutil, 'disk_usage', lambda p: SimpleNamespace(free=int(free*2**30)))
+    with pytest.raises(ValueError, match='Output volume.*at least10GiB'):
+        a.check_output_storage(root)
+    assert not root.exists()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows volume-type policy')
+@pytest.mark.parametrize('kind', [0, 1, 4, 5])
+def test_unavailable_network_and_optical_output_are_not_written(tmp_path, monkeypatch, kind):
+    root = tmp_path/'runs'/a.PROFILE
+    monkeypatch.setattr(a, 'local_drive_type', lambda anchor: kind)
+    monkeypatch.setattr(a.shutil, 'disk_usage', lambda p: pytest.fail('Checked space of unsupported volume'))
+    with pytest.raises(ValueError, match='available local'):
+        a.check_output_storage(root)
+    assert not root.exists()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows volume-type policy')
+@pytest.mark.parametrize('kind', [2, 3])
+def test_local_fixed_and_removable_output_are_supported(tmp_path, monkeypatch, kind):
+    root = tmp_path/'runs'/a.PROFILE
+    monkeypatch.setattr(a, 'local_drive_type', lambda anchor: kind)
+    monkeypatch.setattr(a.shutil, 'disk_usage', lambda p: SimpleNamespace(free=60*2**30))
+    a.check_output_storage(root)
+    assert not root.exists()
+
+
 def test_private_runtime_counts_do_not_mutate_other_split_or_native(tmp_path):
     import run_mmfi_p3s3_siba_ladder_4090 as native
     a1, a3 = a.load_runtime('p1s1'), a.load_runtime('p3s3')
@@ -66,6 +132,7 @@ def test_private_runtime_counts_do_not_mutate_other_split_or_native(tmp_path):
 @pytest.mark.parametrize('which', ['inspect', 'status'])
 def test_readonly_cli_no_output_cuda_or_training(tmp_path, monkeypatch, which, capsys):
     monkeypatch.setattr(a, 'require_idle', lambda *x: pytest.fail('GPU in read-only mode'))
+    monkeypatch.setattr(a, 'check_output_storage', lambda *x: pytest.fail('Disk-space gate in read-only mode'))
     a.main(['--mode', which, '--data-home', str(tmp_path / 'empty')])
     assert not (tmp_path / 'empty').exists()
     assert ('INSPECT_ONLY' if which == 'inspect' else 'READ_ONLY') in capsys.readouterr().out

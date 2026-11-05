@@ -18,6 +18,9 @@
   hồi quy. HPE-Li thật chạy BackTime fit2epoch/B64 +SGD B32 trên CPU/synthetic;
   hai OS process toy overlap/drain, PowerShell parse +Inspect thật, kiểm tra
   split/manifest/recipe/runtime guards đạt. Không phải kết quả training MM-Fi.
+- Storage follow-up gate cùng ngày: **403 passed** (51adapter +352regression),
+  gồm14tests mới cho output khác DataHome, low-space và Windows volume-type
+  guards. Source BackTime/scientific runner không đổi; chưa chạy Prepare trên U:.
 
 ## Lịch và metric được giữ
 
@@ -76,7 +79,42 @@ Inspect chỉ đọc plan, không tạo output/load dataset/CUDA. Mặc định 
 cho mọi mode. Không tự cài/nâng dependency. Dataset phải ở
 `datasets\Compress`, prior `actions\data_bend.npy` đúng authenticSHA đã pin.
 
-Khi máy không còn compute job khác, chạy riêng **Prepare**, rồi dừng xem log:
+### C: ít trống: giữ data/env, lưu output trên ổ khác
+
+User báo C: còn2GiB, U: còn60.36GiB. Không suy ra2GiB đủ cho hai full runs.
+`-Outdir` có thể ở ổ local khác; không cần copy dataset/env/actions sang U:.
+Ngưỡng10GiB được kiểm tra trên **ổ chứa output**, không còn chặn theo DataHome.
+Đây là entry guard, không phải bảo đảm full-run tuyệt đối không hết dung lượng.
+
+Vì Prepare cũ đã dừng trước audit/CUDA, có thể cập nhật checkout chưa chạy rồi
+chọn root mới trên U:. Không làm bước này khi đang có worker sử dụng checkout.
+
+```powershell
+git -C $Repo pull --ff-only
+if ($LASTEXITCODE -ne 0) { throw 'Pull failed; preserve local changes.' }
+$O = 'U:\backdooranalog\runs\mmfi_backtime_hpeli_p1s1_p3s3_s42_4090_fresh_2jobs_u_v1'
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Prepare -Outdir $O
+```
+
+Chỉ sau Prepare thành công, dùng cùng `-Outdir $O` cho CheckOnly/Launch/Status:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode CheckOnly -Outdir $O
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Launch -Outdir $O
+```
+
+Output phải là thư mục mới prefix`mmfi_backtime_` dưới folder`runs`. Windows
+phải nhận ổ output là fixed/removable disk, còn trống ít nhất10GiB; ổ network
+mapped/UNC hoặc ổ không thấy từ Python bị từ chối trước khi tạo output. U: thực
+tế chưa được assistant kiểm tra trên máy Vân; nếu nó là network/cloud drive,
+không bypass guard. Không xóa hoặc di chuyển run cũ trên C:, không đổi DataHome.
+Ổ C: vẫn cần khoảng trống cho hoạt động của Windows; lưu output sang U: không
+phải bảo đảm hệ điều hành ổn định nếu C: tiếp tục đầy.
+
+Các lệnh không có `-Outdir` bên dưới chỉ dùng output mặc định trên DataHome.
+Nếu chọn U: thì dùng các lệnh `$O` ở trên cho mọi mode, không Prepare mặc định
+lần nữa. Khi máy không còn compute job khác, chạy riêng **Prepare**, rồi dừng
+xem log:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File $S -Mode Prepare
