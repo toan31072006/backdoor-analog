@@ -2,6 +2,46 @@
 
 ## Material Passport
 
+### Execution setup 2026-11-07: BppAttack-CSI P3S3/HPE-Li/seed42
+
+- User requested this added baseline and reports1%/5% poison-rate jobs finished,
+  BackTime still running with spare GPU. Prepare explicit user-run handover to
+  new owned roles `backtime`/`bpp`; GPU utilization alone is not PID authorization
+  or VRAM evidence. No remote pause/launch performed by this assistant.
+- New remote_tools-only composition of tested6556c43 coordinator; leave all
+  scientific ATKBackd, original launchers/inputs/gates/checkpoints untouched.
+  Authenticate old two-split or dose-shared P3S3 owner; in the latter case verify
+  both dose final49/evaluation/NPZ receipts and that its worker exited. Explicit
+  Pause/SwitchAndLaunch validates/copies a native checkpoint before stopping
+  that bound worker; invalid backup resumes original. Native P3S3 resume only,
+  P1S1/dose outputs preserved. Uncommitted epoch may replay; no scratch restart.
+  If it already finished, require native-complete final49 receipts and GPU idle,
+  record no process stopped, skip production BackTime updates. Missing live
+  worker with incomplete result refuses automatic recovery/fresh fallback.
+- Bpp source variant is the EXISTING BackdoorBench8-level/no-dither/10%-cover
+  CSI/pose/dose adapter, NOT full paper PGD/SupCon. Keep native uniform10% poison
+  plus disjoint10% clean-label covers (24057 each), TRAIN-only lazy donors and
+  checkpointed stochastic RNG, workers0. One NEW scratch HPE-Li/P3S3/seed42,
+  TRAIN240570/TEST80190,810/270 sequences, E04/subjects31..40 held out.
+- Same SGDbatch32/lr.001/momentum.9/wd0/FP32/50epochs/final49, pairedU(.2,1),
+  targetpivot1->[2,3]/Z40deg*d as common P3S3 victim policy. All6 dose curves,
+  T-MPJPE, Target-PCK@.2 atd1, cleanMPJPE/PA, mean-positiveDCE and same-victim
+  no-trigger controls/NPZ. No equal-realized-noise/modified-recipient-budget claim.
+- One added T6/comparison row only; no new Clean/A1 or other baseline training.
+  Matching clean-trained-trigger reference is not bound; state it explicitly,
+  never label a complete T1 table or pool P1S1/P3S3. Private evaluation adapts
+  only counts/identity enumeration, not metric formulas/replay checks.
+- Separate U: output `runs/mmfi_shared_backtime_bpp_p3s3_s42_4090_v1`; real
+  concurrent BackTimeB64/B32+BppB32/4poison+4cover smokes required before Launch.
+  Discard weights; no automatic kill/retry/AMP/batch shrink/CPU fallback. Guide
+  `remote_tools/MMFI_BACKTIME_BPP_SHARED_4090_VI.md`. No manuscript edits/results.
+- Local gate205passed:37 new Bpp/owner/gate/process +46 previous shared adapter
+  +122 source/native/eval regressions. Native50epoch CPU/toy train/PCK/cache and
+  exact checkpoint model/optimizer/RNG/cover-state resume passed; two actual toy
+  child roles overlap/drain;13 CPU pin-memory warnings. PowerShell parsed.
+  All ATKBackd and6556c43 active adapters unchanged. Real CUDA/full-data still
+  requires the explicit user's Prepare/SwitchAndLaunch command on Van.
+
 ### Execution amendment 2026-11-07: native P3S3 resume + sequential T2 A1 1%/5%
 
 - User reports BackTime P1S1 complete and P3S3 still running on Van's Windows
