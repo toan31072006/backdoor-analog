@@ -24,9 +24,11 @@ sys.path.insert(0,str(HERE))
 sys.path.insert(0,str(HERE.parent/'ATKBackd'))
 import mmfi_bpp_p3s3 as bpp
 import mmfi_bpp_handover as handover
+import mmfi_bpp_recovery as recovery
 PROFILE='mmfi_shared_backtime_bpp_p3s3_s42_4090_v1'
 ROLES=('backtime','bpp')
 SOURCE_FILES=('Run-MMFiBackTimeBppShared4090.py','mmfi_bpp_p3s3.py','mmfi_bpp_handover.py',
+    'mmfi_bpp_recovery.py',
     'Run-MMFiBackTimeDoseShared4090.py','mmfi_shared_pause.py','mmfi_low_poison_shared.py',
     'MMFI_A1_LOW_POISON_REFERENCE.json','Run-MMFiBackTimeTwoSplits4090.py')
 
@@ -157,6 +159,10 @@ def run(engine,args):
         return
     from run_mmfi_tables import _cell_lock
     original.check_output_storage(args.outdir)
+    if args.mode=='recover-and-launch':
+        # Explicit operator recovery, not an automatic retry. Failed capacity
+        # children exit through their existing failure signal, never by kill.
+        recovery.recover(engine,r,plan,master,args,env)
     print('CHECK_BPP_FULL_P3S3_IDENTITIES; no training',flush=True)
     bpp.audit_input(plan['cells'][0])
     with _cell_lock(args.outdir/'.controller'):
@@ -176,7 +182,7 @@ def run(engine,args):
         original.require_idle()
         with _cell_lock(args.backtime_root/'.controller'):
             handover.checkpoint(r,master['plans']['p3s3'],env)
-            if args.mode in ('prepare','switch-and-launch'):
+            if args.mode in ('prepare','switch-and-launch','recover-and-launch'):
                 if (args.outdir/'shared.gate.json').exists(): gate_check(r,plan,env)
                 else: spawn_pair(engine,args,r,plan,'prepare',env,master,original)
                 if args.mode=='prepare': return
@@ -186,13 +192,42 @@ def run(engine,args):
             return spawn_pair(engine,args,r,plan,'launch',env,master,original)
 
 
+def smoke_bpp_worker(engine,args):
+    """Use the authenticated Bpp role; the legacy worker hard-codes 'dose'."""
+    original=engine.original_adapter()
+    r,master,old_env=engine.old_contract(original,args.data_home,args.backtime_root)
+    plan=engine.build_plan(r,master,args.data_home,args.backtime_root,args.outdir)
+    if r.read(args.outdir/'shared.plan.json')!=plan:
+        raise ValueError('Shared plan differs from the immutable source/input contract')
+    ctx=engine.read_context(r,args.context,args.role,plan,'prepare')
+    original.require_idle(ctx['workers'].values())
+    env=r.execution()
+    if env!=old_env:
+        raise ValueError('GPU/runtime differs from the original BackTime training')
+    row=bpp.smoke(plan['cells'][0],lambda stage:engine.barrier(r,ctx,stage,args.role))
+    row['execution']=env
+    r.write(Path(ctx['directory'])/f'smoke.{args.role}.json',row)
+
+
 def configure():
     engine=handover.private('Run-MMFiBackTimeDoseShared4090.py')
     base_build=engine.build_plan
     engine.__file__=str(Path(__file__).resolve())
     engine.__doc__=__doc__
     engine.PROFILE=PROFILE; engine.ROLES=ROLES; engine.SCRIPT_FILES=SOURCE_FILES
+    engine.MODES += ('recover-and-launch',)
     engine.dose=bpp; engine.pause_tools=handover
+    base_worker=engine.worker
+    engine.worker=lambda args:(smoke_bpp_worker(engine,args)
+        if args.mode=='_smoke' and args.role=='bpp' else base_worker(args))
+    base_bind=engine.bind_plan
+    def bind(r,plan):
+        path=Path(plan['root'])/'shared.plan.json'
+        if path.exists() and r.read(path)!=plan:
+            raise ValueError('Changed immutable Bpp launcher plan; use explicit RecoverAndLaunch '
+                             'only for the known failed8551376 Prepare, never overwrite it silently')
+        return base_bind(r,plan)
+    engine.bind_plan=bind
     def plan(r,master,home,old_root,output):
         from attack.static_source_baselines import SOURCES
         value=base_build(r,master,home,old_root,output)

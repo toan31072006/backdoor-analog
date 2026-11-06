@@ -2,6 +2,32 @@
 
 ## Material Passport
 
+### Execution correction 2026-11-07: Bpp smoke role and explicit paused recovery
+
+- User reports8551376 Prepare waiting for `models_resident.bpp.ready` while
+  its inherited callback wrote `models_resident.dose.ready`; P3S3 remains paused.
+  Confirmed in source and a new failing regression. Historical205-test release
+  did not cover this real callback; it was not proof of remote Prepare success.
+- Fix Bpp-only smoke worker to use its authenticated `args.role`; preserve all
+  scientific ATKBackd files, original native launcher and6556c43 dose coordinator.
+  Added two actual CPU/toy workers that run the real worker/context/barrier path
+  through all3 stages, not a toy substitute for the barrier. Not CUDA evidence.
+- Explicit `RecoverAndLaunch` is restricted to the exact failed8551376 plan:
+  authenticate owned old Prepare PIDs, request graceful failure via existing
+  peer_failed channel (no forced kill/fake readiness), wait for drain, acquire
+  OS locks, verify native checkpoint against pause, archive old plan and record
+  new execution SHA, repeat concurrent Prepare, then native P3S3 resume+Bpp50.
+  Refuse production artifacts/old gate/foreign plan or reused PID. Preserve all
+  logs/pause/backups/native state; no restore, new handover, recipe change or
+  automatic retry. New mode is operator-run; no remote actions performed here.
+  No new experimental results or manuscript edits. Guide documents the command.
+- Corrected local release gate233passed/13CPU pin-memory warnings. Includes
+  actual Windows toy parent+2child CIM authentication, graceful failure/drain
+  and OS lock release, real worker callbacks across all3 barriers, recovery
+  provenance/byte-preservation/refusal tests and unchanged scientific regressions.
+  This supersedes the inadequate historical smoke-callback coverage; it is not
+  evidence that Van's real-data CUDA Prepare or training has succeeded.
+
 ### Execution setup 2026-11-07: BppAttack-CSI P3S3/HPE-Li/seed42
 
 - User requested this added baseline and reports1%/5% poison-rate jobs finished,

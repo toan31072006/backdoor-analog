@@ -298,10 +298,21 @@ def test_prepare_bpp_worker_never_invokes_full_training(tmp_path,monkeypatch):
     engine.old_contract=lambda *a:(r,{},r.execution())
     engine.build_plan=lambda *a:plan
     engine.read_context=lambda *a:ctx
-    monkeypatch.setattr(b,'smoke',lambda cell,barrier:{'discarded':True})
+    stages=[]
+    def smoke(cell,barrier):
+        for stage in ('models_resident','B64_backward_resident','B32_complete'):
+            barrier(stage)
+        return {'discarded':True}
+    def barrier(runtime,context,stage,role):
+        assert role in context['workers'], 'Smoke callback used an unowned role: '+role
+        stages.append((stage,role))
+    engine.barrier=barrier
+    monkeypatch.setattr(b,'smoke',smoke)
     monkeypatch.setattr(b,'execute',lambda *a:pytest.fail('Prepare full-trained Bpp'))
     engine.worker(args)
     assert r.read(tmp_path/'execution/smoke.bpp.json')['discarded']
+    assert stages==[(stage,'bpp') for stage in
+        ('models_resident','B64_backward_resident','B32_complete')]
 
 
 @pytest.mark.parametrize('fail',[False,True])

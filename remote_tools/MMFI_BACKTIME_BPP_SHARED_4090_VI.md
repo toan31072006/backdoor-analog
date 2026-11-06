@@ -2,6 +2,20 @@
 
 ## Material Passport
 
+- Role-fix follow-up: release8551376's Bpp smoke inherited the legacy hard-coded
+  `dose` barrier role, while its owned roles were `backtime`/`bpp`. The205-test
+  gate below did NOT exercise that callback and did not establish real Prepare
+  success. The new regression fails on the old code and passes on the corrected
+  Bpp smoke worker, with two actual CPU/toy child workers crossing all3 barriers.
+  Scientific sources, old dose coordinator and native BackTime launcher stay
+  byte-identical; no claimed new remote CUDA/training result.
+- Corrected local gate: **233 passed**,13 CPU pin-memory warnings. In addition
+  to the real worker/barrier regression, Windows OS integration authenticates
+  an owned toy Prepare parent plus2 children with CIM, signals failure, verifies
+  all3 drain and the OS output lock is released, with no fake ready/forced kill.
+  Recovery tests preserve checkpoint/pause/backup bytes, reject foreign sources/
+  PID reuse/production artifacts and require new Prepare before Launch. These
+  remain CPU/toy checks, not a real MM-Fi/RTX4090 capacity or resume result.
 - Origin Skill: academic-research-suite / experiment-agent; setup requested by user.
 - Date: 2026-11-07, Asia/Bangkok.
 - Status: local implementation/tests only; no remote pause/training performed.
@@ -109,6 +123,55 @@ Giữ terminal mới mở và Windows thức. Terminal cũ có thể báo failur
 có chủ đích: kiểm tra `PAUSED_AND_BACKED_UP` và log controller mới. Nếu crash
 đúng đoạn tạm giữ process thì có thể cần manual recovery; không tự xóa lock,
 copy checkpoint hoặc mở launcher khác. Gửi cuối log để xác định trạng thái.
+
+## Explicit recovery for the failed8551376 Prepare
+
+Use this ONLY if handover already produced `PAUSED_WITH_VALID_NATIVE_CHECKPOINT`
+and the old Bpp Prepare stalled with `models_resident.dose.ready` instead of
+`models_resident.bpp.ready`. Do not run `SwitchAndLaunch` again or edit ready
+files. Do not pull into the checkout used by the old running processes.
+
+In a NEW PowerShell terminal on Van:
+
+```powershell
+& {
+    $R = "$env:USERPROFILE\code_bpp_p3s3_4090_rolefix_v2"
+    git clone https://github.com/toan31072006/backdoor-analog.git $R
+    if ($LASTEXITCODE -ne 0) { throw 'Clone failed; nothing recovered' }
+    powershell -NoProfile -ExecutionPolicy Bypass -File "$R\remote_tools\Start-MMFiBackTimeBppShared4090.ps1" -Mode RecoverAndLaunch
+}
+```
+
+This is an explicit operator-requested re-Prepare, NOT an automatic retry:
+
+- Require the exact failed8551376 source-bound plan, a valid pause/backup and
+  only Prepare contexts. Refuse any production Bpp artifacts or existing gate.
+- Authenticate every still-live old smoke/controller PID, source, executable,
+  command, role and parent. Send `peer_failed.json` through their existing
+  failure channel so they exit/drain normally; never kill or fabricate readiness.
+  Already-exited smokes work too. Refuse reused/unrelated PIDs; a drain timeout
+  preserves everything and launches nothing. No need to wait30min for barrier
+  timeout if the authenticated old smokes are still waiting.
+- Acquire both output controller locks plus the native P3S3 lock; validate the
+  actual committed checkpoint still matches the original pause. Never restore
+  a backup over it. Preserve the old plan byte-for-byte under `recovery_backups`,
+  all failed execution directories, pause receipt and checkpoint backups.
+- Record the changed execution source SHA in a new plan and recovery receipt;
+  no scientific config/input changes. Re-run both real concurrent capacity
+  smokes. A new gate is mandatory; no re-use of the old failed smoke.
+- Only after Prepare succeeds, launch native P3S3 resume from its committed
+  search/victim state plus Bpp scratch50. P1S1 and finished1%/5% cells do not run.
+
+Expected sequence: `RECOVERY_CANCEL_FAILED_PREPARE`, `RECOVERY_PLAN_REBOUND`,
+`BACKTIME_BPP_PREPARED_ONLY`, then `NATIVE_P3S3_RESUME_ONLY` in the new BackTime
+worker log. Old terminal may report expected failure from the explicit failure
+notification. Keep the NEW terminal/Windows awake. The latest uncommitted
+BackTime epoch can replay; it is not a scratch restart.
+
+If recovery rebinds successfully but the NEW Prepare fails (e.g. CUDA/OOM), stop
+and report logs; do not run recovery again or auto-retry. `Prepare`/`Launch`
+remain separate explicit choices on the corrected checkout after inspection.
+The recovery record itself is not evidence that training has resumed.
 
 ## Outputs và giới hạn
 
