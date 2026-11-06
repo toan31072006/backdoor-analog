@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "origin": "Audited seed42 caches a1/rho0p2/rho0p4 and s42__a1/evaluation.json from the existing MM-Fi T2 study",
+  "recipe_sha256": "5427bb6fd0bbf4b830ab6a38595325c502385e6ebbbbcd2b4f50e2663c015396",
+  "recipe_ignored_fields": ["rho", "confirmation_profile", "dataset_root", "action_npy", "device"],
+  "action_sha256": "2e8fc11192cc3ee7ee3f5544cb3c5e19f771f7f7265dde93af8969af41a2be3e",
+  "ordered_inputs": {
+    "train": {"n": 133056, "pair_ids_sha256": "5cb86037c36b0e70631353e38e29c331caf872aea686a46ebbc41283c3a16913"},
+    "eval": {"n": 33264, "pair_ids_sha256": "01146fca9df3f05817931af873be9d22d1d5a89902715e58adef1a754b839351"}
+  },
+  "source_sha256": {
+    "a1_three_tables_eval.py": "5ff599f43f599699d90af616836329f2f8a3136c417edd43106befc7b76ec231",
+    "eval_a1_target_pck.py": "132318143a130e0e78fc67ad9dae07dcef8970ecebdb7d0c2597dd53fe6ce8ee",
+    "eval/target_pck.py": "50590a88aad97ffc8dc660793c3ba2a4941459dc54b804b50780c06c032d5282",
+    "eval/metrics.py": "78a311ef06cf39e434c923a604da130424beb4e723a080e1338e01b59313cc64",
+    "train_backdoor.py": "8f4cfb38b267df0c63a1fbd99cf95a78cdac23c07623002c444fb3fbe1c3a364",
+    "data_utils/feeder.py": "f159a5c595d742c530039961fdd4d11b3115ce4ce566f3107b3a18ead99a065e",
+    "data_utils/draft_subset.py": "ecbf5d36d9c1c2593708b7c3b27bcf918bd2301a0fb3d420c1369deb94f73a03",
+    "attack/trigger.py": "59dba11704a3d716be0ada460f5163a8f20561e348ad038e58d7fb96d1a1d4b4",
+    "attack/method_drafts.py": "65c557f96b4abbf53c366f9043100485bec935a4d7a22b69bc2f05740f8ae876",
+    "attack/payload.py": "306f8a42da080fca087b9facc3c5e5dc0bb8f763e0278a872896c26b8fb7e026",
+    "attack/poison.py": "141ae6d8786ef2c5c200fbdbe1d469ed5a1769ee80363284a345908116de96ac",
+    "attack/traditional.py": "a5b61966062777baaace87cf6b4b1f2fd9e8098ab21d1a8798f804d3d8b1339f",
+    "attack/wanet_source.py": "ee66e42feb3f9978c4e34398aec9a689628eae7f76fb5e47b6d4a36fa8370398",
+    "attack/frequency_baselines.py": "8605962602a03a04c91b982f4a29ad0b413c2c3f79b1defe654ee9adc4599d5f",
+    "attack/static_source_baselines.py": "ae8ba9e839f909db95efd55c0df4773d26e774ed08ee286d3b9724c223d20999",
+    "models/factory.py": "d26fc53e1e39936478d1bc7d9498ce11e12d1f27677240ef6a5c6601e4ed11be",
+    "models/hpeli.py": "a56234fc4ba1b0d8caef033693c09b18889038f2282b4723480641c155cb007e",
+    "models/sk_network.py": "d45b572f6e99231cfe37bfe53b0d4e062541f992ed645f48be68d0c47d61f84e"
+  }
+}

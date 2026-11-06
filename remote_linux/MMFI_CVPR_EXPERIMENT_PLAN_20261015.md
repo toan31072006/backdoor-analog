@@ -2,6 +2,41 @@
 
 ## Material Passport
 
+### Execution amendment 2026-11-07: native P3S3 resume + sequential T2 A1 1%/5%
+
+- User reports BackTime P1S1 complete and P3S3 still running on Van's Windows
+  RTX4090. Requested A1 low-poison1% then5% alongside P3S3 rather than waiting;
+  explicitly approved temporary pause/resume, never a scratch P3S3 restart.
+  Old two-slot guard cannot accept a third arbitrary GPU PID mid-process.
+- New execution-only adapters under `remote_tools`, no changes to scientific
+  `ATKBackd` sources or original two-split launcher. Verify old source/runtime/
+  native receipts, P1 completion and exact original worker/parent ownership;
+  transiently hold its bound Windows handle, validate/copy its committed native
+  state, then stop only that worker. Backup failure resumes the old process.
+  Preserve old checkpoints and orphan staging files; never auto restore/kill peers.
+- Separate shared root on U:. Prepare concurrent real TRAIN capacity smokes
+  BackTime B64/B32 + native A1 B32, discard weights. Launch two owned roles:
+  BackTime P3S3 native checkpoint/optimizer/RNG resume and one A1 queue1%->5%.
+  P1S1 stays complete; unfinished BackTime epoch may replay. No batch/AMP changes,
+  implicit retries, third CUDA controller context, or source edits on Van.
+- Low-poison extension is **A1/MM-Fi P1S1/HPE-Li/seed42**, NOT P3S3. Full counts
+  133056/33264, floor poison1330/6652, physical B32/workers4/SGD.001,momentum.9,
+  wd0/50epochs/final49, md_multicarrier/bend/.185, paired U(.2,1), target1->[2,3],
+  Z40deg*d. Exact recipe and18 scientific hashes match archived seed42
+  10%/20%/40% runs except rho/provenance/paths; no silent reuse or new clean train.
+- Each victim evaluates all6 doses; keep T-MPJPE/DCE curves, mean-positive DCE,
+  CleanMPJPE/PA and evaluator-derived Target-PCK@.2 at d1. Never infer requested
+  movement or Target-PCK from scalar error. No pooling P1S1 with P3S3, across-seed
+  uncertainty or new manuscript claims. Results remain unavailable until run.
+- Guide `remote_tools/MMFI_BACKTIME_DOSE_SHARED_4090_VI.md`. Local CPU/toy checks
+  are not full-data/CUDA capacity, runtime or efficacy evidence. No remote job
+  was paused/launched by this assistant; user runs the explicit handover command.
+- Local release gate363passed:46 new shared-adapter +51 original two-split
+  adapter +266 scientific/eval/loader regressions; real Windows toy-process
+  hold/failure-resume/stop and two-child overlap/drain passed. Native50epoch
+  CPU/toy routing/PCK/cache reuse passed for each new rho;13 CPU pin-memory
+  warnings. PowerShell parsed; all ATKBackd files/original launcher unchanged.
+
 ### Latest execution update: 2026-11-06, fresh BackTime / HPE-Li, P1S1 + P3S3
 
 - Storage follow-up: user reported C:2GiB and U:60.36GiB after Prepare's disk
