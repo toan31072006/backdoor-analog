@@ -2,6 +2,40 @@
 
 ## Material Passport
 
+### Execution setup 2026-11-07: PiW MetaFi++ TSBA/Smooth-LF, serial 4090
+
+User explicitly requested TSBA-adapted and Smooth-LF-CSI on Van's RTX4090,
+then specified one training job at a time and no foreign-PID count gate so
+separate evaluation can coexist. Scope: two comparison rows, PiW one-person,
+MetaFi++, seed42/rho.1; not the complete historical T1 matrix. Initial setup
+did not launch jobs, kill processes, install packages, push Git or rewrite
+historical artifacts. User subsequently approved committing/pushing this
+two-attack handoff for git-clone delivery; remote job launch remains separate.
+
+New orchestration uses the unchanged frozen PiW source and completed
+Clean4090 reference: AdamW .01/wd.01, physical32, FP32, 200epoch/final199,
+TRAIN27876/TEST2586, identical A1 poison identities/doses/body-hip-axis target.
+Six doses and native target-PCK@.2/clean MPJPE/PA/mean-positive DCE retained.
+TSBA uses victim gradients and three learned group generators (eps.1,
+hidden32, warmup10, four updates); Smooth-LF is the existing fixed DCT control
+(eps.185), not the original optimized image LF algorithm. These are declared
+CSI adaptations, with different perturbation budgets, not source-paper parity.
+
+Own output lock + serial TSBA -> Smooth-LF only; no GPU-wide lock/PID limit.
+Other scripts' guards remain unchanged. External jobs may cause OOM or timing
+changes; never reduce batch, kill, auto-retry or skip to later jobs on failure.
+Output goes to U when available; original C data/env/Clean stays read-only.
+Prepare/check/launch/evaluate are separate; no full CUDA run claimed from
+local tests. See remote_tools/PIW_METAFI_TWO_EXTRA_4090_VI.md.
+
+Local handoff checks:42 light/mock/package tests passed; a separate synthetic
+2586x6 evaluation/metric replay test passed. Historical sidecar regressions:
+107 passed,3 native subprocess timeouts (120/180s). The new CPU gradient probe
+timed out300s, including in an alternate existing environment; diagnostic
+output stopped at importing PyTorch while local free RAM was about260MiB.
+Do not call the full test suite PASS. CUDA B32/4-generator-step Prepare and
+real-data training/evaluation remain unverified and must run on the4090.
+
 ### Execution correction 2026-11-07: Bpp smoke role and explicit paused recovery
 
 - User reports8551376 Prepare waiting for `models_resident.bpp.ready` while
