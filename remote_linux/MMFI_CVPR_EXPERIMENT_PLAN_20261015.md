@@ -26,6 +26,21 @@ Delivery checks:14 unit tests pass in the repo copy, PowerShell syntax parses,
 and exporter/plotter/runner/test sources match the audited offline helpers.
 Guide: `remote_tools/mmfi_dose_pose_3x6/MMFI_DOSE_POSE_3X6_VI.md`.
 
+Path correction for this handoff: Van reports missing data-home `ATKBackd`,
+so the initial hard-coded source assumption was wrong. New exporter accepts
+explicit source/checkpoint/data/action/output paths. Prefer existing legacy
+source, otherwise use ATKBackd in the helper's own Git checkout and print the
+selection; explicit missing source never silently falls back. Read-only
+CheckOnly reports all missing roots/sample/source files and pinned checkpoint
+SHA without NumPy/Torch imports or GPU/output writes. Scientific arrays,
+checkpoint identity, payload, replay tolerance and legacy job guard unchanged.
+No inference or new results from fixing paths; original offline helpers stay
+historical and are not silently replaced. Actual Van artifact paths/replay
+remain unverified until operator CheckOnly/inference output is returned.
+Correction checks:10 new standard-library path/preflight tests +14 plotting
+tests pass; real PowerShell-to-Python CheckOnly with spaced explicit paths
+reports all missing inputs and performs no GPU work. PowerShell parse passes.
+
 ### Execution setup 2026-11-07: PiW MetaFi++ TSBA/Smooth-LF, serial 4090
 
 User explicitly requested TSBA-adapted and Smooth-LF-CSI on Van's RTX4090,

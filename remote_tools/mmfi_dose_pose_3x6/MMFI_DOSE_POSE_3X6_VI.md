@@ -15,9 +15,42 @@ git clone --depth 1 https://github.com/toan31072006/backdoor-analog.git "$env:US
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\MMFiDosePose3x6Git\remote_tools\mmfi_dose_pose_3x6\Run-MMFiDosePoseFigure.ps1"
 ```
 
-Clone này chỉ cung cấp helper. Source model, Python environment, checkpoint,
-dataset và action vẫn được đọc từ `backdooranalog` hiện có như bên dưới.
+Python environment, checkpoint, dataset và action mặc định vẫn được đọc từ
+`backdooranalog` hiện có như bên dưới. Source ưu tiên `backdooranalog\ATKBackd`
+nếu tồn tại; nếu không có, dùng `ATKBackd` trong Git checkout chứa helper và
+in rõ `Source selection`. Không chép source đè vào nơi đang train. Strict model
+loading, SHA checkpoint và replay d=1 vẫn được giữ; source clone không tự được
+coi là source train gốc. Các hash source thực tế được ghi vào metadata.
 Nếu thư mục clone đã tồn tại, chọn một tên clone mới; không ghi đè source cũ.
+
+### Nếu đã clone và gặp FileNotFoundError
+
+Cập nhật CHỈ clone helper, không cập nhật `backdooranalog` đang chạy job:
+
+```powershell
+git -C "$env:USERPROFILE\MMFiDosePose3x6Git" pull --ff-only
+$DoseScript = "$env:USERPROFILE\MMFiDosePose3x6Git\remote_tools\mmfi_dose_pose_3x6\Run-MMFiDosePoseFigure.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File $DoseScript -CheckOnly
+```
+
+`-CheckOnly` chỉ đọc đường dẫn, kiểm các file source/sáu file CSI-GT và SHA
+checkpoint; không import Torch, dùng GPU hay ghi output. Nó in TẤT CẢ đường
+dẫn thiếu thay vì dừng ở thư mục thiếu đầu tiên. PASS này chỉ là path/hash
+preflight, không phải xác nhận CUDA hay kết quả model.
+
+Nếu đường dẫn mặc định checkpoint/data/action không đúng, chỉ định vị trí
+THỰC TẾ bằng `-Checkpoint`, `-DataRoot`, `-ActionNpy`; source gốc khác dùng
+`-SourceRoot`. Không chọn một checkpoint khác cho tiện: SHA A1 gốc vẫn bắt buộc.
+Ví dụ (thay các placeholder bằng đường dẫn có thật):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File $DoseScript -CheckOnly -SourceRoot 'D:\actual\ATKBackd' -Checkpoint 'D:\actual\seed42\a1\checkpoint.pt' -DataRoot 'D:\actual\Compress' -ActionNpy 'D:\actual\data_bend.npy'
+```
+
+Sau `DOSE_POSE_PATH_CHECK PASS`, chạy cùng lệnh nhưng bỏ `-CheckOnly` để
+inference và vẽ. Nếu còn `MISSING`, gửi nguyên output; không tự retrain/move
+dataset, vô hiệu kiểm SHA hay dừng các job khác. NPZ có sẵn có thể plot-only
+mà không cần các đường dẫn export này.
 
 ## Cách offline thay thế
 
@@ -31,7 +64,7 @@ Không cần train lại. Không tự cài thư viện, tải dataset, sửa che
 dừng process. Dùng Python hiện có:
 `%USERPROFILE%\backdooranalog\envs\dose-backdoor\python.exe`.
 
-Các đường dẫn gốc exporter yêu cầu trên máy Van:
+Các đường dẫn mặc định (có thể chỉ định rõ bằng các tham số trên):
 
 - Source: `%USERPROFILE%\backdooranalog\ATKBackd`
 - Checkpoint: `%USERPROFILE%\backdooranalog\runs\mmfi_three_tables_4090_win_fresh_v1\seed42\a1\checkpoint.pt`

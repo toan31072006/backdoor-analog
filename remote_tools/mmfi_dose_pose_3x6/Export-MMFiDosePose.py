@@ -3,6 +3,7 @@
 Run with Van's dose-backdoor Python. No training, optimizer update, checkpoint
 write, dataset rewrite, or automatic retry. Output is a small prediction NPZ.
 """
+import argparse
 import base64
 import hashlib
 import json
@@ -26,22 +27,91 @@ EXPECTED_T = [[31.80086326599121, 80.52739715576172],
 EXPECTED_C = [[177.80282592773438, 427.4768371582031],
               [289.2816467285156, 571.5725708007812],
               [138.57679748535156, 484.2738037109375]]
+SOURCE_FILES = ("models/factory.py", "models/hpeli.py", "models/sk_network.py",
+                "attack/trigger.py", "attack/method_drafts.py", "attack/payload.py",
+                "data_utils/feeder.py")
 
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def main():
-    root = Path.home() / "backdooranalog"
-    source = root / "ATKBackd"
-    checkpoint = root / "runs/mmfi_three_tables_4090_win_fresh_v1/seed42/a1/checkpoint.pt"
-    data = root / "datasets/Compress"
-    action = root / "actions/data_bend.npy"
-    output = Path.home() / "Downloads/mmfi_dose_pose_s42.npz"
-    for path in (source, checkpoint, data, action):
-        if not path.exists():
-            raise FileNotFoundError(path)
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path.home() / "backdooranalog")
+    parser.add_argument("--source", type=Path, help="ATKBackd directory; no source files are modified")
+    parser.add_argument("--checkpoint", type=Path, help="Original A1 final49 checkpoint (SHA pinned)")
+    parser.add_argument("--data", type=Path, help="Compress directory containing E01 through E04")
+    parser.add_argument("--action", type=Path, help="Original data_bend.npy file")
+    parser.add_argument("--output", type=Path, default=Path.home() / "Downloads/mmfi_dose_pose_s42.npz")
+    parser.add_argument("--check-only", action="store_true",
+                        help="Read-only paths/files/checkpoint-hash check; no Torch import or GPU work")
+    parser.add_argument("--print-base64", action="store_true")
+    return parser.parse_args(argv)
+
+
+def resolve_paths(args):
+    root = args.root.expanduser().resolve()
+    legacy_source = root / "ATKBackd"
+    checkout = Path(__file__).resolve().parents[2]
+    if args.source is not None:
+        source, choice = args.source, "explicit --source"
+    elif legacy_source.exists():
+        source, choice = legacy_source, "existing data-home source"
+    elif (checkout / ".git").exists() and (checkout / "ATKBackd/models/factory.py").is_file():
+        source, choice = checkout / "ATKBackd", "helper Git checkout (data-home ATKBackd is absent)"
+    else:
+        source, choice = legacy_source, "default missing; supply --source"
+    paths = dict(source=source,
+        checkpoint=args.checkpoint if args.checkpoint is not None else
+            root / "runs/mmfi_three_tables_4090_win_fresh_v1/seed42/a1/checkpoint.pt",
+        data=args.data if args.data is not None else root / "datasets/Compress",
+        action=args.action if args.action is not None else root / "actions/data_bend.npy",
+        output=args.output)
+    return {name: path.expanduser().resolve() for name, path in paths.items()}, choice
+
+
+def check_paths(paths, choice):
+    """Report ALL missing paths together, without importing scientific code."""
+    print(f"Source selection: {choice}", flush=True)
+    missing = []
+    for name in ("source", "checkpoint", "data", "action"):
+        path = paths[name]
+        valid = path.is_dir() if name in ("source", "data") else path.is_file()
+        print(f"{name.upper()} [{'OK' if valid else 'MISSING'}] {path}", flush=True)
+        if not valid:
+            missing.append(f"--{name}: {path}")
+    if paths["source"].is_dir():
+        missing.extend(f"source file: {paths['source'] / name}" for name in SOURCE_FILES
+                       if not (paths["source"] / name).is_file())
+    if paths["data"].is_dir():
+        required = sorted({rel for csi, gt, _ in PAIRS for rel in (csi, gt)})
+        missing.extend(f"data file: {paths['data'] / rel}" for rel in required
+                       if not (paths["data"] / rel).is_file())
+    if missing:
+        for item in missing:
+            print(f"MISSING {item}", flush=True)
+        print("Supply the actual paths; do not move, copy over, or retrain existing runs.", flush=True)
+        return False
+    if sha(paths["checkpoint"]) != SHA:
+        raise ValueError("Checkpoint SHA256 differs from the recorded A1; nothing changed")
+    print(f"CHECKPOINT_SHA256 OK {SHA}", flush=True)
+    print(f"OUTPUT [new file required for export] {paths['output']}", flush=True)
+    return True
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    paths, choice = resolve_paths(args)
+    valid = check_paths(paths, choice)
+    if args.check_only:
+        print("DOSE_POSE_PATH_CHECK " + ("PASS" if valid else "FAIL") +
+              "; no Torch import, CUDA check, inference, or output write", flush=True)
+        return 0 if valid else 1
+    if not valid:
+        raise FileNotFoundError("Required pose-export paths are missing; see all MISSING lines above")
+    source, checkpoint, data, action, output = (paths[k] for k in
+        ("source", "checkpoint", "data", "action", "output"))
     if output.exists():
         raise FileExistsError(f"Preserve existing output; move it first: {output}")
     if sha(checkpoint) != SHA:
@@ -135,9 +205,10 @@ def main():
         "test_indices": FRAME_IDS, "pair_ids": PAIRS, "input_sha256": hashes,
         "torch": torch.__version__, "numpy": np.__version__,
         "device": torch.cuda.get_device_name(0), "max_reference_error_delta_mm": delta,
-        "source_sha256": {name: sha(source / name) for name in
-            ("models/hpeli.py", "models/sk_network.py", "attack/trigger.py",
-             "attack/method_drafts.py", "attack/payload.py", "data_utils/feeder.py")},
+        "resolved_paths": {key: str(path) for key, path in paths.items()},
+        "source_selection": choice,
+        "exporter_sha256": sha(Path(__file__)),
+        "source_sha256": {name: sha(source / name) for name in SOURCE_FILES},
         "units": "metres; no alignment or per-dose pose recentering", "new_training": False}
     output.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(output, doses=doses, ground_truth=truth, predictions=predictions,
@@ -145,9 +216,9 @@ def main():
         metadata_json=np.asarray(json.dumps(metadata)), reference_target_error_mm=error_t,
         reference_clean_to_target_error_mm=error_c)
     print(f"DOSE_POSE_COMPLETE {output} bytes={output.stat().st_size} sha256={sha(output)}", flush=True)
-    if "--print-base64" in sys.argv:
+    if args.print_base64:
         print("DOSE_POSE_NPZ_BASE64=" + base64.b64encode(output.read_bytes()).decode("ascii"), flush=True)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
