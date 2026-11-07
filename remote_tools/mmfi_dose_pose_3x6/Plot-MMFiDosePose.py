@@ -161,7 +161,7 @@ def create_figure(bundle, elev=12., azim=-72., fixture_label=None):
 
     for row in range(3):
         fig.text(.035, row_tops[row] + .023,
-                 f"({chr(97 + row)}) Input {row + 1}  |  TEST index {int(bundle['test_indices'][row])}",
+                 f"({chr(97 + row)}) Input {row + 1}",
                  fontsize=8, va="bottom")
         for col, dose in enumerate(bundle["doses"]):
             ax = fig.add_axes([left + col * width, row_tops[row] - .248, width, .25],

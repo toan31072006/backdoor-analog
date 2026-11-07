@@ -108,6 +108,17 @@ evidence lần hiện tại vẫn được in ra log.
 NPZ có sẵn thì runner chỉ validate và vẽ, không inference lại. Output hình có
 sẵn thì dừng để tránh ghi đè; dùng `-OutDir` mới nếu muốn vẽ lại.
 
+Nhãn hình chỉ hiển thị `(a) Input 1`, `(b) Input 2`, `(c) Input 3`; không in
+TEST index lên PDF/PNG. Các index vẫn giữ trong NPZ, CSV và provenance JSON.
+Để vẽ lại bản không có index từ NPZ đã xuất, sau khi cập nhật clone helper:
+
+```powershell
+$S = "$env:USERPROFILE\MMFiDosePose3x6Git\remote_tools\mmfi_dose_pose_3x6\Run-MMFiDosePoseFigure.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File $S -PlotOnly -OutDir "$env:USERPROFILE\Downloads\MMFiDosePoseFigure_s42_noindex"
+```
+
+Lệnh này không chạy inference hoặc train lại và không ghi đè hình cũ.
+
 Chỉ export nếu chưa có NPZ (không cần Matplotlib ở bước này):
 
 ```powershell

@@ -95,6 +95,7 @@ class DosePosePlotTests(unittest.TestCase):
     def test_metrics_are_vector_residuals(self):
         rows = PLOT.metric_rows(self.bundle)
         self.assertEqual(len(rows), 18)
+        self.assertEqual(sorted({row["test_index"] for row in rows}), PLOT.FRAME_IDS)
         for row in rows:
             if row["dose"] == 0:
                 self.assertEqual(row["DCE_mm"], 0)
@@ -155,6 +156,10 @@ class DosePosePlotTests(unittest.TestCase):
         fig = PLOT.create_figure(self.bundle,
             fixture_label="SYNTHETIC LAYOUT TEST - NOT MODEL RESULTS")
         self.assertEqual(len(fig.axes), 18)
+        labels = [text.get_text() for text in fig.texts]
+        self.assertEqual([label for label in labels if label.startswith("(")],
+                         ["(a) Input 1", "(b) Input 2", "(c) Input 3"])
+        self.assertFalse(any("TEST index" in label for label in labels))
         first = fig.axes[0]
         for ax in fig.axes:
             np.testing.assert_allclose(ax.get_xlim(), first.get_xlim())
