@@ -41,6 +41,23 @@ Correction checks:10 new standard-library path/preflight tests +14 plotting
 tests pass; real PowerShell-to-Python CheckOnly with spaced explicit paths
 reports all missing inputs and performs no GPU work. PowerShell parse passes.
 
+Replay mismatch audit (ARS validate, status ANALYZED, not VERIFIED): Van's
+checkpoint SHA matches and all 6 dose passes finish, but max selected-frame
+error replay differs 0.147545 mm against the fixed 0.1 mm gate; no NPZ exported.
+Source inspection finds the helper used a new B3 batch, forced TF32 off and
+omitted deterministic=True, unlike the original MM-Fi evaluator B32/default
+TF32/deterministic=True. These are confirmed execution mismatches, not yet a
+GPU-confirmed causal explanation. Repair only the figure helper: original TEST
+batches 0:32/16608:16640/33248:33264, native PoisonedDataset/collate/no_grad,
+MM-Fi numeric flags; preserve chosen frames, checkpoint/source training recipe,
+targets, metrics, replay tolerance 0.1 mm and old job guard. Forwarding 80 frames
+per dose is not a full-TEST evaluation. On failure save detailed replay
+diagnostics only, not an accepted pose NPZ/figure. No automatic retry/backend
+sweep or result edits. Local validation: 35 tests pass (14 plot, 10 path,
+11 native-replay plumbing/mock tests); PowerShell parse and git diff --check
+pass. These tests do not verify CUDA numerical replay; Van's manual rerun on
+the original RTX4090 environment is still required.
+
 ### Execution setup 2026-11-07: PiW MetaFi++ TSBA/Smooth-LF, serial 4090
 
 User explicitly requested TSBA-adapted and Smooth-LF-CSI on Van's RTX4090,

@@ -46,6 +46,7 @@ if ($LASTEXITCODE -ne 0) { throw 'NumPy/Matplotlib import failed; no inference s
 if (!(Test-Path -LiteralPath $InputNpz -PathType Leaf)) {
     if ($PlotOnly) { throw "Copy the real prediction NPZ here first: $InputNpz" }
     Write-Host 'Exporting 3 fixed TEST frames x 6 doses from original A1 final49. No training.'
+    Write-Host 'Replay uses their original TEST batches (32/32/16), not a new 3-frame batch.'
     Write-Host 'The original BackTime coordination guard is preserved; no process will be stopped.'
     & $Python @DoseExportArgs
     if ($LASTEXITCODE -ne 0) { throw 'Pose export failed. Preserve the log; no automatic retry or job termination.' }

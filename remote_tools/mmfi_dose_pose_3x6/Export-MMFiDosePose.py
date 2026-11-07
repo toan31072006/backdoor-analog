@@ -7,6 +7,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -29,7 +30,8 @@ EXPECTED_C = [[177.80282592773438, 427.4768371582031],
               [138.57679748535156, 484.2738037109375]]
 SOURCE_FILES = ("models/factory.py", "models/hpeli.py", "models/sk_network.py",
                 "attack/trigger.py", "attack/method_drafts.py", "attack/payload.py",
-                "data_utils/feeder.py")
+                "attack/poison.py", "data_utils/feeder.py")
+REPLAY_TOLERANCE_MM = 0.1  # Unchanged; do not relax after observing a mismatch.
 
 
 def sha(path):
@@ -100,6 +102,102 @@ def check_paths(paths, choice):
     return True
 
 
+def native_batch_plan(count, batch_size, indices=FRAME_IDS):
+    """Original ordered TEST batches, including the short final batch."""
+    if count != 33264 or type(batch_size) is not int or batch_size != 32:
+        raise ValueError("Require original 33264-frame TEST and checkpoint batch_size=32")
+    if len(set(indices)) != len(indices) or any(type(i) is not int or not 0 <= i < count for i in indices):
+        raise ValueError("Selected indices must be unique and inside TEST")
+    batches = {}
+    for row, index in enumerate(indices):
+        start = index // batch_size * batch_size
+        entry = batches.setdefault(start, dict(start=start, stop=min(start + batch_size, count), selected=[]))
+        entry["selected"].append(dict(row=row, offset=index - start, test_index=index))
+    return [batches[start] for start in sorted(batches)]
+
+
+def configure_native_runtime(torch):
+    """Match MM-Fi train_backdoor/eval_a1_target_pck, not the PiW FP32 profile.
+
+    Those MM-Fi entry points set deterministic=True/benchmark=False and do not
+    override TF32 defaults. Record defaults instead of imposing different ones.
+    """
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    return dict(cudnn_deterministic=bool(torch.backends.cudnn.deterministic),
+                cudnn_benchmark=bool(torch.backends.cudnn.benchmark),
+                cudnn_allow_tf32=bool(torch.backends.cudnn.allow_tf32),
+                matmul_allow_tf32=bool(torch.backends.cuda.matmul.allow_tf32),
+                float32_matmul_precision=torch.get_float32_matmul_precision(),
+                cudnn_version=torch.backends.cudnn.version())
+
+
+def predict_native_batches(model, base, trigger, cfg, device, torch, dataset_class, collate):
+    """Run only the 3 original TEST batches; retain the same fixed 3 poses.
+
+    Use the production PoisonedDataset/collate path and no_grad, including the
+    exact clean pass at zero dose. No artificial padding, training or retries.
+    """
+    import numpy as np
+    plan = native_batch_plan(len(base), cfg["batch_size"])
+    doses = np.asarray([0, .2, .4, .6, .8, 1], dtype=np.float64)
+    predictions = np.empty((6, 3, 17, 3), dtype=np.float32)
+    targets = np.empty_like(predictions)
+    truths = np.empty_like(predictions)
+    print("Native TEST batch plan: " + json.dumps(plan), flush=True)
+    with torch.no_grad():
+        for col, dose in enumerate(doses):
+            ds = dataset_class(base, trigger, mode="clean" if dose == 0 else "trigger@dose",
+                pivot=cfg["pivot"], axis=cfg["payload_axis"], dataset="mmfi", eps=cfg["eps"],
+                theta_max_deg=cfg["theta_max_deg"], dose_mode=cfg["dose_mode"], fixed_dose=float(dose))
+            for entry in plan:
+                batch = collate([ds[i] for i in range(entry["start"], entry["stop"])])
+                pred, _ = model(batch["csi"].to(device))
+                pred = pred.cpu().numpy()[:, 0]
+                truth = batch["pose"].numpy()[:, 0]
+                target = batch["target"].numpy()[:, 0]
+                for picked in entry["selected"]:
+                    row, offset = picked["row"], picked["offset"]
+                    predictions[col, row] = pred[offset]
+                    truths[col, row] = truth[offset]
+                    targets[col, row] = target[offset]
+            print(f"DOSE_POSE d={dose:.1f} complete 3 fixed frames (native batches)", flush=True)
+    if not np.array_equal(truths, np.broadcast_to(truths[0], truths.shape)):
+        raise ValueError("Selected true poses changed across doses")
+    return doses, truths[0], predictions, targets, plan
+
+
+def replay_comparison(actual_t, actual_c):
+    """Per-frame/per-joint evidence; same absolute 0.1 mm acceptance rule."""
+    report = dict(tolerance_mm=REPLAY_TOLERANCE_MM)
+    maximum = 0.
+    for key, actual, expected in (("target", actual_t, EXPECTED_T),
+                                  ("clean_to_target", actual_c, EXPECTED_C)):
+        if len(actual) != 3 or any(len(row) != 2 for row in actual):
+            raise ValueError("Replay needs 3 frames x 2 target-joint errors")
+        values = [[float(value) for value in row] for row in actual]
+        if any(not math.isfinite(value) for row in values for value in row):
+            raise ValueError("Replay contains non-finite errors")
+        delta = [[abs(values[i][j] - expected[i][j]) for j in range(2)] for i in range(3)]
+        maximum = max(maximum, max(value for row in delta for value in row))
+        report[key] = dict(expected_mm=expected, observed_mm=values, abs_delta_mm=delta)
+    report.update(max_abs_delta_mm=maximum, passed=maximum <= REPLAY_TOLERANCE_MM)
+    return report
+
+
+def write_failure_report(output, report):
+    """Keep diagnostics on failure without creating an accepted pose NPZ."""
+    path = output.with_suffix(".replay_failed.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x", encoding="utf-8") as stream:
+            json.dump(report, stream, indent=2, allow_nan=False)
+    except FileExistsError:
+        print(f"Preserving previous diagnostic file: {path}; current evidence is printed above", flush=True)
+    else:
+        print(f"DOSE_POSE_REPLAY_FAILED_REPORT {path}", flush=True)
+
+
 def main(argv=None):
     args = parse_args(argv)
     paths, choice = resolve_paths(args)
@@ -130,7 +228,8 @@ def main(argv=None):
     import torch
     from models.factory import build_model
     from attack.trigger import build_trigger_by_name
-    from attack.payload import make_target_pose, set_skeleton_config, MMFI_EDGES
+    from attack.payload import set_skeleton_config, MMFI_EDGES
+    from attack.poison import PoisonedDataset, collate
     from data_utils.feeder import MMFI
 
     if not torch.cuda.is_available():
@@ -153,50 +252,52 @@ def main(argv=None):
     cfg["dataset_root"], cfg["action_npy"] = str(data), str(action)
     set_skeleton_config("mmfi")
     trigger = build_trigger_by_name(cfg["trigger"], cfg)
+    runtime = configure_native_runtime(torch)
+    print("Native MM-Fi numeric runtime: " + json.dumps(runtime), flush=True)
+    print("Indexing original TEST identities (metadata only; no training)", flush=True)
+    base = MMFI("test", data_root=str(data), protocol=cfg["mmfi_protocol"],
+                setting=cfg["mmfi_setting"], random_ratio=cfg["mmfi_random_ratio"],
+                random_seed=cfg["mmfi_split_seed"])
+    native_batch_plan(len(base), cfg["batch_size"])
+    for index, (csi_rel, gt_rel, frame) in zip(FRAME_IDS, PAIRS):
+        item = base.items[index]
+        if (Path(item["csi"]).resolve() != (data / csi_rel).resolve()
+                or Path(item["kpt"]).resolve() != (data / gt_rel).resolve()
+                or item["frame_idx"] != frame):
+            raise ValueError(f"Original TEST identity differs at index {index}")
     model = build_model("hpeli", num_keypoints=17, subcarrier_num=114,
                         num_person=1, dataset="mmfi", pretrained=False)
     model.load_state_dict(state["model"], strict=True)
     model.eval().to("cuda:0")
     del state
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cudnn.benchmark = False
-
-    raw, truth, hashes = [], [], []
+    truth, hashes = [], []
     for csi_rel, gt_rel, index in PAIRS:
         csi_path, gt_path = data / csi_rel, data / gt_rel
         x = np.load(csi_path, allow_pickle=False).astype(np.float32)
         y = np.load(gt_path, allow_pickle=False)[index].astype(np.float32)
         assert x.shape == (3, 114, 10) and y.shape == (17, 3)
         assert np.isfinite(x).all() and np.isfinite(y).all()
-        raw.append(x)
         truth.append(y)
         hashes.append({"csi": sha(csi_path), "ground_truth": sha(gt_path)})
-    truth = np.stack(truth)
-    doses = np.asarray([0, .2, .4, .6, .8, 1], dtype=np.float64)
-    predictions, targets = [], []
-    with torch.inference_mode():
-        for dose in doses:
-            inputs = np.stack([MMFI.normalize(trigger.inject(x.copy(), float(dose),
-                                eps=cfg["eps"])) for x in raw])
-            x = torch.from_numpy(np.ascontiguousarray(inputs)).to("cuda:0")
-            pred, _ = model(x)
-            pred = pred[:, 0].cpu().numpy()
-            target = make_target_pose(truth, cfg["pivot"], float(dose),
-                np.deg2rad(cfg["theta_max_deg"]), cfg["dose_mode"], cfg["payload_axis"],
-                target_joints=cfg["target_joints"])
-            predictions.append(pred)
-            targets.append(target)
-            print(f"DOSE_POSE d={dose:.1f} complete 3 fixed frames", flush=True)
-    predictions, targets = np.stack(predictions), np.stack(targets)
+    original_truth = np.stack(truth)
+    doses, truth, predictions, targets, plan = predict_native_batches(
+        model, base, trigger, cfg, "cuda:0", torch, PoisonedDataset, collate)
+    assert np.array_equal(truth, original_truth)
     assert predictions.shape == targets.shape == (6, 3, 17, 3)
     assert np.isfinite(predictions).all() and np.isfinite(targets).all()
     assert np.array_equal(targets[0], truth)
     error_t = np.linalg.norm(predictions[-1, :, [2, 3], :] - targets[-1, :, [2, 3], :], axis=-1).T * 1000
     error_c = np.linalg.norm(predictions[0, :, [2, 3], :] - targets[-1, :, [2, 3], :], axis=-1).T * 1000
-    delta = max(float(np.max(np.abs(error_t - EXPECTED_T))),
-                float(np.max(np.abs(error_c - EXPECTED_C))))
-    if delta > 0.1:
+    replay = replay_comparison(error_t.tolist(), error_c.tolist())
+    delta = replay["max_abs_delta_mm"]
+    print("DOSE_POSE_REPLAY " + json.dumps(replay, allow_nan=False), flush=True)
+    if not replay["passed"]:
+        write_failure_report(output, dict(status="REPLAY_MISMATCH_NO_POSE_EXPORT", replay=replay,
+            runtime=runtime, native_batch_plan=plan, checkpoint_sha256=sha(checkpoint),
+            torch=torch.__version__, numpy=np.__version__, cuda=torch.version.cuda,
+            device=torch.cuda.get_device_name(0), exporter_sha256=sha(Path(__file__)),
+            source_sha256={name: sha(source / name) for name in SOURCE_FILES},
+            input_sha256=hashes, resolved_paths={k: str(v) for k, v in paths.items()}))
         raise ValueError(f"Selected-frame replay differs from saved errors by {delta:.6f} mm; no figure export")
     assert sha(checkpoint) == SHA
     metadata = {"seed": 42, "rho": .1, "split": "P1S1", "epoch": 49,
@@ -205,6 +306,8 @@ def main(argv=None):
         "test_indices": FRAME_IDS, "pair_ids": PAIRS, "input_sha256": hashes,
         "torch": torch.__version__, "numpy": np.__version__,
         "device": torch.cuda.get_device_name(0), "max_reference_error_delta_mm": delta,
+        "runtime": runtime, "native_batch_plan": plan, "replay": replay,
+        "cuda": torch.version.cuda,
         "resolved_paths": {key: str(path) for key, path in paths.items()},
         "source_selection": choice,
         "exporter_sha256": sha(Path(__file__)),

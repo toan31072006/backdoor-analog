@@ -73,7 +73,29 @@ Các đường dẫn mặc định (có thể chỉ định rõ bằng các tham
 
 Exporter cũ giữ nguyên guard phối hợp với `Run-MMFiBackTime`. Nếu báo guard
 đang chạy, không kill job: đợi một slot đã phối hợp rồi chạy lại. Không có
-automatic retry. Batch inference chỉ gồm 3 frame mỗi dose.
+automatic retry. Bản replay hiện tại dùng ba batch TEST gốc chứa ba frame đã
+chọn: index 0..31, 16608..16639 và 33248..33263, tức batch 32/32/16 (80 frame
+mỗi dose, không evaluate full TEST). Chỉ giữ prediction của ba TEST index cũ
+0/16632/33263, không chọn lại ví dụ hay thay pose để khớp số.
+
+### Sửa replay mismatch 0.147545 mm
+
+Van đã chạy được đủ sáu dose và khớp SHA checkpoint, nhưng helper ban đầu lệch
+endpoint replay 0.147545 mm nên KHÔNG xuất NPZ. Kiểm source phát hiện helper
+đã dùng batch 3 mới và ép tắt TF32, trong khi MM-Fi evaluator gốc dùng batch
+32, `cudnn.deterministic=True`, `benchmark=False`, không override TF32 mặc định.
+Đây là các khác biệt cần loại bỏ, chưa phải kết luận đã chứng minh nguyên nhân
+numerical drift trên GPU. Bản sửa dùng `PoisonedDataset`/`collate`, no_grad và
+batch gốc đúng thứ tự/short final batch; ghi lại các numeric flags thực tế.
+
+Ngưỡng replay GIỮ NGUYÊN 0.1 mm ở cả exporter và plotter. Không dùng thay đổi
+ngưỡng hậu nghiệm để chấp nhận kết quả, không có automatic retry/backend sweep.
+Operator cập nhật clone helper bằng `git pull --ff-only` rồi tự chạy lại lệnh
+cũ. Nếu vẫn lệch, gửi log `DOSE_POSE_REPLAY` hoặc
+`Downloads\mmfi_dose_pose_s42.replay_failed.json`. Report giữ per-frame/per-joint
+expected/observed/delta, batch plan, numeric flags, versions và source hashes;
+không tạo NPZ được chấp nhận hay sửa cache. Report đã có sẽ không bị ghi đè;
+evidence lần hiện tại vẫn được in ra log.
 
 ## Kết quả
 
