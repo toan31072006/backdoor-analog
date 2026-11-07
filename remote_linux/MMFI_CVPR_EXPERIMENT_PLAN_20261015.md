@@ -2,6 +2,30 @@
 
 ## Material Passport
 
+### Delivery 2026-11-07: same-input dose skeletons, 3 rows x 6 columns
+
+User approved the 3x6 layout, then explicitly requested GitHub delivery so
+it can run on Van. New helpers live only under
+`remote_tools/mmfi_dose_pose_3x6/`; no scientific training source, recipe,
+checkpoint, data, existing job guard or manuscript is changed. No job is
+launched by this delivery. Clone into a separate folder, not a running source.
+
+Inference-only scope: original A1 HPE-Li/MM-Fi P1S1/seed42/rho.1/final49,
+TEST indices0,16632,33263 fixed before viewing scores, six doses0,.2,.4,.6,.8,1.
+Exporter pins checkpoint SHA/config fingerprint and checks d1 per-joint replay
+within0.1mm. The historical BackTime coordination guard is preserved; never
+stop a running job or bypass its guard just to make a figure.
+
+Plot GT gray, actual predictions blue and stored target limb dashed orange;
+common camera/metric box and one GT-based translation per row, no alignment
+or per-dose rescaling. Per-frame T-MPJPE/requested/predicted/DCE CSV is not a
+full-TEST table. Preserve input/output hashes; refuse figure overwrite.
+Real NPZ/CUDA export and real-frame inspection remain pending. Local unit
+tests use invented arrays and visibly watermarked previews, not paper results.
+Delivery checks:14 unit tests pass in the repo copy, PowerShell syntax parses,
+and exporter/plotter/runner/test sources match the audited offline helpers.
+Guide: `remote_tools/mmfi_dose_pose_3x6/MMFI_DOSE_POSE_3X6_VI.md`.
+
 ### Execution setup 2026-11-07: PiW MetaFi++ TSBA/Smooth-LF, serial 4090
 
 User explicitly requested TSBA-adapted and Smooth-LF-CSI on Van's RTX4090,
