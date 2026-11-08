@@ -2,6 +2,31 @@
 
 ## Material Passport
 
+### Presentation request 2026-11-09: six-case saved-prediction qualitative on Van
+
+User requests GitHub push/pull handoff, CPU plotting ON Van, download figures
+only: MM-Fi/P1S1 and PiW HPE-Li, seed42/rho10%, Cross v3/Nod plus historical
+Bend-prior A1. This is NOT authorization to retrain, change labels, repair
+results, alter source-native training/evaluation, or edit the manuscript.
+Historical Bend denotes the trigger prior with LEG-ROTATION payload, not a
+trained torso-bending action target; labels/captions preserve that distinction.
+
+New isolated remote_tools/action_qualitative reader validates NPZ/result hashes,
+completion markers, fixed-final epochs and TEST identities, then displays
+first/middle/last TEST examples at doses0/.6/1 with a target-region zoom and a
+six-case overview using same TEST0 across actions. One clean-GT rigid display
+frame per example, common to all poses; no independent prediction alignment,
+scale/recentering, smoothing, result-based sample selection, or failure hiding.
+CPU NumPy/Matplotlib only, no model/checkpoint/Torch/CUDA loading. Missing
+inputs block six-case success before plotting; old runs/outputs are retained.
+Separate output figure_exports/actions_hpeli_s42_v1 plus figure-only ZIP.
+
+Local validation:17 synthetic code tests passed, PowerShell AST parsed, renderer
+ran on BOTH downloaded real Nod full-TEST NPZs and their completion receipts;
+figures inspected. Other four real source NPZs unavailable locally. Full six-case
+Van run/output/source availability not yet verified; no remote launch claimed.
+Guide: remote_tools/action_qualitative/README_VI.md.
+
 ### User-approved extension 2026-11-08: Cross v3 with moving shoulders, six targets
 
 Van's v2 full-data Geometry now reaches TRAIN21530: arm bones107.597+15.676mm
