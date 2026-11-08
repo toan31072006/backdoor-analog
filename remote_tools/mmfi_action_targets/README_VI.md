@@ -1,12 +1,17 @@
 # Cross/Nod target-action extension — MM-Fi / HPE-Li
 
-**Cross reach v2 (08/11):** Git đã sửa goal quá xa theo tầm với từng pose;
-Nod/recipe không đổi. Mặc định output mới v2; không dùng lại plan/output v1.
-ZIP07/11 giữ nguyên. Xem [quy tắc và lệnh khôi phục](../action_targets_parallel/CROSS_REACH_V2_VI.md).
+**Hiện hành: Cross6khớp v3** (vai11/14 cũng di chuyển), fixed anchor8;
+Nod/recipe không đổi. Xem [hướng dẫn mới](../action_targets_parallel/CROSS_SHOULDERS_V3_VI.md).
+Git defaults outputv3; các ghi chú v1/v2 bên dưới chỉ là lịch sử.
+ZIP cũ giữ nguyên và không dùng để chạy target mới.
+
+**Lịch sử Cross reach v2 (08/11):** đã sửa goal quá xa nhưng chưa cho vai
+di chuyển, nên vẫn lỗi trên TRAIN21530. Đã thay bằng v3, không dùng lại
+plan/output v1/v2. ZIP07/11 giữ nguyên. Xem [lịch sử v2](../action_targets_parallel/CROSS_REACH_V2_VI.md).
 
 **Cập nhật 2026-11-08:** để chạy CẢ MM-Fi/PiW với2job/1GPU và evaluate ngay từng
 job, dùng [coordinator mới](../action_targets_parallel/README_VI.md). File này
-giữ hướng dẫn serial của gói ZIP cũ, không trộn hai launcher/output.
+chỉ hướng dẫn serial riêng MM-Fi; không trộn hai launcher/output.
 
 ## Material Passport
 
@@ -27,10 +32,12 @@ giữ hướng dẫn serial của gói ZIP cũ, không trộn hai launcher/outpu
 
 - **Nod:** neck9 làm pivot, xoay head10 theo lateral axis lấy từ hai vai,
   góc40*d độ. Chỉ khớp10 đổi; cổ/thân/tay/chân giữ nguyên trong target.
-- **Cross:** vai11/14 giữ nguyên, hai khuỷu/cổ tay12/13/15/16 di chuyển. Endpoint
+- **Cross v3:** vai11/14 cùng khuỷu/cổ tay12/13/15/16 là6target. Vai quay quanh
+  body-up qua thorax8 cố định; giữ xương vai-thorax. Endpoint
   hai cổ tay nằm hai phía đối diện của đường giữa thân và phía trước ngực.
   Dùng two-bone IK bảo toàn upper/lower arm lengths, elbow pole xuống/ra ngoài.
-  Dose nội suy hướng hai xương bằng great-circle rotations; dose0 identity.
+  Dose nội suy shoulder orbit và hướng hai xương bằng great-circle rotations;
+  dose0 identity. Mọi khớp ngoài6target giữ nguyên.
 - Cross **không phải rigid single-subtree rotation** của công thức cũ; góc từng
   xương có thể khác nhau theo pose. Không claim monotone wrist displacement hoặc
   sai lệch tuyến tính2% của payload40deg cũ cho Cross. Geometry audit đếm cả
@@ -48,22 +55,23 @@ giữ hướng dẫn serial của gói ZIP cũ, không trộn hai launcher/outpu
 
 ## Dùng trên máy Vân
 
-Giải nén code ZIP vào thư mục MỚI, ví dụ `C:\Users\Van\Downloads\MMFiCrossNod`.
-Không giải nén đè checkout/job đang chạy. Không cần pip install/git pull và
-không có checkpoint hoặc raw data trong ZIP. Dùng Python env đang có:
+V3 dùng checkout Git đã pull khi không có job đang chạy; không dùng ZIP07/11
+(target cũ). Không cần pip install, dùng Python env đang có:
 `C:\Users\Van\backdooranalog\envs\dose-backdoor\python.exe`.
 
 Mở PowerShell trên Vân:
 
 ```powershell
-Set-Location "$env:USERPROFILE\Downloads\MMFiCrossNod"
+Set-Location -LiteralPath 'C:\Users\Van\PiWMetaFiTwoExtra4090'
+git pull --ff-only
+if ($LASTEXITCODE -ne 0) { throw 'Pull failed; preserve local changes' }
 $CrossNodRunner = '.\remote_tools\mmfi_action_targets\Run-MMFiCrossNod.ps1'
-$CrossNodOut = 'U:\runs\mmfi_action_targets_cross_nod_s42_v2'
+$CrossNodOut = 'U:\runs\mmfi_action_targets_cross_nod_s42_v3'
 & $CrossNodRunner -Mode CheckOnly -Outdir $CrossNodOut
 ```
 
 `U:` chỉ là ví dụ disk còn trống. Có thể dùng `C:` hoặc disk local khác; dùng
-output mới dưới `runs/` với basename như trên (v2/v3 nếu đổi plan). CheckOnly
+output mới dưới `runs/` với basename như trên (v4 trở lên nếu đổi plan). CheckOnly
 chỉ kiểm code manifest/đường dẫn, không Torch/CUDA/output.
 Nếu action ở chỗ khác, thêm `-CrossAction 'PATH\data_cross.npy'` và
 `-NodAction 'PATH\data_nod.npy'` vào **mọi lệnh**. Không lấy bend đổi tên file.

@@ -18,7 +18,7 @@ if (-not $Python) { $Python = Join-Path $DataHome 'envs\dose-backdoor\python.exe
 if (-not $Outdir) {
     $taskOutputHome = $DataHome
     if (Test-Path -LiteralPath 'U:\' -PathType Container) { $taskOutputHome = 'U:\backdooranalog' }
-    $Outdir = Join-Path $taskOutputHome 'runs\cross_nod_mmfi_piw_s42_2jobs_v2'
+    $Outdir = Join-Path $taskOutputHome 'runs\cross_nod_mmfi_piw_s42_2jobs_v3'
 }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw "Python not found: $Python" }
 if (-not (Test-Path -LiteralPath $taskSource -PathType Leaf)) { throw "Source not found: $taskSource" }

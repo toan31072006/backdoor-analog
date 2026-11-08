@@ -3,8 +3,8 @@
 Nod rotates the head about the neck by 40*d degrees around the body lateral
 axis. Cross uses bilateral two-bone IK for a prescribed crossed-wrist endpoint,
 then interpolates upper/lower bone directions separately along great circles.
-Cross v2 fits unreachable wrist goals while retaining strict crossing/front
-semantics. It is NOT the manuscript's single rigid subtree rotation; its joint angles
+Cross v3 permits shoulder motion on fixed-anchor orbits as well as arm IK.
+It is NOT the manuscript's single rigid subtree rotation; its joint angles
 change and monotone wrist displacement is not a mathematical guarantee.
 No CSI, victim output, TEST metric, or learned parameter enters either map.
 """
@@ -16,9 +16,13 @@ import numpy as np
 
 VERSION = 'mmfi_action_geometry_v1'
 SPECS = {
-    'cross': dict(version='mmfi_action_cross_geometry_v2', kind='bilateral_two_bone_ik_slerp',
-        pivots=[11, 14], target_joints=[12, 13, 15, 16],
+    'cross': dict(version='mmfi_action_cross_geometry_v3', kind='bilateral_shoulder_orbit_two_bone_ik_slerp',
+        pivots=[8], target_joints=[11, 12, 13, 14, 15, 16],
         arms=[[11, 12, 13], [14, 15, 16]],
+        shoulder_anchors=[[8], [8]],
+        shoulder_candidate_fractions=[.2, .3, .4, .5, .6, .7, .8, .9, 1.],
+        shoulder_root_steps=60,
+        shoulder_policy='forward_orbit_fixed_anchors_clean_torso_v3',
         wrist_across_width=.20, wrist_below_torso=.18,
         wrist_front_width=[.65, .80], wrist_height_separation_torso=.06,
         elbow_outward=.25, elbow_forward=.15, reach_margin=1e-5,
@@ -164,32 +168,11 @@ def _cross_arm_record(shoulder, elbow, wrist, nominal, fitted, result, center,
         front_m=float(np.dot(result - center, forward)))
 
 
-def cross_endpoint(pose, spec, *, diagnostics=None):
-    lateral, up, forward = body_frame(pose, spec['forward_sign'])
-    center = .5 * (pose[11] + pose[14])
-    width = float(np.linalg.norm(pose[14] - pose[11]))
+def cross_endpoint(pose, spec, *, diagnostics=None, shoulder_motions=None):
+    from attack.cross_shoulders import endpoint
     torso = float(np.linalg.norm(pose[8] - pose[0]))
-    result = pose.copy()
-    for k, (s, e, w) in enumerate(spec['arms']):
-        across_sign = 1. if k == 0 else -1.
-        below = spec['wrist_below_torso'] + k * spec['wrist_height_separation_torso']
-        goal = (center + across_sign * spec['wrist_across_width'] * width * lateral
-                - below * torso * up + spec['wrist_front_width'][k] * width * forward)
-        pole = (-up - across_sign * spec['elbow_outward'] * lateral
-                + spec['elbow_forward'] * forward)
-        fitted = _reachable_cross_goal(pose[s], pose[e], pose[w], goal, center,
-                                      lateral, forward, across_sign, spec)
-        result[e], result[w] = _two_bone_endpoint(
-            pose[s], pose[e], pose[w], fitted, pole, spec['reach_margin'])
-        # Keep strict post-IK semantics even after the v2 reach adaptation.
-        if across_sign * np.dot(result[w] - center, lateral) <= 0:
-            raise ValueError('Cross wrist cannot reach the opposite side with these bone lengths')
-        if np.dot(result[w] - center, forward) <= 0:
-            raise ValueError('Cross wrist is not in front of the chest')
-        if diagnostics is not None:
-            diagnostics.append(_cross_arm_record(pose[s], pose[e], pose[w], goal,
-                fitted, result[w], center, lateral, forward, across_sign))
-    return result
+    return endpoint(pose, spec, body_frame(pose, spec['forward_sign']), torso,
+                    diagnostics=diagnostics, shoulder_motions=shoulder_motions)
 
 
 def target_pose(pose, dose, spec):
@@ -213,14 +196,11 @@ def target_pose(pose, dose, spec):
             angle = np.deg2rad(spec['theta_max_deg']) * dose * spec['forward_sign']
             item[10] = original[9] + _rotate(original[10] - original[9], lateral, angle)
         else:
-            endpoint = cross_endpoint(original, spec)
+            from attack.cross_shoulders import interpolate
+            motions = []
+            endpoint = cross_endpoint(original, spec, shoulder_motions=motions)
             if dose == 1:
                 item[:] = endpoint
             else:
-                for s, e, w in spec['arms']:
-                    upper, lower = original[e] - original[s], original[w] - original[e]
-                    item[e] = original[s] + np.linalg.norm(upper) * _direction_at(
-                        upper, endpoint[e] - endpoint[s], dose)
-                    item[w] = item[e] + np.linalg.norm(lower) * _direction_at(
-                        lower, endpoint[w] - endpoint[e], dose)
+                item[:] = interpolate(original, endpoint, motions, dose, spec)
     return result

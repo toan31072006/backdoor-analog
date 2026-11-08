@@ -1,4 +1,4 @@
-"""Reach-adaptive v2 regression tests. Invented poses, NOT dataset results.
+"""Six-joint Cross v3 regression tests. Invented poses, NOT dataset results.
 
 The short-arm fixture is a synthetic analogue of the reported TRAIN failure;
 no raw MM-Fi frame is distributed with the code.
@@ -49,8 +49,9 @@ def set_arm(pose, arm, upper, lower):
 def nominal_endpoint(module, pose, spec):
     """Original v1 radial-only IK, for a regression counterexample/reference."""
     lateral, up, forward = module.body_frame(pose)
-    center = .5*(pose[spec['pivots'][0]]+pose[spec['pivots'][1]])
-    width = np.linalg.norm(pose[spec['pivots'][1]]-pose[spec['pivots'][0]])
+    a, b = [arm[0] for arm in spec['arms']]
+    center = .5*(pose[a]+pose[b])
+    width = np.linalg.norm(pose[b]-pose[a])
     torso = np.linalg.norm(pose[8]-pose[0]) if len(pose) == 17 else np.linalg.norm(center-.5*(pose[5]+pose[7]))
     result = pose.copy()
     for k, (s, e, w) in enumerate(spec['arms']):
@@ -65,7 +66,8 @@ def nominal_endpoint(module, pose, spec):
 
 def assert_semantics(module, original, result, spec):
     lateral, _, forward = module.body_frame(original)
-    center = .5*(original[spec['pivots'][0]]+original[spec['pivots'][1]])
+    a, b = [arm[0] for arm in spec['arms']]
+    center = .5*(original[a]+original[b])
     for k, (_, _, w) in enumerate(spec['arms']):
         assert (1 if k == 0 else -1)*np.dot(result[w]-center, lateral) > 0
         assert np.dot(result[w]-center, forward) > 0
@@ -80,7 +82,8 @@ def test_short_arm_no_stretch_or_skipped_frame_at_any_dose(geometry, dose):
     # The old formula fails even though 169mm > the 130mm mid-plane distance.
     old = nominal_endpoint(module, p, spec)
     lateral, _, _ = module.body_frame(p)
-    center = .5*(p[spec['pivots'][0]]+p[spec['pivots'][1]])
+    a, b = [arm[0] for arm in spec['arms']]
+    center = .5*(p[a]+p[b])
     assert np.dot(old[spec['arms'][0][2]]-center, lateral) < 0
     q = module.target_pose(p, dose, spec)
     np.testing.assert_array_equal(p, before)
@@ -93,21 +96,17 @@ def test_short_arm_no_stretch_or_skipped_frame_at_any_dose(geometry, dose):
         assert_semantics(module, p, q, spec)
 
 
-def test_reachable_nominal_targets_are_bitwise_unchanged(geometry):
-    module, p, _ = geometry
+def test_nominal_shoulders_move_with_all_anchor_bones_preserved(geometry):
+    module, p, edges = geometry
     spec = module.specification('cross')
-    expected = nominal_endpoint(module, p, spec)
     records = []
     q = module.cross_endpoint(p, spec, diagnostics=records)
-    np.testing.assert_array_equal(q, expected)
+    assert len(spec['target_joints']) == 6
+    for s, _, _ in spec['arms']:
+        assert np.linalg.norm(q[s]-p[s]) > .001
+    np.testing.assert_allclose(lengths(q, edges), lengths(p, edges), atol=1e-12, rtol=0)
     assert [r['adapted'] for r in records] == [False, False]
-    for dose in (.2, .4, .6, .8):
-        wanted = p.copy()
-        for s, e, w in spec['arms']:
-            upper, lower = p[e]-p[s], p[w]-p[e]
-            wanted[e] = p[s]+np.linalg.norm(upper)*_direction_at(upper, expected[e]-p[s], dose)
-            wanted[w] = wanted[e]+np.linalg.norm(lower)*_direction_at(lower, expected[w]-expected[e], dose)
-        np.testing.assert_array_equal(module.target_pose(p, dose, spec), wanted)
+    assert all(r['shoulder_displacement_m'] > .001 for r in records)
 
 
 def test_inner_reach_annulus_and_short_bone_remain_valid(geometry):
@@ -121,19 +120,24 @@ def test_inner_reach_annulus_and_short_bone_remain_valid(geometry):
     np.testing.assert_allclose(np.linalg.norm(q[w]-q[s]), .49+spec['reach_margin'], atol=1e-12)
 
 
-def test_truly_non_crossable_pose_refuses_whole_batch(geometry):
+def test_locked_non_crossable_shoulder_refuses_whole_batch(geometry):
     module, p, _ = geometry
     spec = module.specification('cross')
     bad = p.copy()
+    s = spec['arms'][0][0]
+    if len(p) == 17:
+        bad[s] = bad[8]+[0, 0, -.05]
+    else:
+        bad[s] = .5*(bad[0]+bad[7])
     set_arm(bad, spec['arms'][0], .02, .02)
-    with pytest.raises(ValueError, match='cannot reach across.*mid-plane'):
+    with pytest.raises(ValueError, match='no valid shoulder-orbit candidate'):
         module.target_pose(np.stack([p, bad]), .2, spec)
 
 
 def test_changed_version_refuses_v1_cross_but_nod_definition_is_unchanged(geometry):
     module, p, _ = geometry
     cross = module.specification('cross')
-    assert cross['version'].endswith('_v2')
+    assert cross['version'].endswith('_v3')
     old = copy.deepcopy(cross)
     old['version'] = module.VERSION
     old.pop('wrist_reach_policy'); old.pop('wrist_cross_slack_fraction')
@@ -169,7 +173,8 @@ def test_random_feasible_short_asymmetric_arms_keep_bones_and_semantics(geometry
     rng = np.random.default_rng(613)
     for _ in range(100):
         q = p.copy()
-        half_width = np.linalg.norm(p[spec['pivots'][0]]-p[spec['pivots'][1]])/2
+        a, b = [arm[0] for arm in spec['arms']]
+        half_width = np.linalg.norm(p[a]-p[b])/2
         for arm in spec['arms']:
             reach = rng.uniform(half_width+.002, .85)
             upper = reach*rng.uniform(.1, .9)
@@ -222,3 +227,80 @@ def test_mmfi_geometry_audits_real_payload_on_every_fixture_poison(tmp_path, mon
     assert (reach['poses'], reach['arms'], reach['adapted_poses'], reach['adapted_arms']) == (3, 6, 3, 3)
     assert record['cross']['max_bone_delta_m'] < 1e-12
     assert 'reach_adaptation' not in record['nod']
+    runner.verify_geometry(plan)
+    audit = runner.read(tmp_path / 'geometry_audit.json')
+    assert audit['status'] == 'PASS' and audit['n_checked'] == 6
+    audit['status'] = 'FAILED'
+    (tmp_path / 'geometry_audit.json').write_text(__import__('json').dumps(audit))
+    with pytest.raises(ValueError, match='changed complete'):
+        runner.verify_geometry(plan)
+
+
+@pytest.mark.parametrize('dose', [0., .2, .4, .6, .8, 1.])
+def test_v2_impossible_forearm_lengths_now_cross_with_moving_shoulders(geometry, dose):
+    module, p, edges = geometry
+    spec = module.specification('cross')
+    # Synthetic analogue of the second reported failure, NOT the raw frame.
+    set_arm(p, spec['arms'][0], .1076, .0157)
+    a, b = [arm[0] for arm in spec['arms']]
+    lateral, _, _ = module.body_frame(p)
+    assert .1076+.0157 < np.dot(.5*(p[a]+p[b])-p[a], lateral)
+    q = module.target_pose(p, dose, spec)
+    np.testing.assert_allclose(lengths(q, edges), lengths(p, edges), atol=1e-12, rtol=0)
+    for arm, anchors in zip(spec['arms'], spec['shoulder_anchors']):
+        for anchor in anchors:
+            np.testing.assert_allclose(np.linalg.norm(q[arm[0]]-q[anchor]),
+                np.linalg.norm(p[arm[0]]-p[anchor]), atol=1e-12, rtol=0)
+    if dose == 1:
+        assert_semantics(module, p, q, spec)
+
+
+def test_geometry_records_all_failures_and_audits_nod_without_success_receipt(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import run_mmfi_action_targets as runner
+    import attack.action_targets as module
+    p = np.zeros((17, 3))
+    p[8] = [0, 0, .61]; p[9] = [0, 0, .75]; p[10] = [0, 0, .95]
+    p[11] = [-.13, 0, .61]; p[14] = [.13, 0, .61]
+    spec = module.specification('cross')
+    set_arm(p, spec['arms'][0], .3, .28); set_arm(p, spec['arms'][1], .3, .28)
+    bad = p.copy(); bad[11] = bad[8]+[0, 0, -.05]
+    set_arm(bad, spec['arms'][0], .02, .02)  # valid bones, locked shoulder, no feasible orbit
+    samples = [bad, p, bad]
+    visited = []
+    def load(index):
+        visited.append(index)
+        return samples[index][None].copy()
+    cells = [dict(action=a, cfg=dict(action_payload=module.specification(a),
+        target_joints=module.specification(a)['target_joints'])) for a in ('cross', 'nod')]
+    plan = dict(outdir=str(tmp_path), plan_sha256='synthetic-failed-audit', cells=cells)
+    monkeypatch.setattr(runner, 'build_plan', lambda args: plan)
+    monkeypatch.setattr(runner, 'dataset', lambda cfg, split: (None, [['fixture', i] for i in range(3)]))
+    pairs = SimpleNamespace(poison_idx={0, 1, 2}, n_poison=3, clean_pose=load,
+        manifest=lambda: dict(poison_plan_sha256='same-ids-not-filtered'))
+    monkeypatch.setattr(runner, 'action_data', lambda *a, **k: pairs)
+    monkeypatch.setattr(runner, 'geometry_figure', lambda path, *a, **k: path.write_bytes(b'SYNTHETIC ONLY'))
+    with pytest.raises(runner.GeometryAuditFailure, match='2 invalid poses of 6'):
+        runner.geometry(SimpleNamespace())
+    assert {0, 1, 2}.issubset(visited)
+    audit = runner.read(tmp_path / 'geometry_audit.json')
+    assert audit['status'] == 'FAILED' and audit['n_checked'] == 6
+    assert audit['records']['cross']['n_failed'] == 2
+    assert audit['records']['nod']['n_checked'] == 3 and audit['records']['nod']['n_failed'] == 0
+    failures = runner.read(tmp_path / 'geometry_failures.json')['failures']
+    assert [f['index'] for f in failures] == [0, 2]
+    assert not (tmp_path / 'geometry.json').exists()
+    assert not (tmp_path / 'prepared.json').exists()
+
+
+def test_analytic_candidate_does_not_miss_narrow_reachable_interval():
+    from attack.cross_shoulders import _candidate_fractions, orbit_position
+    phi = .45*np.pi
+    radial = .2*np.array([np.cos(phi), -np.sin(phi), 0])
+    motion = dict(origin=radial, center=np.zeros(3), radial=radial, axis=np.array([0., 0., 1.]), angle=np.pi)
+    center, inward, far = np.array([.21, 0, 0]), np.array([1., 0, 0]), .01001
+    spec = dict(shoulder_candidate_fractions=[.2, .3, .4, .5, .6, .7, .8, .9, 1.], shoulder_root_steps=60)
+    h = lambda f: np.dot(center-orbit_position(motion, f), inward)
+    assert all(h(f) > far for f in spec['shoulder_candidate_fractions'])
+    candidates = list(_candidate_fractions(motion, center, inward, far, spec))
+    assert any(0 < h(f) < far for f in candidates)

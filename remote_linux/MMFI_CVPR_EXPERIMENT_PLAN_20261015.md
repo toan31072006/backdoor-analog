@@ -2,6 +2,56 @@
 
 ## Material Passport
 
+### User-approved extension 2026-11-08: Cross v3 with moving shoulders, six targets
+
+Van's v2 full-data Geometry now reaches TRAIN21530: arm bones107.597+15.676mm
+sum123.273mm < shoulder-mid-plane124.331mm. Fixed-shoulder Cross cannot satisfy
+that label. User approves adding BOTH shoulders to targets: MM-Fi[11,12,13,
+14,15,16], PiW[3,6,10,2,4,8]. This supersedes fixed-shoulder v1/v2, not Nod.
+No raw label repair, sample/poison filtering, bone stretching or TEST tuning.
+
+V3 shoulder orbit preserves all anchor distances: MM-Fi rotates around body-up
+through thorax8; PiW rotates around the neck0-to-hip7/5 line so BOTH original
+neck-shoulder and shoulder-hip bones stay fixed. Body axes/chest goals and
+crossing/front semantics use CLEAN torso; shoulders stay on their original
+side. Nominal fractions.2,.3,...,1 towards frontmost orbit point, plus analytic
+lateral extrema and60-step root witnesses for narrow reachable intervals;
+first valid prescribed candidate feeds native two-bone IK. At intermediate
+doses shoulder orbit angle scales by d and each arm bone direction interpolates
+on a great circle. All non-target joints fixed; no anatomical/contact guarantee
+or rigid40deg near-linearity/monotonicity claim. Locked valid shoulders can
+remain stationary; audits record actual movement instead of assuming6 moved.
+
+Cross metric denominator now6, not4; do not mix historical target scores.
+Nod v1 and HPE-Li recipes, data counts/splits, RNG/poison/dose plans, native
+CSI/trigger/loss/optimizer, six doses/cleanGT PCK scales, two slots/waves and
+per-job fixed-final evaluation unchanged. One-seed exploratory, not full T7.
+New parent output cross_nod_mmfi_piw_s42_2jobs_v3; nested dataset foldersv3.
+Preserve v1/v2 logs/plans/ZIPs, manuscript and historical numeric artifacts.
+
+Audit ALL selected poison TRAIN poses for BOTH actions; collect geometric
+ValueError/AssertionError entries and report all invalid IDs without dropping
+any. Any failure blocks geometry success/Prepare/Launch. Coordinator may
+continue the NEXT CPU dataset audit ONLY after this session's worker attests
+a COMPLETE failed audit with bound queue/plan/audit SHA. Unknown crash, I/O,
+interrupt, stale/partial/foreign reports still stop immediately; training and
+Prepare error policy unchanged. Geometry success binds complete audit SHA.
+Reports geometry_audit.json/geometry_failures.json plus per-session attestation;
+no new training starts to obtain these audits. Explicit inspection/Prepare
+still required after real TRAIN passes. Guide:
+remote_tools/action_targets_parallel/CROSS_SHOULDERS_V3_VI.md.
+
+Final extension gate165passed/4deselected, exit0,267.77s; includes complete
+audit and all36coordinator cases. Four real HPE-Li B32 CPU cases explicitly
+deselected for local resource limits, not counted passing. Initial core
+gate126passed/5deselected predates complete-audit additions. Separate native
+adapter/split/recipe regression144passed/1deselected, exit0,119.37s; total
+309passed/5deselected, not a full HPE-Li CPU/CUDA validation. Private
+TRAIN9092 XYZ check six doses/bones<=2.22e-16m/Nod bitwise95d7c50 passed; raw
+pose not uploaded. Actual21530 XYZ unavailable; synthetic107.6/15.7mm arm
+with130mm halfwidth tested, not a real-frame replay. See VALIDATION.md for
+the final gate and explicit limits; full real TRAIN/CUDA/efficacy unverified.
+
 ### User-approved correction 2026-11-08: reach-adaptive Cross geometry v2
 
 Van's first MM-Fi Geometry failed at TRAIN9092 before any full training.

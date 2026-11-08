@@ -11,21 +11,25 @@
   và Clean controls. Không sửa paper hoặc lấy hình synthetic làm kết quả thật.
 - Xem VALIDATION.md cho kiểm thử local; chưa có full-data/CUDA run mới.
 
-## Cross v2: sửa target quá xa trên pose có tay ngắn (2026-11-08)
+## Hiện tại: Cross v3, 6 khớp gồm hai vai (2026-11-08)
 
-Người dùng duyệt đổi Cross sang target thích nghi tầm với. Nod và toàn bộ
-recipe/poison/trigger/metric/lịch2slot giữ nguyên. Git hiện dùng Cross geometry
-v2 cho CẢ MM-Fi/PiW; hai ZIP ngày07/11 và output v1 giữ nguyên, không sửa/chép
-plan hoặc checkpoint cũ. Chi tiết quy tắc và lỗi TRAIN9092:
+**Dùng Cross6khớp v3 theo phê duyệt mới:** xem
+[CROSS_SHOULDERS_V3_VI.md](CROSS_SHOULDERS_V3_VI.md). Dùng output/nested folders
+v3; v1/v2 bên dưới là lịch sử, không reuse plan/approval. V3 thêm hai vai và
+audit toàn bộ lỗi geometric, Nod/recipe/lịch hai slot không đổi.
+
+### Lịch sử v2: target thích nghi tầm với, vai cố định
+
+V2 từng sửa lỗi TRAIN9092 nhưng audit thật sau đó gặp TRAIN21530 có tay ngắn
+hơn khoảng cách tới mid-plane; vì vậy đã được thay bằng v3 có vai di chuyển.
+Hai ZIP ngày07/11 và output v1/v2 giữ nguyên, không sửa/chép plan hoặc
+checkpoint cũ. Chi tiết lịch sử v2 và lỗi TRAIN9092:
 [CROSS_REACH_V2_VI.md](CROSS_REACH_V2_VI.md).
 
-**Nếu đã chạy Geometry v1 bị lỗi:** sau pull, đổi `$CrossNodArgs.Outdir` sang
-`U:\backdooranalog\runs\cross_nod_mmfi_piw_s42_2jobs_v2`, rồi tự chạy Geometry
-lại. Không Resume/Prepare output v1, không xóa output/lock. Geometry mới vẫn
-kiểm mọi poison TRAIN pose và báo lỗi nếu thật sự không thể bắt chéo. Xem
-`records.cross.reach_adaptation` trong geometry.json: số pose/arm phải điều
-chỉnh, độ điều chỉnh lớn nhất, khoảng sang phía đối diện/phía trước nhỏ nhất.
-Chưa có bảo đảm full dữ liệu thật đạt chỉ từ local tests.
+**Nếu Geometry v1/v2 bị lỗi:** dùng nguyên khối khởi tạo v3 trong guide mới,
+không chỉ sửa biến của terminal cũ. Không Resume/Prepare output v1/v2, không
+xóa output/lock. Geometry mới audit mọi poison TRAIN pose; chưa có bảo đảm
+toàn bộ dữ liệu thật đạt chỉ từ local tests.
 
 ## 1. Pull code và kiểm đường dẫn (chưa train)
 
@@ -41,7 +45,7 @@ $CrossNodRunner = '.\remote_tools\action_targets_parallel\Run-CrossNodTwoJobs.ps
 $CrossNodArgs = @{
     DataHome = 'C:\Users\Van\backdooranalog'
     Python = 'C:\Users\Van\backdooranalog\envs\dose-backdoor\python.exe'
-    Outdir = 'U:\backdooranalog\runs\cross_nod_mmfi_piw_s42_2jobs_v2'
+    Outdir = 'U:\backdooranalog\runs\cross_nod_mmfi_piw_s42_2jobs_v3'
 }
 & $CrossNodRunner -Mode CheckOnly @CrossNodArgs
 ```
@@ -80,10 +84,10 @@ lệ có thể bỏ cờ; quyết định phải giữ cố định từ Geometr
 Xem bốn ảnh trong hai thư mục:
 
 ```text
-OUT\runs\mmfi_action_targets_cross_nod_s42_v2\geometry_cross.png
-OUT\runs\mmfi_action_targets_cross_nod_s42_v2\geometry_nod.png
-OUT\runs\piw_action_targets_cross_nod_s42_v2\geometry_cross.png
-OUT\runs\piw_action_targets_cross_nod_s42_v2\geometry_nod.png
+OUT\runs\mmfi_action_targets_cross_nod_s42_v3\geometry_cross.png
+OUT\runs\mmfi_action_targets_cross_nod_s42_v3\geometry_nod.png
+OUT\runs\piw_action_targets_cross_nod_s42_v3\geometry_cross.png
+OUT\runs\piw_action_targets_cross_nod_s42_v3\geometry_nod.png
 ```
 
 Đây là GT/target của TRAIN, không có model predictions. Audit mọi poison pose
@@ -169,8 +173,8 @@ poses_full_test.npz. OUT\partial_results.csv/.json cập nhật ngay, không g�
 thiếu hàng là complete. Sau4/4 mới có OUT\results.csv/.json; không lấy mean của
 hai dataset hoặc của Cross/Nod có joint sets và scales khác nhau.
 
-MM-Fi targets Cross[12,13,15,16], Nod[10], PCK scale cleanGT(5,12).
-PiW targets Cross[6,10,4,8], Nod[1], PCK scale cleanGT elbows(6,4).
+MM-Fi targets Cross[11,12,13,14,15,16], Nod[10], PCK scale cleanGT(5,12).
+PiW targets Cross[3,6,10,2,4,8], Nod[1], PCK scale cleanGT elbows(6,4).
 T-MPJPE/PCK tại d1, DCE mean5dose dương; full six-dose requested/predicted/DCE,
 same-victim no-trigger target controls, clean all-joint MPJPE/PA và target-joint
 clean error. Giữ ordered IDs và raw GT/target/prediction XYZ để vẽ qualitative.

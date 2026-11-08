@@ -25,7 +25,8 @@ os.environ.update(MKL_THREADING_LAYER='SEQUENTIAL', OMP_NUM_THREADS='2',
 
 from run_mmfi_action_targets import (Tee, digest, read, sha, source_hashes,
                                     write, write_npz, new_cross_reach_audit,
-                                    add_cross_reach_records)
+                                    add_cross_reach_records, audit_action_geometry,
+                                    finish_geometry_audit, verify_geometry_audit)
 
 HERE = Path(__file__).resolve().parent
 PROFILE = 'piw_hpeli_cross_nod_targets_s42_v1'
@@ -224,41 +225,23 @@ def geometry(args):
     write(root / PLAN_NAME, plan)
     if (root / 'geometry.json').exists():
         raise ValueError('Geometry already exists; inspect it, then Prepare; no overwrite')
-    records, files = {}, {}
+    records, files, failures = {}, {}, []
     for cell in plan['cells']:
         cfg, action = cell['cfg'], cell['action']
         base, ids = dataset(cfg, 'training')  # no TEST labels or CSI for geometry design
         pairs = ActionTargetPairs(base, None, action)
         selected = sorted(pairs.selected)
         chosen = [selected[0], selected[len(selected)//2], selected[-1]]
-        worst, decreasing, pose_files = 0., 0, {}
-        reach_audit = new_cross_reach_audit()
-        for count, index in enumerate(selected):
-            try:
-                original = np.array(pairs.clean_pose(index)[0], dtype=np.float64, copy=True)
-                if action == 'cross':
-                    arm_records = []
-                    cross_endpoint(original, cfg['payload'], diagnostics=arm_records)
-                    add_cross_reach_records(reach_audit, index, arm_records)
-                bones = np.array([np.linalg.norm(original[a]-original[b]) for a, b in EDGES])
-                previous = np.zeros(len(cfg['payload']['target_joints']))
-                other = [j for j in range(14) if j not in cfg['payload']['target_joints']]
-                for dose in GRID:
-                    target = target_pose(original, dose, cfg['payload'])
-                    lengths = np.array([np.linalg.norm(target[a]-target[b]) for a, b in EDGES])
-                    worst = max(worst, float(np.max(np.abs(lengths - bones))))
-                    np.testing.assert_array_equal(target[other], original[other])
-                    moved = np.linalg.norm(target[cfg['payload']['target_joints']]-original[cfg['payload']['target_joints']], axis=-1)
-                    decreasing += int(np.any(moved + 1e-9 < previous))
-                    previous = moved
-                pose_files[str(index)] = sha(base.items[index]['kpt'])
-            except Exception as exc:
-                write(root / f'geometry_failure_{action}.json', dict(index=index, name=ids[index], error=str(exc)))
-                raise ValueError(f'{action}: invalid TRAIN geometry {ids[index]}; no frame dropped or model trained') from exc
-            if count % 500 == 0:
-                print(f'[geometry] {action}: {count}/{len(selected)} poison TRAIN poses', flush=True)
-        if worst > 1e-8:
-            raise ValueError('Bone-length preservation failed')
+        report, bad, pose_files = audit_action_geometry(selected, pairs.clean_pose, ids,
+            cfg['payload'], EDGES, target_pose, cross_endpoint, action,
+            pose_hash=lambda index: sha(base.items[index]['kpt']), progress_every=500)
+        records[action] = dict(report, train_ids_sha256=digest(ids), poison=pairs.manifest(),
+            pose_file_sha256=pose_files, fixed_train_indices=chosen)
+        if bad:
+            failures.extend(dict(entry, action=action) for entry in bad)
+            write(root / f'geometry_failure_{action}.json',
+                dict(index=bad[0]['index'], name=bad[0]['identity'], error=bad[0]['error']))
+            continue
         gt = np.stack([pairs.clean_pose(i)[0] for i in chosen])
         targets = np.stack([target_pose(gt, d, cfg['payload']) for d in (0., .5, 1.)])
         path = root / f'geometry_{action}.npz'
@@ -268,14 +251,9 @@ def geometry(args):
         geometry_figure(picture, gt, targets, action, source='REAL TRAIN; geometry inspection', ids=[ids[i] for i in chosen])
         for artifact in (path, picture, picture.with_suffix('.pdf')):
             files[artifact.name] = sha(artifact)
-        records[action] = dict(train_ids_sha256=digest(ids), poison=pairs.manifest(),
-            pose_file_sha256=pose_files, max_bone_delta_m=worst,
-            decreasing_joint_displacement_steps=decreasing, fixed_train_indices=chosen)
-        if action == 'cross':
-            records[action]['reach_adaptation'] = reach_audit
-            print('[geometry] Cross v2 reach adaptation: ' + json.dumps(reach_audit), flush=True)
+    audit_sha = finish_geometry_audit(root, plan, records, failures)
     write(root / 'geometry.json', dict(plan_sha256=plan['plan_sha256'], files=files,
-        source='TRAIN_ONLY_NO_MODEL_PREDICTIONS', records=records))
+        source='TRAIN_ONLY_NO_MODEL_PREDICTIONS', records=records, audit_file_sha256=audit_sha))
     print(f'GEOMETRY_ONLY: inspect {root}/geometry_cross.png and geometry_nod.png.\n'
           'No training; Prepare requires explicit --approve-geometry.', flush=True)
 
@@ -285,6 +263,7 @@ def verify_geometry(plan):
     record = read(root / 'geometry.json')
     if record['plan_sha256'] != plan['plan_sha256']:
         raise ValueError('Geometry/plan mismatch')
+    verify_geometry_audit(root, plan, record)
     for name, expected in record['files'].items():
         if sha(root / name) != expected:
             raise ValueError('Geometry artifact changed: ' + name)

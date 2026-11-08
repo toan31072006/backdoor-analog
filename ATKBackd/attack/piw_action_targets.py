@@ -20,8 +20,12 @@ VERSION = 'piw_action_geometry_v1'
 EDGES = ((0, 1), (0, 2), (2, 4), (4, 8), (2, 5), (5, 9), (9, 12),
          (0, 3), (3, 6), (6, 10), (3, 7), (7, 11), (11, 13))
 SPECS = {
-    'cross': dict(version='piw_action_cross_geometry_v2', kind='bilateral_two_bone_ik_slerp',
-        pivots=[3, 2], target_joints=[6, 10, 4, 8], arms=[[3, 6, 10], [2, 4, 8]],
+    'cross': dict(version='piw_action_cross_geometry_v3', kind='bilateral_shoulder_orbit_two_bone_ik_slerp',
+        pivots=[0, 7, 5], target_joints=[3, 6, 10, 2, 4, 8], arms=[[3, 6, 10], [2, 4, 8]],
+        shoulder_anchors=[[0, 7], [0, 5]],
+        shoulder_candidate_fractions=[.2, .3, .4, .5, .6, .7, .8, .9, 1.],
+        shoulder_root_steps=60,
+        shoulder_policy='forward_orbit_fixed_anchors_clean_torso_v3',
         wrist_across_width=.20, wrist_below_torso=.18,
         wrist_front_width=[.65, .80], wrist_height_separation_torso=.06,
         elbow_outward=.25, elbow_forward=.15, reach_margin=1e-5, forward_sign=1.,
@@ -53,32 +57,12 @@ def body_frame(pose, forward_sign=1.):
     return lateral, up, _unit(np.cross(lateral, up), 'PiW forward axis') * forward_sign
 
 
-def cross_endpoint(pose, spec, *, diagnostics=None):
-    lateral, up, forward = body_frame(pose, spec['forward_sign'])
+def cross_endpoint(pose, spec, *, diagnostics=None, shoulder_motions=None):
+    from attack.cross_shoulders import endpoint
     center = .5 * (pose[2] + pose[3])
-    width = float(np.linalg.norm(pose[2] - pose[3]))
     torso = float(np.linalg.norm(center - .5 * (pose[5] + pose[7])))
-    result = pose.copy()
-    for k, (s, e, w) in enumerate(spec['arms']):
-        across = 1. if k == 0 else -1.
-        below = spec['wrist_below_torso'] + k * spec['wrist_height_separation_torso']
-        goal = (center + across * spec['wrist_across_width'] * width * lateral
-                - below * torso * up + spec['wrist_front_width'][k] * width * forward)
-        pole = -up - across * spec['elbow_outward'] * lateral + spec['elbow_forward'] * forward
-        fitted = _reachable_cross_goal(pose[s], pose[e], pose[w], goal, center,
-                                      lateral, forward, across, spec)
-        result[e], result[w] = _two_bone_endpoint(
-            pose[s], pose[e], pose[w], fitted, pole, spec['reach_margin'])
-        # Retain strict post-IK semantics after the shared v2 goal adaptation;
-        # never accept a same-side/behind-chest wrist or drop a frame.
-        if across * np.dot(result[w] - center, lateral) <= 0:
-            raise ValueError('PiW Cross wrist cannot reach the opposite side')
-        if np.dot(result[w] - center, forward) <= 0:
-            raise ValueError('PiW Cross wrist is not in front of the chest')
-        if diagnostics is not None:
-            diagnostics.append(_cross_arm_record(pose[s], pose[e], pose[w], goal,
-                fitted, result[w], center, lateral, forward, across))
-    return result
+    return endpoint(pose, spec, body_frame(pose, spec['forward_sign']), torso,
+                    diagnostics=diagnostics, shoulder_motions=shoulder_motions)
 
 
 def target_pose(pose, dose, spec):
@@ -102,14 +86,11 @@ def target_pose(pose, dose, spec):
             item[1] = original[0] + _rotate(head, lateral,
                 np.deg2rad(spec['theta_max_deg']) * dose * spec['forward_sign'])
         else:
-            endpoint = cross_endpoint(original, spec)
+            from attack.cross_shoulders import interpolate
+            motions = []
+            endpoint = cross_endpoint(original, spec, shoulder_motions=motions)
             if dose == 1:
                 item[:] = endpoint
             else:
-                for s, e, w in spec['arms']:
-                    upper, lower = original[e] - original[s], original[w] - original[e]
-                    item[e] = original[s] + np.linalg.norm(upper) * _direction_at(
-                        upper, endpoint[e] - endpoint[s], dose)
-                    item[w] = item[e] + np.linalg.norm(lower) * _direction_at(
-                        lower, endpoint[w] - endpoint[e], dose)
+                item[:] = interpolate(original, endpoint, motions, dose, spec)
     return result

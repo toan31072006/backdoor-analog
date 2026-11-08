@@ -46,13 +46,14 @@ def test_actual_piw_layout_bones_identity_and_untouched(action, dose):
         assert np.linalg.norm(result-p) > .01
 
 
-def test_cross_wrist_semantics_and_fixed_shoulders():
+def test_cross_wrist_semantics_moving_shoulders_and_fixed_torso_anchors():
     p = pose(); q = target_pose(p, 1., specification('cross'))
     lateral, _, forward = body_frame(p)
     center = .5*(p[2]+p[3])
     assert (q[10]-center) @ lateral > 0 and (q[8]-center) @ lateral < 0
     assert (q[10]-center) @ forward > 0 and (q[8]-center) @ forward > 0
-    np.testing.assert_array_equal(q[[0, 1, 2, 3, 5, 7, 9, 11, 12, 13]], p[[0, 1, 2, 3, 5, 7, 9, 11, 12, 13]])
+    np.testing.assert_array_equal(q[[0, 1, 5, 7, 9, 11, 12, 13]], p[[0, 1, 5, 7, 9, 11, 12, 13]])
+    assert np.linalg.norm(q[[2, 3]]-p[[2, 3]]) > .001
 
 
 def test_nod_around_piw_neck_not_old_hip():
@@ -94,7 +95,9 @@ def test_malformed_geometry_refused_not_repaired_or_dropped(kind):
     if kind == 'torso': p[[5, 7]] += [0., 0., .5]
     if kind == 'head': p[1] = p[0]
     if kind == 'arm': p[6] = p[3]
-    if kind == 'reach': p[6] = p[3]+[0, 0, -.02]; p[10] = p[6]+[0, 0, -.02]
+    if kind == 'reach':
+        p[3] = .5*(p[0]+p[7])  # locked neck/hip circle, genuinely insufficient arm reach
+        p[6] = p[3]+[0, 0, -.02]; p[10] = p[6]+[0, 0, -.02]
     if kind == 'spec': spec['wrist_across_width'] = .01
     with pytest.raises(ValueError):
         target_pose(p, 1., spec)
@@ -192,7 +195,7 @@ def test_frozen_piw_v3_recipe_not_mmfi_or_v2(tmp_path):
         assert cfg['drop_last'] is True and cfg['pretrained'] is False
         assert cfg['target_pck_reference'] == [6, 4]
         assert cfg['csi_shape'] == [3, 180, 20]
-    assert a['cfg']['payload']['target_joints'] == [6, 10, 4, 8]
+    assert a['cfg']['payload']['target_joints'] == [3, 6, 10, 2, 4, 8]
     assert b['cfg']['payload']['target_joints'] == [1]
     assert a['action_record']['sha256'] != b['action_record']['sha256']
     runner.write(Path(args.outdir) / runner.PLAN_NAME, plan)

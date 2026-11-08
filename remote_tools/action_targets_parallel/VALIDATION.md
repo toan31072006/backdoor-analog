@@ -1,16 +1,77 @@
 ## Material Passport
 
-- Current Cross v2 correction: user-approved 2026-11-08; base5f5f152. See
-  CROSS_REACH_V2_VI.md. Historical269-pass coordinator gate below describes v1,
-  not a full-data success or a substitute for the current correction checks.
+- Current Cross v3 extension: user-approved 2026-11-08; base95d7c50. See
+  CROSS_SHOULDERS_V3_VI.md. Cross now includes both shoulders (six targets);
+  Nod is unchanged. The v2 checks and historical269-pass gate below are retained
+  as history, not a substitute for the current extension gate or real-data audit.
 - Origin: academic-research-suite / experiment-agent, 2026-11-08.
-- Verification: local code/CPU/synthetic fixtures only, NOT real MM-Fi/PiW
-  target geometry, CUDA capacity, full-data convergence or empirical results.
+- Verification: local code/CPU/synthetic fixtures and one privately supplied
+  TRAIN9092 pose only, NOT a full real MM-Fi/PiW target-geometry pass, CUDA
+  capacity, full-data convergence or empirical results.
 - Base revision be090d04dcb09618468bb2f5475e3fad38284a90.
 - Runtime local Python3.13.5, Torch2.9.1+cpu, NumPy2.1.3; sequential MKL,
   two OMP/MKL threads before scientific imports.
 - User requested GitHub delivery and will launch on Van. No remote jobs were
   started, paused, killed or resumed from this workspace.
+
+## Cross v3 extension checks (2026-11-08)
+
+- **Final extension gate:165passed/4deselected, exit0,267.77s.** JUnit records
+  165tests,0failures,0errors,0skips; deselected tests are not passes. The initial
+  core gate126passed/5deselected predates complete-audit plumbing and is NOT
+  the final gate. Final command from ATKBackd, with frozen scientific source:
+
+  ```text
+  python -B -m pytest tests/test_cross_reachable.py
+    tests/test_action_targets_parallel.py tests/test_mmfi_action_targets.py
+    tests/test_piw_action_targets.py -q -p no:cacheprovider
+    -k "not native_hpeli_real_b32_cpu_step_with_new_targets and not real_hpeli_piw_b32_mpje_adamw_step_cpu_synthetic"
+    --basetemp=E:\wifi\_cross_shoulders_gate_20261108_b
+    --junitxml=E:\wifi\cross_shoulders_gate_20261108.xml
+  ```
+
+- Includes both six-joint Cross layouts/all6doses, all shoulder-anchor/arm
+  edges, unchanged non-target joints, locked-shoulder refusal, degenerate
+  bones, coordinate equivariance, deterministic targets, unchanged Nod,
+  100random short/asymmetric poses per layout, narrow reachable intervals,
+  and source/spec/plan version binding. PiW preserves BOTH neck-shoulder and
+  shoulder-hip constraints, not only the neck distance.
+- Synthetic reported-length analogue:107.6mm upper arm+15.7mm forearm,
+  shoulder-mid-plane130mm, both skeletons/all6doses pass. Real XYZ for the
+  reported TRAIN21530 has NOT been supplied, so this is not its replay.
+- Privately supplied real TRAIN9092 checked in memory: all6doses pass with
+  max bone delta2.22e-16m; Nod bitwise equal to95d7c50. Endpoint shoulder
+  displacements29.99/45.31mm. Raw pose was not added to Git or uploaded.
+- Complete-audit fixture records multiple invalid Cross poses, retains all
+  poison IDs/denominators, finishes Nod, writes all failures and refuses a
+  geometry success receipt. Coordinator continues a second CPU audit only
+  with a complete failed audit attested by the current worker session and
+  exact queue/plan/audit hashes; missing, stale, foreign or partial receipts
+  stop. No continuation of Prepare/training on failure.
+- All36coordinator tests pass, including the original30OS-process/locking/
+  drain/concurrency cases. PiW tiny-model staged pipeline still runs two
+  200epoch victims/final199/six-dose NPZ replay; native per-cell evaluation
+  works while the other victim has no checkpoint. These are fixtures, NOT
+  trained HPE-Li efficacy results.
+- Four real HPE-Li B32 CPU forward/backward cases (two per dataset) were
+  explicitly deselected because of the previously observed local memory/
+  native-crash constraints. No production batch/model/backend/OS paging
+  settings changed. Historical B32 evidence does not replace a fresh real
+  CUDA single-model and concurrent two-model B32 Prepare on Van.
+- Separate adapter/split/recipe regression:144passed/1deselected, exit0,
+  119.37s; JUnit E:\wifi\cross_shoulders_light_regression_20261108.xml.
+  Files: test_piw_a1_adapter.py, test_piw_v2.py,
+  test_piw_hpeli_clean_runner.py, test_mmfi_coupling.py, test_mmfi_split.py;
+  -k "not real_hpeli_piw_forward_backward_cpu". The additional native HPE-Li
+  CPU case was explicitly deselected for the same local resource constraints.
+  Across these two disjoint gates:309passed/5deselected, not a full native
+  CPU/CUDA validation. Historical legacy spawn limits remain as noted below.
+- All three wrapper AST parses and git diff --check pass. Native model,
+  training engine, CSI, trigger and metric-definition files have no diff.
+  Original ZIP/manuscript/PDF preservation hashes below were rechecked equal.
+- Cross target metrics now use6joints, not historical4; clean MPJPE/PA still
+  use17/14joints. No new TEST scores or qualitative model predictions exist.
+  Full poison TRAIN geometry audit/inspection and CUDA Prepare are mandatory.
 
 ## Cross v2 correction checks (2026-11-08)
 

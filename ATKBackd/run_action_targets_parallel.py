@@ -50,7 +50,7 @@ def checked_root(outdir, data_home):
     if (not re.fullmatch(r'cross_nod_mmfi_piw_s42_2jobs_v[0-9]+', root.name)
             or root.parent.name.lower() != 'runs' or root.is_relative_to(HERE)
             or home.is_relative_to(root)):
-        raise ValueError('Use a NEW runs/cross_nod_mmfi_piw_s42_2jobs_v2 (or v3, ...), outside code/inputs; preserve old outputs')
+        raise ValueError('Use a NEW runs/cross_nod_mmfi_piw_s42_2jobs_v3 (or v4, ...), outside code/inputs; preserve old outputs')
     for path in (Path(outdir), Path(data_home)):
         for item in (path, *path.parents):
             if item.is_symlink() or (hasattr(item, 'is_junction') and item.is_junction()):
@@ -95,7 +95,7 @@ def read_queue(root):
 
 
 def dataset_args(q, dataset, approve_geometry=False):
-    name = f'{dataset}_action_targets_cross_nod_s42_v2'
+    name = f'{dataset}_action_targets_cross_nod_s42_v3'
     return SimpleNamespace(data_home=q['data_home'], outdir=str(Path(q['outdir']) / 'runs' / name),
         dataset_root=q['piw_dataset_root'] if dataset == 'piw' else None,
         cross_action=q['cross_action'], nod_action=q['nod_action'],
@@ -250,7 +250,14 @@ def worker(q, args):
         if (root / 'geometry.json').exists():
             m.verify_geometry(dataset_plan(q, args.dataset))
         else:
-            m.geometry(native_args)
+            try:
+                m.geometry(native_args)
+            except common.GeometryAuditFailure:
+                plan = dataset_plan(q, args.dataset)
+                common.write(Path(args.session) / f'{args.dataset}.geometry.failed-audit.json',
+                    dict(queue_sha256=q['queue_sha256'], dataset=args.dataset,
+                        plan_sha256=plan['plan_sha256'], audit_sha256=common.sha(root / 'geometry_audit.json')))
+                raise
         result = dict(geometry='TRAIN_ONLY_NO_MODEL_PREDICTIONS')
     elif stage == 'prepare':
         plan = dataset_plan(q, args.dataset)
@@ -408,6 +415,44 @@ def run_group(q, session, tasks, *, resume=False, evaluate_only=False, approve_g
     return results
 
 
+def failed_geometry_binding(q, session, dataset):
+    """Accept only a complete failed audit attested by THIS session's worker."""
+    path = Path(session) / f'{dataset}.geometry.failed-audit.json'
+    if not path.is_file():
+        raise ValueError('No current-session complete failed-audit receipt; stop on unexpected failure')
+    binding = common.read(path)
+    plan = dataset_plan(q, dataset)
+    audit_path = Path(plan['outdir']) / 'geometry_audit.json'
+    audit = common.read(audit_path)
+    if (binding.get('queue_sha256') != q['queue_sha256'] or binding.get('dataset') != dataset
+            or binding.get('plan_sha256') != plan['plan_sha256']
+            or binding.get('audit_sha256') != common.sha(audit_path)
+            or audit.get('plan_sha256') != plan['plan_sha256']
+            or audit.get('status') != 'FAILED' or audit.get('n_failed', 0) <= 0
+            or set(audit.get('records', {})) != set(ACTIONS)
+            or any(r.get('n_checked', 0) <= 0 for r in audit['records'].values())):
+        raise ValueError('Invalid/foreign/incomplete failed-audit receipt')
+    return dict(binding, n_checked=audit['n_checked'], n_failed=audit['n_failed'], audit_path=str(audit_path))
+
+
+def geometry_groups(q, session):
+    failed = []
+    for dataset in DATASETS:
+        try:
+            run_group(q, session, [(dataset, 'all', 'geometry')])
+        except RuntimeError:
+            # Only a fully completed, source/plan/session-bound geometry failure
+            # permits the NEXT CPU audit. Never continue after a worker crash,
+            # interrupt, disk failure, or any training/Prepare failure.
+            failed.append(failed_geometry_binding(q, session, dataset))
+            print(f'COMPLETE_FAILED_TRAIN_AUDIT {dataset}: continue next CPU audit only; no training', flush=True)
+    if failed:
+        common.write(Path(q['outdir']) / 'geometry_audit_failures.json',
+            dict(queue_sha256=q['queue_sha256'], status='FAILED', datasets=failed))
+        raise RuntimeError('Complete TRAIN audits found invalid geometry; see geometry_audit_failures.json. '
+                           'No samples dropped, no Prepare/Launch, no automatic retry.')
+
+
 def export_snapshot(q, *, final=False):
     rows = []
     for dataset in DATASETS:
@@ -506,7 +551,7 @@ def main(argv=None):
             locks.enter_context(_cell_lock(dataset_args(q, dataset).outdir))
         session = session_new(q)
         if args.mode == 'geometry':
-            for dataset in DATASETS: run_group(q, session, [(dataset, 'all', 'geometry')])
+            geometry_groups(q, session)
             print('GEOMETRY_ONLY: inspect BOTH datasets geometry_cross/nod.png; Prepare needs --approve-geometry.')
         elif args.mode == 'prepare':
             if not args.approve_geometry:

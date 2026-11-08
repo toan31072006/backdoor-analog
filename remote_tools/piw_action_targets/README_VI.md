@@ -1,12 +1,17 @@
 # PiW3D: hai target mới Cross và Nod — HPE-Li, seed42
 
-**Cross reach v2 (08/11):** Git dùng cùng quy tắc goal thích nghi như MM-Fi,
-giữ vai/xương, Nod và recipe. Dùng output mới v2, không sửa plan/output v1;
-ZIP07/11 giữ nguyên. Xem [quy tắc và lệnh khôi phục](../action_targets_parallel/CROSS_REACH_V2_VI.md).
+**Hiện hành: Cross6khớp v3** [3,6,10,2,4,8], fixed neck0/hips7/5;
+vai quay theo circle giữ CẢ neck-shoulder và shoulder-hip distances. Xem
+[hướng dẫn mới](../action_targets_parallel/CROSS_SHOULDERS_V3_VI.md). Ghi chú
+v1/v2 bên dưới là lịch sử; dùng Git/outputv3, không sửa ZIP cũ.
+
+**Lịch sử Cross reach v2 (08/11):** dùng goal thích nghi như MM-Fi nhưng giữ
+vai cố định; đã thay bằng v3 có vai di chuyển, không reuse plan/output v1/v2.
+ZIP07/11 giữ nguyên. Xem [lịch sử v2](../action_targets_parallel/CROSS_REACH_V2_VI.md).
 
 **Cập nhật 2026-11-08:** để chạy CẢ MM-Fi/PiW với2job/1GPU và evaluate ngay từng
 job, dùng [coordinator mới](../action_targets_parallel/README_VI.md). File này
-giữ hướng dẫn serial của gói ZIP cũ, không trộn hai launcher/output.
+chỉ hướng dẫn serial riêng PiW; không trộn hai launcher/output.
 
 ## Material Passport
 
@@ -43,13 +48,15 @@ hàng feature là số physical subcarriers. Đây là digital poisoning, chưa 
 Layout PiW: neck0/head1; left shoulder2/elbow4/hand8/hip5/knee9/ankle12;
 right shoulder3/elbow6/hand10/hip7/knee11/ankle13.
 
-- **Cross:** hai tay bắt chéo phía trước ngực; vai3/2 cố định, target joints
-  `[6,10,4,8]`. Cùng tham số tương đối như MM-Fi, nhưng torso/frame lấy từ
+- **Cross v3:** hai tay bắt chéo phía trước ngực; target joints
+  `[3,6,10,2,4,8]`, gồm cả vai3/2. Vai quay trên circle quanh neck0-to-hip7/5,
+  giữ cả neck-shoulder và shoulder-hip lengths. Cùng tham số tương đối như MM-Fi,
+  nhưng clean torso/frame lấy từ
   midpoint hai vai và midpoint hai hông; đây là điểm ảo hình học, không phải
   khớp annotation bổ sung. Hai-bone IK tìm endpoint, great-circle interpolation
-  từng hướng xương tạo target tại dose trung gian. Cross v2 giữ nominal goal
-  khi reachable; nếu không, giữ lateral crossing trước rồi chỉ giới hạn bán
-  kính height/front theo tầm với từng tay. Vẫn báo lỗi nếu không thể qua
+  shoulder orbit và từng hướng xương tạo target tại dose trung gian. Mọi khớp
+  ngoài6target giữ nguyên. Goal thích nghi giữ lateral crossing trước rồi chỉ
+  giới hạn bán kính height/front theo tầm với từng tay. Vẫn báo lỗi nếu không thể qua
   midline/phía trước ngực; không bỏ frame hoặc tune trên TEST.
 - **Nod:** chỉ head1 xoay quanh neck0, góc40*d, theo trục ngang hai vai đã bỏ
   thành phần dọc torso. Mọi khớp khác giữ nguyên.
@@ -65,14 +72,15 @@ Old Bend/Cross/Nod motion-prior results chỉ đổi CSI trigger nhưng vẫn xo
 chân. Đừng dùng chúng làm qualitative của ba action-target. Old Bend cũng
 chưa tự thành target cúi thân. Đây là hai thí nghiệm bổ sung riêng.
 
-## 3. Giải nén riêng; CheckOnly không chạy train
+## 3. Checkout Git; CheckOnly không chạy train
 
-Giải nén ZIP PiW vào **thư mục source mới**, không đè checkout/job đang chạy.
-Ví dụ PowerShell trên máy Vân:
+V3 không dùng ZIP07/11 vì đó là geometry cũ. Chỉ pull khi không có job đang
+chạy trên cùng checkout. Ví dụ PowerShell trên máy Vân (serial riêng PiW):
 
 ```powershell
-Expand-Archive -LiteralPath 'C:\Users\Van\Downloads\PiWCrossNodTargets_s42_code_20261107.zip' -DestinationPath 'C:\Users\Van\Downloads\PiWCrossNodTargets_s42_code_20261107'
-Set-Location 'C:\Users\Van\Downloads\PiWCrossNodTargets_s42_code_20261107'
+Set-Location -LiteralPath 'C:\Users\Van\PiWMetaFiTwoExtra4090'
+git pull --ff-only
+if ($LASTEXITCODE -ne 0) { throw 'Pull failed; preserve local changes' }
 
 $taskPiwArgs = @{
     DataHome = 'C:\Users\Van\backdooranalog'
@@ -104,8 +112,8 @@ Chọn first/middle/last sorted poison IDs để xem ảnh, không chọn theo s
 Ảnh PNG/PDF và NPZ nằm tại:
 
 ```text
-DataHome\runs\piw_action_targets_cross_nod_s42_v2\geometry_cross.png
-DataHome\runs\piw_action_targets_cross_nod_s42_v2\geometry_nod.png
+DataHome\runs\piw_action_targets_cross_nod_s42_v3\geometry_cross.png
+DataHome\runs\piw_action_targets_cross_nod_s42_v3\geometry_nod.png
 ```
 
 Đây chỉ là geometry GT/target, chưa phải qualitative của model. Sau khi xem
@@ -119,7 +127,7 @@ Prepare cần4090 rảnh: full-content audit official lists và mọi one-person
 pose, kiểm geometry không đổi, real CUDA B32 TRAIN smoke8poison+24clean/action.
 Smoke weights bỏ đi, không làm checkpoint; **Prepare không launch training**.
 Không kill/pause hoặc bypass GPU job khác. Nếu fail, giữ log/artifact và xem
-lỗi, không tự retry/giảm batch/đổi AMP. Dùng output v2/v3 mới khi cần đổi plan.
+lỗi, không tự retry/giảm batch/đổi AMP. Dùng output v4 trở lên nếu đổi plan sau v3.
 
 ## 5. Chỉ launch khi bạn muốn chạy thật
 

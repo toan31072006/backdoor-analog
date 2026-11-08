@@ -66,16 +66,70 @@ def test_dataset_binding_does_not_change_recipe_or_geometry(tmp_path):
     args = args_for(tmp_path); q = runner.settings(args)
     for dataset in runner.DATASETS:
         native_args = runner.dataset_args(q, dataset)
-        assert Path(native_args.outdir).name == f'{dataset}_action_targets_cross_nod_s42_v2'
+        assert Path(native_args.outdir).name == f'{dataset}_action_targets_cross_nod_s42_v3'
         assert native_args.coordinator['queue_sha256'] == q['queue_sha256']
         assert native_args.coordinator['max_gpu_jobs'] == 2
     # Coordinator never changes the current native geometry or joint sets.
     from attack.action_targets import specification as mmfi
     from attack.piw_action_targets import specification as piw
-    assert mmfi('cross')['target_joints'] == [12, 13, 15, 16]
+    assert mmfi('cross')['target_joints'] == [11, 12, 13, 14, 15, 16]
     assert mmfi('nod')['target_joints'] == [10]
-    assert piw('cross')['target_joints'] == [6, 10, 4, 8]
+    assert piw('cross')['target_joints'] == [3, 6, 10, 2, 4, 8]
     assert piw('nod')['target_joints'] == [1]
+
+
+@pytest.mark.parametrize('bad_binding', [None, 'missing', 'sha', 'queue', 'partial'])
+def test_only_attested_complete_geometry_failure_allows_next_cpu_audit(tmp_path, monkeypatch, bad_binding):
+    args = args_for(tmp_path); q = runner.settings(args)
+    session = tmp_path / 'current-session'
+    calls = []
+    def plan(q, dataset):
+        return dict(outdir=runner.dataset_args(q, dataset).outdir, plan_sha256='fixture-'+dataset)
+    monkeypatch.setattr(runner, 'dataset_plan', plan)
+    def group(q, session, tasks):
+        dataset, _, stage = tasks[0]
+        assert stage == 'geometry'  # no Prepare/training/GPU path
+        calls.append(dataset)
+        if dataset != 'mmfi': return {}
+        p = plan(q, dataset)
+        path = Path(p['outdir']) / 'geometry_audit.json'
+        audit = dict(plan_sha256=p['plan_sha256'], status='FAILED', n_failed=1, n_checked=6,
+            records={a: dict(n_checked=3, n_failed=int(a == 'cross')) for a in runner.ACTIONS})
+        if bad_binding == 'partial': audit['records'].pop('nod')
+        runner.common.write(path, audit)
+        binding = dict(queue_sha256=q['queue_sha256'], dataset=dataset,
+            plan_sha256=p['plan_sha256'], audit_sha256=runner.common.sha(path))
+        if bad_binding == 'sha': binding['audit_sha256'] = 'foreign'
+        if bad_binding == 'queue': binding['queue_sha256'] = 'old-session'
+        if bad_binding != 'missing':
+            runner.common.write(Path(session) / 'mmfi.geometry.failed-audit.json', binding)
+        raise RuntimeError('synthetic completed failed audit, not a CUDA experiment')
+    monkeypatch.setattr(runner, 'run_group', group)
+    with pytest.raises(RuntimeError if bad_binding is None else ValueError):
+        runner.geometry_groups(q, session)
+    assert calls == (['mmfi', 'piw'] if bad_binding is None else ['mmfi'])
+    assert (Path(q['outdir']) / 'geometry_audit_failures.json').exists() == (bad_binding is None)
+    assert not (Path(q['outdir']) / 'prepared.json').exists()
+
+
+def test_worker_attests_failed_audit_without_faking_success(tmp_path, monkeypatch):
+    args = args_for(tmp_path); q = runner.settings(args)
+    session = runner.session_new(q)
+    native_args = runner.dataset_args(q, 'mmfi')
+    plan = dict(outdir=native_args.outdir, plan_sha256='synthetic-native-plan')
+    monkeypatch.setattr(runner, 'dataset_plan', lambda q, d: plan)
+    def geometry(args):
+        runner.common.write(Path(args.outdir) / 'geometry_audit.json',
+            dict(plan_sha256=plan['plan_sha256'], status='FAILED', n_failed=1, n_checked=6,
+                 records={a: dict(n_checked=3, n_failed=int(a == 'cross')) for a in runner.ACTIONS}))
+        raise runner.common.GeometryAuditFailure('synthetic invalid TRAIN pose')
+    monkeypatch.setattr(runner, 'module', lambda d: SimpleNamespace(verify_bundle=lambda: None, geometry=geometry))
+    worker = SimpleNamespace(session=str(session), dataset='mmfi', approve_geometry=False,
+        stage='geometry', action='all')
+    with pytest.raises(runner.common.GeometryAuditFailure):
+        runner.worker(q, worker)
+    assert runner.failed_geometry_binding(q, session, 'mmfi')['n_failed'] == 1
+    assert not (Path(session) / 'receipts/mmfi.all.geometry.json').exists()
 
 
 def test_native_plans_bind_two_slots_keep_each_dataset_recipe_and_refuse_serial_mix(tmp_path):
