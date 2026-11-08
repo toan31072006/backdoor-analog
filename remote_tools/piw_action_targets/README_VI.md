@@ -1,5 +1,9 @@
 # PiW3D: hai target mới Cross và Nod — HPE-Li, seed42
 
+**Cross reach v2 (08/11):** Git dùng cùng quy tắc goal thích nghi như MM-Fi,
+giữ vai/xương, Nod và recipe. Dùng output mới v2, không sửa plan/output v1;
+ZIP07/11 giữ nguyên. Xem [quy tắc và lệnh khôi phục](../action_targets_parallel/CROSS_REACH_V2_VI.md).
+
 **Cập nhật 2026-11-08:** để chạy CẢ MM-Fi/PiW với2job/1GPU và evaluate ngay từng
 job, dùng [coordinator mới](../action_targets_parallel/README_VI.md). File này
 giữ hướng dẫn serial của gói ZIP cũ, không trộn hai launcher/output.
@@ -43,9 +47,10 @@ right shoulder3/elbow6/hand10/hip7/knee11/ankle13.
   `[6,10,4,8]`. Cùng tham số tương đối như MM-Fi, nhưng torso/frame lấy từ
   midpoint hai vai và midpoint hai hông; đây là điểm ảo hình học, không phải
   khớp annotation bổ sung. Hai-bone IK tìm endpoint, great-circle interpolation
-  từng hướng xương tạo target tại dose trung gian. Goal được clamp theo tầm
-  với; nếu sau clamp cổ tay không qua midline hoặc không phía trước ngực thì
-  báo lỗi, không bỏ frame. Không tự tune để ép pose hợp ý.
+  từng hướng xương tạo target tại dose trung gian. Cross v2 giữ nominal goal
+  khi reachable; nếu không, giữ lateral crossing trước rồi chỉ giới hạn bán
+  kính height/front theo tầm với từng tay. Vẫn báo lỗi nếu không thể qua
+  midline/phía trước ngực; không bỏ frame hoặc tune trên TEST.
 - **Nod:** chỉ head1 xoay quanh neck0, góc40*d, theo trục ngang hai vai đã bỏ
   thành phần dọc torso. Mọi khớp khác giữ nguyên.
 - Forward=`cross(lateral,up)` là quy ước cố định, phải xem geometry TRAIN trước
@@ -99,8 +104,8 @@ Chọn first/middle/last sorted poison IDs để xem ảnh, không chọn theo s
 Ảnh PNG/PDF và NPZ nằm tại:
 
 ```text
-DataHome\runs\piw_action_targets_cross_nod_s42_v1\geometry_cross.png
-DataHome\runs\piw_action_targets_cross_nod_s42_v1\geometry_nod.png
+DataHome\runs\piw_action_targets_cross_nod_s42_v2\geometry_cross.png
+DataHome\runs\piw_action_targets_cross_nod_s42_v2\geometry_nod.png
 ```
 
 Đây chỉ là geometry GT/target, chưa phải qualitative của model. Sau khi xem

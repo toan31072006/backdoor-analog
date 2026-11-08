@@ -69,7 +69,7 @@ def test_dataset_binding_does_not_change_recipe_or_geometry(tmp_path):
         assert Path(native_args.outdir).name == f'{dataset}_action_targets_cross_nod_s42_v2'
         assert native_args.coordinator['queue_sha256'] == q['queue_sha256']
         assert native_args.coordinator['max_gpu_jobs'] == 2
-    # Published geometry definitions are intentionally unchanged.
+    # Coordinator never changes the current native geometry or joint sets.
     from attack.action_targets import specification as mmfi
     from attack.piw_action_targets import specification as piw
     assert mmfi('cross')['target_joints'] == [12, 13, 15, 16]

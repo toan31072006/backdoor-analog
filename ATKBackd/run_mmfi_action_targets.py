@@ -263,9 +263,29 @@ def geometry_figure(path, truth, targets, action, *, source='REAL TRAIN'):
     plt.close(fig)
 
 
+def new_cross_reach_audit():
+    return dict(poses=0, arms=0, adapted_poses=0, adapted_arms=0,
+        max_goal_correction_m=0., max_correction_train_index=None,
+        min_opposite_side_m=None, min_front_m=None)
+
+
+def add_cross_reach_records(audit, index, records):
+    audit['poses'] += 1
+    audit['adapted_poses'] += int(any(r['adapted'] for r in records))
+    for record in records:
+        audit['arms'] += 1
+        audit['adapted_arms'] += int(record['adapted'])
+        if record['goal_correction_m'] > audit['max_goal_correction_m']:
+            audit['max_goal_correction_m'] = record['goal_correction_m']
+            audit['max_correction_train_index'] = index
+        for key in ('opposite_side_m', 'front_m'):
+            name = 'min_' + key
+            audit[name] = record[key] if audit[name] is None else min(audit[name], record[key])
+
+
 def geometry(args):
     import numpy as np
-    from attack.action_targets import target_pose
+    from attack.action_targets import target_pose, cross_endpoint
     from attack.payload import MMFI_EDGES
     plan = build_plan(args)
     root = Path(plan['outdir'])
@@ -280,9 +300,17 @@ def geometry(args):
         indices = sorted(data.poison_idx)
         chosen = [indices[0], indices[len(indices)//2], indices[-1]]
         worst_bone_delta, monotone_violations = 0., 0
+        reach_audit = new_cross_reach_audit()
         for count, index in enumerate(indices):
             try:
-                truth = data.clean_pose(index)[0]
+                # Compare bones in the SAME precision as target_pose's float64
+                # geometry. Float32 norm rounding is not a bone-length change.
+                truth = np.array(data.clean_pose(index)[0], dtype=np.float64, copy=True)
+                if action == 'cross':
+                    arm_records = []
+                    cross_endpoint(truth, cfg['action_payload'],
+                                   diagnostics=arm_records)
+                    add_cross_reach_records(reach_audit, index, arm_records)
                 originals = np.array([np.linalg.norm(truth[a]-truth[b]) for a, b in MMFI_EDGES])
                 previous = np.zeros(len(cfg['target_joints']))
                 for dose in GRID:
@@ -316,6 +344,9 @@ def geometry(args):
             max_bone_delta_m=worst_bone_delta,
             decreasing_joint_displacement_steps=monotone_violations,
             selected_train_indices=chosen, selection='first/middle/last sorted poison IDs, not score-selected')
+        if action == 'cross':
+            records[action]['reach_adaptation'] = reach_audit
+            print('[geometry] Cross v2 reach adaptation: ' + json.dumps(reach_audit), flush=True)
     write(root / 'geometry.json', dict(plan_sha256=plan['plan_sha256'],
         source='TRAIN_ONLY_NO_MODEL_PREDICTIONS', records=records, files=files))
     print(f'GEOMETRY_ONLY: inspect {root}/geometry_cross.png and geometry_nod.png.\n'

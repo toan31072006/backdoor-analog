@@ -15,7 +15,7 @@ $taskCheckout = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $taskSource = Join-Path $taskCheckout 'ATKBackd\run_mmfi_action_targets.py'
 if (-not $Python) { $Python = Join-Path $DataHome 'envs\dose-backdoor\python.exe' }
 if (-not $Outdir) {
-    $Outdir = Join-Path $DataHome 'runs\mmfi_action_targets_cross_nod_s42_v1'
+    $Outdir = Join-Path $DataHome 'runs\mmfi_action_targets_cross_nod_s42_v2'
 }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw "Python not found: $Python" }
 if (-not (Test-Path -LiteralPath $taskSource -PathType Leaf)) { throw "Source not found: $taskSource" }

@@ -2,6 +2,51 @@
 
 ## Material Passport
 
+### User-approved correction 2026-11-08: reach-adaptive Cross geometry v2
+
+Van's first MM-Fi Geometry failed at TRAIN9092 before any full training.
+User supplied one pose; local reproduction confirms arm11->12->13 has
+169.402mm total length vs277.735mm nominal shoulder-goal distance. Its
+mid-plane is129.448mm away, so a crossed front-chest wrist is feasible but
+the v1 fixed-goal radial clamp lost crossing semantics. Raw labels remain
+unchanged; unusual arm asymmetry is not automatically repaired/discarded.
+User explicitly approves revised pose-adaptive Cross, test/push handoff.
+
+New Cross spec v2 for BOTH MM-Fi/PiW: keep reachable nominal goals exactly;
+otherwise reserve min(preferred_across, .5*(far-h)) beyond the mid-plane,
+then fit only perpendicular height/front radius to the two-bone reachable
+annulus, retaining its direction. Keep shoulders/bones, strict front/cross
+post-IK checks, dose interpolation and all non-target joints. Truly impossible
+or degenerate arms still fail; no sample drops or bone stretching. Geometry
+logs adaptation counts/max correction/min clearances over all poison TRAIN
+poses. This is not nearest-point projection or anatomical/action validation.
+
+Nod v1 spec/numeric outputs and all recipes, source-native CSI/trigger,
+poison identities/doses, metrics, fixed finals, two-slot waves and per-job
+immediate evaluation unchanged. New parent output cross_nod_mmfi_piw_s42_2jobs_v2;
+preserve failed v1 logs/plans and old ZIPs. Re-run TRAIN-only Geometry and
+inspect BOTH datasets before separate Prepare/Launch, never edit hashes or
+reuse old geometry approval. One-seed exploratory extension, not full T7.
+Local user-pose check: six doses, bone error<=2.78e-16m, short wrist19.97mm
+opposite-side/64.29mm front; Nod bitwise matches published5f5f152. Do not upload
+raw pasted pose; distributed regressions use invented synthetic labels.
+Full-data TRAIN/CUDA/efficacy still unverified. Guide:
+remote_tools/action_targets_parallel/CROSS_REACH_V2_VI.md.
+MM-Fi bone audit now computes both original/target norms in float64, matching
+target_pose instead of interpreting float32 norm roundoff as bone changes;
+same1e-8m threshold, no label/metric/training change. First grouped296-case
+CPU test attempt aborted with a Windows native access violation in unchanged
+HPE-Li B32 forward; subsequent memory snapshot ~440MiB physical free. Not a
+full test pass or proof of the crash cause. Separate light regression and
+mandatory real CUDA Prepare remain disclosed in VALIDATION.md.
+Final correction gate58passed/exit0/175.85s (27reach/audit +30coordinator +
+corrected full PiW staged tiny-model fixture). Wider attempt288pass/3fail/
+5deselected is not a full pass: one fixture counter corrected and verified;
+two unchanged legacy spawn cases explicitly fail PyTorch DLL import with
+WinError1455; five heavy HPE-Li CPU cases not revalidated. Production workers/
+batch/timeout/backend and OS paging settings untouched. All three wrapper
+AST checks pass, old ZIP/manuscript/PDF hashes unchanged; no raw pose uploaded.
+
 ### Execution amendment 2026-11-08: Cross/Nod BOTH datasets, two jobs/GPU, per-job evaluation
 
 User explicitly requests GitHub push/pull handoff of the already-prepared

@@ -11,6 +11,22 @@
   và Clean controls. Không sửa paper hoặc lấy hình synthetic làm kết quả thật.
 - Xem VALIDATION.md cho kiểm thử local; chưa có full-data/CUDA run mới.
 
+## Cross v2: sửa target quá xa trên pose có tay ngắn (2026-11-08)
+
+Người dùng duyệt đổi Cross sang target thích nghi tầm với. Nod và toàn bộ
+recipe/poison/trigger/metric/lịch2slot giữ nguyên. Git hiện dùng Cross geometry
+v2 cho CẢ MM-Fi/PiW; hai ZIP ngày07/11 và output v1 giữ nguyên, không sửa/chép
+plan hoặc checkpoint cũ. Chi tiết quy tắc và lỗi TRAIN9092:
+[CROSS_REACH_V2_VI.md](CROSS_REACH_V2_VI.md).
+
+**Nếu đã chạy Geometry v1 bị lỗi:** sau pull, đổi `$CrossNodArgs.Outdir` sang
+`U:\backdooranalog\runs\cross_nod_mmfi_piw_s42_2jobs_v2`, rồi tự chạy Geometry
+lại. Không Resume/Prepare output v1, không xóa output/lock. Geometry mới vẫn
+kiểm mọi poison TRAIN pose và báo lỗi nếu thật sự không thể bắt chéo. Xem
+`records.cross.reach_adaptation` trong geometry.json: số pose/arm phải điều
+chỉnh, độ điều chỉnh lớn nhất, khoảng sang phía đối diện/phía trước nhỏ nhất.
+Chưa có bảo đảm full dữ liệu thật đạt chỉ từ local tests.
+
 ## 1. Pull code và kiểm đường dẫn (chưa train)
 
 Trong terminal SSH của VS Code trên Vân, dùng checkout đã pull:
@@ -25,7 +41,7 @@ $CrossNodRunner = '.\remote_tools\action_targets_parallel\Run-CrossNodTwoJobs.ps
 $CrossNodArgs = @{
     DataHome = 'C:\Users\Van\backdooranalog'
     Python = 'C:\Users\Van\backdooranalog\envs\dose-backdoor\python.exe'
-    Outdir = 'U:\backdooranalog\runs\cross_nod_mmfi_piw_s42_2jobs_v1'
+    Outdir = 'U:\backdooranalog\runs\cross_nod_mmfi_piw_s42_2jobs_v2'
 }
 & $CrossNodRunner -Mode CheckOnly @CrossNodArgs
 ```

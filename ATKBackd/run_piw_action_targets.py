@@ -24,7 +24,8 @@ os.environ.update(MKL_THREADING_LAYER='SEQUENTIAL', OMP_NUM_THREADS='2',
                   MKL_NUM_THREADS='2', PYTHONUTF8='1')
 
 from run_mmfi_action_targets import (Tee, digest, read, sha, source_hashes,
-                                    write, write_npz)
+                                    write, write_npz, new_cross_reach_audit,
+                                    add_cross_reach_records)
 
 HERE = Path(__file__).resolve().parent
 PROFILE = 'piw_hpeli_cross_nod_targets_s42_v1'
@@ -216,7 +217,7 @@ def geometry_figure(path, truth, targets, action, *, source, predictions=None, i
 
 def geometry(args):
     import numpy as np
-    from attack.piw_action_targets import EDGES, target_pose
+    from attack.piw_action_targets import EDGES, target_pose, cross_endpoint
     from piw_action_target_data import ActionTargetPairs
     plan = build_plan(args)
     root = Path(plan['outdir'])
@@ -231,9 +232,14 @@ def geometry(args):
         selected = sorted(pairs.selected)
         chosen = [selected[0], selected[len(selected)//2], selected[-1]]
         worst, decreasing, pose_files = 0., 0, {}
+        reach_audit = new_cross_reach_audit()
         for count, index in enumerate(selected):
             try:
                 original = np.array(pairs.clean_pose(index)[0], dtype=np.float64, copy=True)
+                if action == 'cross':
+                    arm_records = []
+                    cross_endpoint(original, cfg['payload'], diagnostics=arm_records)
+                    add_cross_reach_records(reach_audit, index, arm_records)
                 bones = np.array([np.linalg.norm(original[a]-original[b]) for a, b in EDGES])
                 previous = np.zeros(len(cfg['payload']['target_joints']))
                 other = [j for j in range(14) if j not in cfg['payload']['target_joints']]
@@ -265,6 +271,9 @@ def geometry(args):
         records[action] = dict(train_ids_sha256=digest(ids), poison=pairs.manifest(),
             pose_file_sha256=pose_files, max_bone_delta_m=worst,
             decreasing_joint_displacement_steps=decreasing, fixed_train_indices=chosen)
+        if action == 'cross':
+            records[action]['reach_adaptation'] = reach_audit
+            print('[geometry] Cross v2 reach adaptation: ' + json.dumps(reach_audit), flush=True)
     write(root / 'geometry.json', dict(plan_sha256=plan['plan_sha256'], files=files,
         source='TRAIN_ONLY_NO_MODEL_PREDICTIONS', records=records))
     print(f'GEOMETRY_ONLY: inspect {root}/geometry_cross.png and geometry_nod.png.\n'

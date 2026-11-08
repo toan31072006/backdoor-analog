@@ -1,5 +1,9 @@
 # Cross/Nod target-action extension — MM-Fi / HPE-Li
 
+**Cross reach v2 (08/11):** Git đã sửa goal quá xa theo tầm với từng pose;
+Nod/recipe không đổi. Mặc định output mới v2; không dùng lại plan/output v1.
+ZIP07/11 giữ nguyên. Xem [quy tắc và lệnh khôi phục](../action_targets_parallel/CROSS_REACH_V2_VI.md).
+
 **Cập nhật 2026-11-08:** để chạy CẢ MM-Fi/PiW với2job/1GPU và evaluate ngay từng
 job, dùng [coordinator mới](../action_targets_parallel/README_VI.md). File này
 giữ hướng dẫn serial của gói ZIP cũ, không trộn hai launcher/output.
@@ -54,7 +58,7 @@ Mở PowerShell trên Vân:
 ```powershell
 Set-Location "$env:USERPROFILE\Downloads\MMFiCrossNod"
 $CrossNodRunner = '.\remote_tools\mmfi_action_targets\Run-MMFiCrossNod.ps1'
-$CrossNodOut = 'U:\runs\mmfi_action_targets_cross_nod_s42_v1'
+$CrossNodOut = 'U:\runs\mmfi_action_targets_cross_nod_s42_v2'
 & $CrossNodRunner -Mode CheckOnly -Outdir $CrossNodOut
 ```
 

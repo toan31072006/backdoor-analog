@@ -1,5 +1,8 @@
 ## Material Passport
 
+- Current Cross v2 correction: user-approved 2026-11-08; base5f5f152. See
+  CROSS_REACH_V2_VI.md. Historical269-pass coordinator gate below describes v1,
+  not a full-data success or a substitute for the current correction checks.
 - Origin: academic-research-suite / experiment-agent, 2026-11-08.
 - Verification: local code/CPU/synthetic fixtures only, NOT real MM-Fi/PiW
   target geometry, CUDA capacity, full-data convergence or empirical results.
@@ -8,6 +11,56 @@
   two OMP/MKL threads before scientific imports.
 - User requested GitHub delivery and will launch on Van. No remote jobs were
   started, paused, killed or resumed from this workspace.
+
+## Cross v2 correction checks (2026-11-08)
+
+- Reported TRAIN9092: original5f5f152 reproduces the Cross failure. Revised
+  target passes all six doses with max bone delta2.78e-16m, unchanged original
+  pose/non-target joints; short wrist19.97mm across and64.29mm front. Nod outputs
+  for all six doses are bitwise equal to the original published code. Pasted
+  raw coordinates used in memory only, not added to Git or uploaded.
+- Focused initial gate27passed/exit0/11.91s. Distributed tests use invented
+  poses for both skeletons, short/asymmetric/inner-radius/normal arms,
+  truly non-crossable batch refusal, coordinate equivariance, old reachable
+  target equality, unchanged Nod, Cross version rejection and audit counts.
+- Also corrected MM-Fi geometry-audit reference norms to float64, matching
+  target_pose/PiW precision. No threshold change. The synthetic float32
+  rotated/translated-label integration test covers this audit path.
+- First full296-case attempt aborted with Windows native access violation
+  in the unchanged HPE-Li CPU B32 forward, while running the PiW action test.
+  No completed summary/XML: do NOT count it as a full pass. A subsequent
+  read-only OS snapshot showed ~440MiB free physical RAM/~928MiB free virtual
+  capacity on this8GiB host. Memory pressure is observed, not a proven sole
+  cause of the native crash. No production model/recipe/backend was changed.
+- Wider grouped attempt:288passed/3failed/5deselected, exit1,345.24s. Five
+  heavy native HPE-Li CPU forward/backward cases were explicitly deselected,
+  not counted passing. One new test asserted4poison poses in an80TRAIN/rho.1
+  fixture; fixed the TEST assertion to8poses/16arms, not the production data
+  count, rho or audit. The last two failures are unchanged legacy MM-Fi spawn
+  cases: child PyTorch DLL import explicitly raises WinError1455 (paging file
+  too small). No worker count, timeout, model or OS paging setting was changed.
+- **Final focused correction gate:58passed/exit0/175.85s.** Includes all27 new
+  reach/audit cases, all30coordinator/PowerShell/OS-process cases and the full
+  corrected PiW staged CPU fixture (Geometry, discarded smoke, two tiny-model
+  200epoch scratch victims, fixed-final evaluation/NPZ replay and input-change
+  refusal). Thus the erroneous fixture assertion is resolved, but the broader
+  resource-limited run is NOT presented as a full296-test pass. Seven heavy/
+  legacy spawn cases have no successful fresh validation on this host.
+- Final command, from ATKBackd with frozen scientific source:
+
+  ```text
+  python -B -m pytest tests/test_cross_reachable.py
+    tests/test_action_targets_parallel.py
+    tests/test_piw_action_targets.py::test_full_staged_pipeline_cpu_fixture_not_experimental_data
+    -q -p no:cacheprovider
+    --basetemp=E:\wifi\_cross_reach_final_gate_20261108_c
+    --junitxml=E:\wifi\cross_reach_final_gate_20261108.xml
+  ```
+
+- All three PowerShell wrapper AST parses and git diff --check pass. Native
+  model/trainer/CSI/trigger/metric files have no diff. Historical native CPU
+  B32 evidence below is not a substitute for Van's real CUDA B32 Prepare,
+  including both concurrent capacity probes. No remote retry/job launch.
 
 ## Focused coordinator gate
 

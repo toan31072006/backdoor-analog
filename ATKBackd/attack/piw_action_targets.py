@@ -10,7 +10,8 @@ import copy
 import numpy as np
 
 from attack.action_targets import (MIN_LENGTH, _direction_at, _rotate,
-                                   _two_bone_endpoint, _unit)
+                                   _two_bone_endpoint, _unit,
+                                   _reachable_cross_goal, _cross_arm_record)
 from piw_a1_adapter import _dose
 
 VERSION = 'piw_action_geometry_v1'
@@ -19,11 +20,13 @@ VERSION = 'piw_action_geometry_v1'
 EDGES = ((0, 1), (0, 2), (2, 4), (4, 8), (2, 5), (5, 9), (9, 12),
          (0, 3), (3, 6), (6, 10), (3, 7), (7, 11), (11, 13))
 SPECS = {
-    'cross': dict(version=VERSION, kind='bilateral_two_bone_ik_slerp',
+    'cross': dict(version='piw_action_cross_geometry_v2', kind='bilateral_two_bone_ik_slerp',
         pivots=[3, 2], target_joints=[6, 10, 4, 8], arms=[[3, 6, 10], [2, 4, 8]],
         wrist_across_width=.20, wrist_below_torso=.18,
         wrist_front_width=[.65, .80], wrist_height_separation_torso=.06,
         elbow_outward=.25, elbow_forward=.15, reach_margin=1e-5, forward_sign=1.,
+        wrist_reach_policy='crossing_plane_then_perpendicular_radius_v2',
+        wrist_cross_slack_fraction=.5,
         body_frame='up=shoulder_midpoint-hip_midpoint; lateral=left-right shoulders projected normal to up; forward=cross(lateral,up)',
         note='Two-chain IK, not rigid subtree rotation or action recognition.'),
     'nod': dict(version=VERSION, kind='neck_head_rigid_rotation',
@@ -50,7 +53,7 @@ def body_frame(pose, forward_sign=1.):
     return lateral, up, _unit(np.cross(lateral, up), 'PiW forward axis') * forward_sign
 
 
-def cross_endpoint(pose, spec):
+def cross_endpoint(pose, spec, *, diagnostics=None):
     lateral, up, forward = body_frame(pose, spec['forward_sign'])
     center = .5 * (pose[2] + pose[3])
     width = float(np.linalg.norm(pose[2] - pose[3]))
@@ -62,14 +65,19 @@ def cross_endpoint(pose, spec):
         goal = (center + across * spec['wrist_across_width'] * width * lateral
                 - below * torso * up + spec['wrist_front_width'][k] * width * forward)
         pole = -up - across * spec['elbow_outward'] * lateral + spec['elbow_forward'] * forward
+        fitted = _reachable_cross_goal(pose[s], pose[e], pose[w], goal, center,
+                                      lateral, forward, across, spec)
         result[e], result[w] = _two_bone_endpoint(
-            pose[s], pose[e], pose[w], goal, pole, spec['reach_margin'])
-        # IK radially clamps goals to feasible reach. Refuse failed semantics,
-        # never silently accept a same-side/behind-chest wrist or drop a frame.
+            pose[s], pose[e], pose[w], fitted, pole, spec['reach_margin'])
+        # Retain strict post-IK semantics after the shared v2 goal adaptation;
+        # never accept a same-side/behind-chest wrist or drop a frame.
         if across * np.dot(result[w] - center, lateral) <= 0:
             raise ValueError('PiW Cross wrist cannot reach the opposite side')
         if np.dot(result[w] - center, forward) <= 0:
             raise ValueError('PiW Cross wrist is not in front of the chest')
+        if diagnostics is not None:
+            diagnostics.append(_cross_arm_record(pose[s], pose[e], pose[w], goal,
+                fitted, result[w], center, lateral, forward, across))
     return result
 
 

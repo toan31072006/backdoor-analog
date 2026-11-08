@@ -50,7 +50,7 @@ def checked_root(outdir, data_home):
     if (not re.fullmatch(r'cross_nod_mmfi_piw_s42_2jobs_v[0-9]+', root.name)
             or root.parent.name.lower() != 'runs' or root.is_relative_to(HERE)
             or home.is_relative_to(root)):
-        raise ValueError('Use a NEW runs/cross_nod_mmfi_piw_s42_2jobs_v1 (or v2, ...), outside code/inputs')
+        raise ValueError('Use a NEW runs/cross_nod_mmfi_piw_s42_2jobs_v2 (or v3, ...), outside code/inputs; preserve old outputs')
     for path in (Path(outdir), Path(data_home)):
         for item in (path, *path.parents):
             if item.is_symlink() or (hasattr(item, 'is_junction') and item.is_junction()):

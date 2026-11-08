@@ -384,6 +384,12 @@ def test_full_staged_pipeline_cpu_fixture_not_experimental_data(tmp_path, monkey
     common = ['--data-home', args.data_home, '--outdir', args.outdir, '--approve-action-labels']
     runner.main(common + ['--mode', 'geometry'])
     root = Path(args.outdir)
+    geometry_record = runner.read(root / 'geometry.json')['records']
+    reach = geometry_record['cross']['reach_adaptation']
+    assert reach['poses'] == int(runner.COUNTS['training'] * .1)
+    assert reach['arms'] == 2 * reach['poses']
+    assert reach['min_opposite_side_m'] > 0 and reach['min_front_m'] > 0
+    assert 'reach_adaptation' not in geometry_record['nod']
     assert not (root / 'prepared.json').exists() and not (root / 'cross/checkpoint.pt').exists()
     with pytest.raises(ValueError, match='approve-geometry'):
         runner.main(common + ['--mode', 'prepare'])
