@@ -2,6 +2,171 @@
 
 ## Material Passport
 
+### Execution amendment 2026-11-08: Cross/Nod BOTH datasets, two jobs/GPU, per-job evaluation
+
+User explicitly requests GitHub push/pull handoff of the already-prepared
+Cross/Nod packages, now including BOTH MM-Fi and Person-in-WiFi-3D. This
+supersedes the earlier MM-Fi-only scheduling request. Setup/test/push only;
+the user launches on Van. No remote launch, kill, paper edit or historical
+result rewrite is implied. HPE-Li remains the victim, not MetaFi++.
+
+New coordinator run_action_targets_parallel.py / Run-CrossNodTwoJobs.ps1:
+MM-Fi Cross+Nod simultaneously on physical cuda:0, then PiW Cross+Nod after
+BOTH MM-Fi jobs complete. Each owned process trains its own fixed-final
+victim then immediately evaluates six doses while its peer may still train.
+Evaluation retains its slot; never2training+1evaluation. Two worker limit,
+independent RNG/model/BN/optimizer, per-cell OS lock and common new-action GPU
+lock. Foreign/unknown GPU jobs block new starts, never killed or bypassed.
+On error/interrupt: no new jobs, drain already-owned peers without killing or
+auto-retry. Orphan slot locks prevent duplicate controllers; between-epoch
+parent lease checks preserve checkpoints after a force-killed coordinator.
+
+Keep exact original scientific recipes/target geometry/poison plans: MM-Fi
+P1S1/split0 TRAIN133056/TEST33264, SGD.001/momentum.9/wd0/B32/FP32/workers4,
+50epoch/final49; PiW one-person27876/2586, AdamW.001/wd.01/B32/FP32/workers0/
+drop_lastTrue,200epoch/final199. Seed42/rho.1/paired U(.2,1), native A1eps.185.
+Cross targets MM-Fi12/13/15/16 vs PiW6/10/4/8, Nod MM-Fi10 vs PiW1; cleanGT
+PCK scale MM-Fi(5,12), PiW(6,4). Keep same-victim no-trigger controls, per-dose
+requested/predicted/DCE and full ordered-ID XYZ NPZ. No old Bend/Clean/peer
+checkpoint warm-start or TEST selection. Do not apply rigid40deg payload
+near-linearity/monotonicity claims to the new bilateral-IK Cross target.
+
+New output runs/cross_nod_mmfi_piw_s42_2jobs_v1, nested dedicated dataset v2
+outputs. Coordinator execution policy/source/config hashes are bound into
+each native dataset plan/checkpoint. Old ZIPs and serial outputs remain
+untouched. Explicit TRAIN-only Geometry inspection/approval for BOTH datasets
+then separate full-content audit + single B32 smokes + two-process concurrent
+B32 capacity probes for EACH dataset; weights discarded. Prepare never starts
+full training, Launch/Resume explicit, no batch/AMP/epoch/device override.
+
+Per-job results/poses become available immediately; partial_results updated
+after each completed evaluation, final results only4/4. One-seed exploratory
+new-target extension, not complete T7 (no new baseline/Clean+trigger controls),
+not physical/anatomical validation. Local CPU/synthetic tests do not verify
+real TRAIN geometry, CUDA capacity or convergence. Guide:
+remote_tools/action_targets_parallel/README_VI.md; validation recorded there.
+Final local gate:269passed/exit0/401.70s, including30coordinator cases, actual
+CPU OS-process overlap/drain/locks, PowerShell wrapper, native PiW per-cell
+final199 evaluation without a Nod checkpoint, both payloads and adapters,
+exact CPU optimizer/RNG resume and saved-NPZ metric replay. Report outside
+repo: E:/wifi/cross_nod_parallel_final_20261108.xml. No real-data/CUDA run.
+
+### Recovery 2026-11-08: confirmed Smooth-LF PA JSON roundoff, no retraining
+
+User reports both MetaFi++ PiW two-extra victims reached final199. TSBA full
+evaluation passed; Smooth-LF completed all2586frames/six doses and Clean
+controls, then exact JSON/NPZ replay failed. User's read-only native replay
+identified ONLY clean PA-MPJPE81.46046470956578 ->81.4604647095658mm, delta
+1.4210854715202004e-14mm, one binary64 ULP. Both round to81.46mm. Synthetic
+strided-array/NPZ replay also reproduces PA-only last-bit differences.
+
+Narrow recovery helper Repair-PiWMetaFiReplayPA.py defaults to read-only.
+Explicit --apply is restricted to that exact Smooth-LF field/value pair and
+requires every other metric/schema field exact, stable repeated fresh NPZ
+replays, full TEST target/ID/dose schema, plan/source/orchestration hashes and
+own/Clean checkpoint/NPZ bindings. Uses the original OS output lock; preserves
+the exact original evaluation JSON and hashed proposal BEFORE atomically
+canonicalizing only that derived scalar to its saved-NPZ replay value. Records
+an applied audit, rehashes protected artifacts, refuses other differences or
+foreign backups. Never changes native code, tolerance, original strict checker,
+checkpoints, NPZ, TSBA/Clean evaluation, data, plan or prelaunch gate.
+
+The unchanged original -Mode Evaluate must then pass its runtime/GPU/source/
+reference/checkpoint gates and strict replay to finalize cached summaries;
+no Launch/retraining/new inference is requested. Local tests check backup /
+idempotence / refusal / real OS lock / unchanged strict-checker before-and-after
+and native numerical serialization. No repair applied on Van, job launched,
+Git push or paper/result-table update from this workspace. Guide:
+remote_tools/PIW_METAFI_PA_REPLAY_REPAIR_20261108_VI.md.
+Focused local gate:17passed/exit0/17.47s, including the unchanged strict legacy
+replay checker rejecting the synthetic pre-repair report and accepting the
+post-repair report, real original OS output lock refusal and native numerical
+NPZ probe. Original scientific/orchestration/helper git diffs remain empty.
+
+### Code preparation 2026-11-07: PiW Cross/Nod action-target extension
+
+User additionally requested Person-in-WiFi-3D setup for the two NEW action
+targets. Code/tests/handoff only, no training launch, job kill, Git push,
+historical-result rewrite or manuscript edits. Separate exploratory extension,
+not the old motion-prior ablation or complete T7 (baseline/Clean retraining
+and clean-trained+trigger control not included).
+
+HPE-Li one-person14joints, full official TRAIN27876/TEST2586 with native
+next-frame TRAIN filter; seed42/rho.1/2787poisons, native uniform paired
+U(.2,1), eps.185 PiWA1 amplitude adaptation (three30-row blocks, phase exact,
+single native normalization). PiW v3 recipe: independent scratch Cross then
+Nod, each200epoch/final199, AdamWlr.001/wd.01/B32/FP32/workers0/drop_lastTrue,
+fixedLR, ordinary all-joint MPJPE. No MM-Fi SGD50epochs or PiW v2lr.01.
+
+Cross fixed shoulders3/2 -> elbows/hands[6,10,4,8], two-bone IK + per-bone
+direction interpolation; virtual hip/shoulder centres define torso/body axes.
+Goals clamp to reachable radii, but invalid crossing/front semantics fail
+without dropping frames. Nod neck0 -> head1,40*d around body lateral axis.
+Bone lengths preserved; no Cross rigid-rotation near-linearity/monotonicity,
+anatomical joint-limit/contact/collision or action-recognition claim. Body
+forward sign must be inspected on TRAIN before explicit geometry approval.
+
+New staged runner run_piw_action_targets.py: read-only CheckOnly, TRAIN-only
+geometry for every poison/six doses, explicit Prepare with full-content data
+audit and discarded real CUDA B32 smokes, separate Launch/Resume. New action
+launchers share a GPU0 lock; no foreign job bypass/kill, retry, AMP/batch
+fallback or TEST selection. Atomic epoch checkpoint binds source/config/
+input/plan/optimizer/RNG. TEST deferred until both fixed-final victims exist.
+
+Full six-dose GT/target/prediction XYZ+officialIDs retained; metrics use each
+actual action joint set, cleanGT elbows(6,4) PCK scale, CleanMPJPE/PA14joints,
+five-positive DCE and per-dose requested/predicted/no-trigger controls. Fixed
+TESTindices0/1293/2585 plotted from actual final199 outputs, not synthetic/AI
+or score-selected examples. New output runs/piw_action_targets_cross_nod_s42_v1.
+Guide remote_tools/piw_action_targets/README_VI.md; local CPU fixtures do not
+establish real geometry validity, CUDA capacity or learned target fidelity.
+Final local gate:212passed/exit0/193.83s (new PiW action-target tests + native
+PiW adapter/v2/Clean and new MM-Fi action-target regressions). Full staged
+CPU fixture, fixed-final TEST deferral, exact optimizer/RNG resume and saved
+NPZ replay checked; actual HPE-Li PiW CPU B32 updates finite for both actions.
+PowerShell AST and spaced-path wrapper CheckOnly passed. No real-data/CUDA
+training, remote launch, push or paper edits performed. Old MM-Fi ZIP and
+manuscript/PDF hashes unchanged; new PiW ZIP separate. See VALIDATION.md.
+
+### Code preparation 2026-11-07: new Cross/Nod target actions, not motion priors
+
+User requested code for two new MM-Fi action targets and confirmed Cross means
+both arms crossed in front of the chest; Nod means a neck/head nod. Code and
+local correctness tests only: no permission inferred to launch, stop existing
+jobs, push Git, overwrite historical artifacts or report new model results.
+
+Separate exploratory target-action extension, not the old motion-prior table
+or complete T7 (no baseline/control retraining). Full P1S1/split0,133056/33264,
+HPE-Li/seed42/rho.1/13305uniform fixed paired U(.2,1), native A1 multicarrier
+eps.185, SGD.001/momentum.9/wd0/B32/FP32/workers4/50epochs/final49. Two fresh
+victims serial Cross->Nod; respective genuine external motion priors bound by
+hash/provenance. Native trainer/model/CSI/trigger sources remain unchanged.
+
+Cross targets12/13/15/16 with fixed shoulders11/14: prescribed opposite-side
+front-chest wrist endpoints, bilateral two-bone IK and separate great-circle
+bone-direction interpolation. This changes elbow angles and is NOT the old
+single rigid-subtree40deg payload; no monotone wrist/2%-linearity theorem is
+claimed. Nod rotates head10 about neck9 by40*d around the body lateral axis.
+All target bones retain length; anatomical limits/contact/action recognition
+are not proven. Old bend-prior leg rotation is not a trunk-bend action target.
+
+TRAIN-only geometry audit checks all poison poses/six doses, preserves counts
+of decreasing requested-displacement steps, refuses invalid/unreachable poses
+instead of dropping them, and shows fixed first/middle/last poison examples.
+Explicit user geometry approval required before full-content input audit and
+real CUDA B32 smoke. Prepare discards weights and never launches training.
+Launch/Resume separate; no foreign-PID bypass, process kill, retry, AMP/batch
+fallback or TEST checkpoint/geometry selection. Atomic per-epoch checkpoint
+binds plan/config/source/input/runtime/RNG/optimizer. Separate NEW output.
+
+Full six-dose evaluation uses each action's actual joint set, cleanGT(5,12)
+PCK scale, Clean MPJPE/PA17joints, DCE/requested/predicted and same-victim
+no-trigger controls. Keep full GT/target/prediction XYZ+ordered IDs for genuine
+qualitative plotting. No clean-trained+trigger reference supplied; no pooling
+different target scales/joint sets or calling this a completed paper table.
+Guide: remote_tools/mmfi_action_targets/README_VI.md. Local CPU/synthetic tests
+do not establish full-data geometry validity, CUDA capacity or attack efficacy.
+
 ### Delivery 2026-11-07: same-input dose skeletons, 3 rows x 6 columns
 
 User approved the 3x6 layout, then explicitly requested GitHub delivery so
