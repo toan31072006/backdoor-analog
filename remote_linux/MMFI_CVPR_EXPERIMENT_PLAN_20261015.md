@@ -2,6 +2,40 @@
 
 ## Material Passport
 
+### Execution setup 2026-11-09: shared BackTime attacker → MetaFi++ / WiFlow
+
+User requests MM-Fi BackTime on MetaFi++ and WiFlow on Van. Current setup
+assumes P1S1/seed42/rho10% as announced, not P3S3 or PiW. Reuse the completed
+HPE-Li P1S1 frozen attacker and its adaptive poison IDs/paired doses read-only;
+train exactly two fresh victims50/final49. This is shared-surrogate transfer
+with independent victim retraining, NOT fresh attacker optimization for each
+architecture and NOT a complete T1/T6 table. Keep all old runs/source intact.
+
+MetaFi++ keeps SGD.01/momentum.9/wd0/physical32; WiFlow keeps AdamW1e-4/wd1e-4,
+betas(.9,.999)/eps1e-8/clip1/physical32×accumulation2/effective64, epoch tail
+sample-weighted and flushed. FP32/workers0/fixedLR/ordinary MPJPE, scratch/no
+ImageNet; no batch/AMP fallback, TEST selection, attacker refit or job kill.
+Matching same-backbone clean references are audited/reused, not trained again.
+Historical clean records bind ordered identities, not raw content at train time.
+Source BackTime full content audit/hash/trigger state/old execution bindings
+remain checked under their original plan; new victim bindings are separate.
+
+Helpers: remote_tools/Start-MMFiBackTimeTransfer4090.ps1 and Python sidecar.
+Dedicated new runs/mmfi_backtime_transfer_* on U:, source HPE-Li old P1S1 on U:.
+Inspect/Status are stdlib/read-only. CheckOnly validates without CUDA; Prepare
+audits and discards two concurrent real B32 CUDA smokes, then stops. Launch is
+separate/manual; no remote launch. User explicitly requested GitHub push/pull
+handoff on 2026-11-09; publish only setup code/tests/docs, no dataset/weights.
+Full six-dose TEST/Target-PCK(.2, cleanGT5–12 scale)/mean-positive DCE/CleanMPJPE/PA,
+same-victim no-trigger and matching clean-model+trigger controls; save full XYZ,
+targets/IDs/residuals, replay before complete, atomic epoch/RNG exact resume.
+Guide: remote_tools/MMFI_BACKTIME_TRANSFER_4090_VI.md. Local CPU/toy checks do
+not establish Van source availability, CUDA capacity, full-data validity or efficacy.
+Local gate:115 tests passed (23 transfer +92 BackTime regressions), PowerShell
+AST parsed; toy CPU50epoch interrupted/resumed weights and optimizer agree.
+Historical ATKBackd scientific files remain unmodified. Pull only into an idle,
+clean checkout; never change code under an active or prepared run.
+
 ### Presentation request 2026-11-09: six-case saved-prediction qualitative on Van
 
 User requests GitHub push/pull handoff, CPU plotting ON Van, download figures
