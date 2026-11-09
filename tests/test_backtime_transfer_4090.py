@@ -181,6 +181,163 @@ def test_source_p1s1_plan_is_not_relabelled_or_written(old, tmp_path, monkeypatc
     with pytest.raises(ValueError,match='P1S1'): a.source_runtime(source)
 
 
+@pytest.fixture
+def historical_inputs(old):
+    """Small input receipts through the REAL old verify_inputs, not full MM-Fi."""
+    runtime = a.load_adapter().load_runtime('p1s1')
+    plan = copy.deepcopy(old)
+    plan['sources'] = {n:h for n,h in old['sources'].items() if n not in a.AUDITED_SOURCE_ADDITIONS}
+    plan.pop('plan_sha256'); plan['plan_sha256'] = a.digest(plan)
+    root = Path(plan['outdir'])
+    prior = Path(plan['cfg']['backtime']['action_npy'])
+    a.write(prior, {'fixture':'prior'})
+    runtime.ACTION_SHA = a.sha(prior)
+    data = Path(plan['cfg']['backtime']['dataset_root'])
+    a.write(data/'fixture.json', {'fixture':'input'})
+    files = [dict(path='fixture.json', bytes=(data/'fixture.json').stat().st_size,
+                  sha256=a.sha(data/'fixture.json'))]
+    poison = dict(fixture='original poison')
+    banks = {key:dict(indices=ids, split='training')
+             for key,ids in runtime.bank_selection(a.COUNTS['training']).items()}
+    inputs = dict(plan_sha256=plan['plan_sha256'], action_sha256=runtime.ACTION_SHA,
+        dataset_root=str(data), files=files, full_content_sha256=a.digest(files),
+        poison_sha256=a.digest(poison), banks=banks, banks_sha256=a.digest(banks),
+        no_test_selection=True, input_stat_fingerprint=runtime.common.input_stats(data,files),
+        splits=dict(training='fixture training IDs',test='fixture test IDs'))
+    a.write(root/'plan.json',plan)
+    a.write(root/'inputs.json',inputs)
+    a.write(root/'poison.json',poison)
+    return runtime,plan,inputs
+
+
+def test_historical_native_verifier_allows_only_pinned_additions_without_global_patch(historical_inputs):
+    runtime,plan,inputs = historical_inputs
+    shared = runtime.common
+    original_sources = shared.sources
+    root = Path(plan['outdir'])
+    before = {p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    with pytest.raises(ValueError,match='Scientific source changed'):
+        runtime.verify_inputs(plan,full_hash=True)
+    receipt = a.bind_historical_sources(runtime,plan)
+    assert runtime.verify_inputs(plan,full_hash=True) == inputs
+    assert runtime.common is not shared and a.native.common is shared
+    assert shared.sources is original_sources and shared.sources() != plan['sources']
+    assert runtime.common.sources() == plan['sources']
+    assert a.setup_sources()['scientific'] == shared.sources()
+    assert receipt['additions'] == a.AUDITED_SOURCE_ADDITIONS
+    assert receipt['recorded_sha256'] == a.digest(plan['sources'])
+    assert receipt['current_sha256'] == a.digest(shared.sources())
+    assert {p:p.read_bytes() for p in root.rglob('*') if p.is_file()} == before
+    # A distinct native runtime retains the original strict equality guard.
+    with pytest.raises(ValueError,match='Scientific source changed'):
+        a.load_adapter().load_runtime('p1s1').verify_inputs(plan)
+
+
+@pytest.mark.parametrize('kind', ['changed','missing','unapproved','addition_hash','unsafe'])
+def test_historical_source_compatibility_rejects_drift(historical_inputs,monkeypatch,kind):
+    runtime,plan,_ = historical_inputs
+    shared = runtime.common
+    current = shared.sources()
+    if kind == 'changed': current['attack/backtime_mmfi.py'] = '0'*64
+    elif kind == 'missing': current.pop('attack/backtime_mmfi.py')
+    elif kind == 'unapproved': current['tests/test_action_targets_parallel.py'] = a.sha(ROOT/'ATKBackd/tests/test_action_targets_parallel.py')
+    elif kind == 'addition_hash': current['attack/action_targets.py'] = '0'*64
+    else: current['../unapproved.py'] = '0'*64
+    monkeypatch.setattr(shared,'sources',lambda:current)
+    with pytest.raises(ValueError): a.bind_historical_sources(runtime,plan)
+    assert runtime.common is shared  # failed audit never installs even a private view
+
+
+def test_historical_projection_rechecks_source_after_binding(historical_inputs,monkeypatch):
+    runtime,plan,_ = historical_inputs
+    shared = runtime.common
+    current = shared.sources()
+    a.bind_historical_sources(runtime,plan)
+    monkeypatch.setattr(shared,'sources',lambda:current)
+    current['attack/backtime_mmfi.py'] = '0'*64
+    with pytest.raises(ValueError,match='missing/changed'):
+        runtime.verify_inputs(plan,full_hash=True)
+
+
+@pytest.mark.parametrize('kind', ['plan','poison','bank','prior','stat','content'])
+def test_historical_source_adapter_keeps_native_input_guards(historical_inputs,kind):
+    runtime,plan,inputs = historical_inputs
+    a.bind_historical_sources(runtime,plan)
+    root = Path(plan['outdir'])
+    if kind == 'plan':
+        changed=copy.deepcopy(plan); changed['home']='different'
+        a.write(root/'plan.json',changed,immutable=False)
+    elif kind == 'poison': a.write(root/'poison.json',{'changed':True},immutable=False)
+    elif kind == 'prior': a.write(Path(plan['cfg']['backtime']['action_npy']),{'changed':True},immutable=False)
+    elif kind == 'bank':
+        inputs['banks']['fit']['split']='test'
+        inputs['banks_sha256']=a.digest(inputs['banks'])
+        a.write(root/'inputs.json',inputs,immutable=False)
+    elif kind == 'stat':
+        inputs['input_stat_fingerprint']='changed'
+        a.write(root/'inputs.json',inputs,immutable=False)
+    else:
+        # Correct stat receipt but wrong bytes must still fail full-content hashing.
+        inputs['files'][0]['sha256']='0'*64
+        inputs['full_content_sha256']=a.digest(inputs['files'])
+        a.write(root/'inputs.json',inputs,immutable=False)
+    with pytest.raises(ValueError): runtime.verify_inputs(plan,full_hash=True)
+
+
+def test_source_audit_records_compatibility_and_never_rewrites_old_artifacts(historical_inputs,monkeypatch):
+    runtime,plan,_ = historical_inputs
+    root=Path(plan['outdir'])
+    provenance=dict(generator_sha256='fixture generator',diagnostics=dict(
+        fit_profile='full_TRAIN_streaming_author_schedule_CSI_pose_adaptation',
+        fit_epochs=100,test_used=False,n_fit=133056,n_poisoned_fit=13305,
+        generator_updates=13305*89))
+    trigger=SimpleNamespace(shape=(3,114,10),training_indices=[1,4],provenance=lambda:provenance)
+    evaluation=dict(binding=dict(execution=dict(fixture='CPU, not CUDA')))
+    a.write(root/'backtime/evaluation.json',evaluation)
+    for name in ('clean_surrogate/checkpoint.pt','backtime/trigger.pt','backtime/trigger_provenance.json',
+                 'backtime/poison.json','backtime/checkpoint.pt','backtime/per_sample.npz'):
+        a.write(root/name,{'fixture':name})
+    monkeypatch.setattr(a,'source_runtime',lambda source:(runtime,plan))
+    monkeypatch.setattr(runtime,'completed',lambda *args:evaluation)
+    monkeypatch.setattr(runtime,'backtime_poison',lambda *args:dict(indices=[1,4]))
+    monkeypatch.setattr(runtime,'load_trigger',lambda *args:trigger)
+    before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    _,returned,_,receipt=a.source_audit(root,full_hash=True)
+    assert returned == plan
+    assert receipt['source_compatibility']['additions'] == a.AUDITED_SOURCE_ADDITIONS
+    assert receipt['attacker_refit'] is False
+    assert receipt['files']['plan.json'] == a.sha(root/'plan.json')
+    assert {p:p.read_bytes() for p in root.rglob('*') if p.is_file()} == before
+
+
+def test_new_transfer_plan_binds_full_current_snapshot_and_compatibility(historical_inputs,tmp_path,monkeypatch):
+    runtime,old,_ = historical_inputs
+    compatibility = a.bind_historical_sources(runtime,old)
+    source = dict(root=old['outdir'],files={'plan.json':a.sha(Path(old['outdir'])/'plan.json')},
+                  source_compatibility=compatibility)
+    monkeypatch.setattr(a,'source_audit',lambda *args,**kw:(runtime,old,None,source))
+    inputs = dict(train='fixture train',eval='fixture test',action_file_sha256='fixture prior')
+    def clean_audit(backbone,home,folder):
+        return dict(root=str(folder),cfg=a.configuration(old['cfg']['backtime'],backbone),
+                    inputs=inputs,files={'checkpoint.pt':'fixture clean'})
+    monkeypatch.setattr(a,'clean_audit',clean_audit)
+    import run_a1_three_tables as frozen
+    monkeypatch.setattr(frozen,'_current_inputs',lambda cell:inputs)
+    args=SimpleNamespace(outdir=tmp_path/'runs/mmfi_backtime_transfer_fixture',source=old['outdir'],
+        data_home=old['home'],metafi_clean=tmp_path/'clean_meta',wiflow_clean=tmp_path/'clean_wifi')
+    plan=a.make_plan(args,full_hash=True)
+    assert plan['sources']['scientific'] == a.native.common.sources()
+    assert all(plan['sources']['scientific'][n] == h for n,h in a.AUDITED_SOURCE_ADDITIONS.items())
+    assert plan['source']['source_compatibility'] == compatibility
+    a.signed(plan,'plan_sha256')
+    a.write(Path(plan['outdir'])/'plan.json',plan)
+    a.verify_plan(plan,full_hash=True)
+    drift=copy.deepcopy(plan['sources'])
+    drift['scientific']['attack/action_targets.py']='0'*64
+    monkeypatch.setattr(a,'setup_sources',lambda:drift)
+    with pytest.raises(ValueError,match='changed'): a.verify_plan(plan,full_hash=True)
+
+
 def test_training_rows_route_to_original_adaptive_manifest(tmp_path, monkeypatch):
     marker=object(); trigger=object(); captured=[]
     runtime=SimpleNamespace(training_rows=lambda p,m,t:(captured.append((p,m,t)) or marker))

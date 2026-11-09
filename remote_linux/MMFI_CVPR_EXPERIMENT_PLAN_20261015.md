@@ -36,6 +36,22 @@ AST parsed; toy CPU50epoch interrupted/resumed weights and optimizer agree.
 Historical ATKBackd scientific files remain unmodified. Pull only into an idle,
 clean checkout; never change code under an active or prepared run.
 
+Compatibility repair 2026-11-09 after Van's CheckOnly source-inventory failure:
+ff2d478..b847a87 adds eight scientific Cross/Nod files, changes no recorded
+BackTime file. Transfer sidecar alone permits these explicit SHA256-pinned
+additions, requires every historical source unchanged/present/unlinked, and
+keeps the original native plan/input/poison/bank/prior/full-hash guards through
+a private module view (no shared monkeypatch). Full current inventory plus
+compatibility receipt bind the NEW transfer plan. No old artifact/hash rewrite,
+attacker refit, protocol/metric/optimizer change, remote launch or auto retry.
+Re-run CheckOnly explicitly after pulling the fix; do not proceed on failure.
+Post-repair local gate:130 passed (38 transfer +92 BackTime regressions),
+4 expected CPU pin-memory warnings. Real historical verify_inputs exercised
+with synthetic input receipts: approved additions pass; changed/missing old
+source, unapproved additions/hash, plan/poison/bank/prior/stat/content drift
+fail. Old artifacts stay byte-identical; full current snapshot remains bound
+in the new plan. No full remote dataset/4090 verification is claimed.
+
 ### Presentation request 2026-11-09: six-case saved-prediction qualitative on Van
 
 User requests GitHub push/pull handoff, CPU plotting ON Van, download figures

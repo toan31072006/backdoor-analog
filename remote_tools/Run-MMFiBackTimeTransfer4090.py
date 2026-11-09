@@ -14,11 +14,12 @@ import io
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
 import subprocess
 import sys
 import time
+from types import ModuleType
 import uuid
 
 os.environ.update(PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1', OMP_NUM_THREADS='2',
@@ -33,6 +34,21 @@ BACKBONES = ('metafiplusplus', 'wiflow')
 COUNTS = dict(training=133056, test=33264)
 GRID = (0., .2, .4, .6, .8, 1.)
 sha, digest, read, write = native.sha, native.digest, native.read, native.write
+
+# Audited additions since the historical ff2d478 BackTime checkout. These
+# standalone Cross/Nod modules are not dependencies of the BackTime transfer.
+# Reject every other addition, and every changed/missing recorded source.
+# Raw-byte SHA256 is portable here: .gitattributes fixes *.py to LF.
+AUDITED_SOURCE_ADDITIONS = {
+    'attack/action_target_data.py': '3bc1f28d87ff751ef223dec356f3cb4a5c9be44fa9aa3f067439fa979b8ee4e4',
+    'attack/action_targets.py': 'fc4687f823240a9e2d0261f228a982b07a43b32d31e4565a017180a102aefca7',
+    'attack/cross_shoulders.py': '160911acbee8c1125e785c5273151a8303df5b3c972e90e42c3f3362e45998b7',
+    'attack/piw_action_targets.py': '7fdf11dfdb96e0846669227276d4e16532357402626bdd4555e950d8be1d8c44',
+    'piw_action_target_data.py': '8f4e137fcc13f0db5d127f7161a515cd91d3e6935c58f34d513e2278a818b2ad',
+    'run_action_targets_parallel.py': 'a0aa010f24a0e13e096b4e52d7dcb887d67928539a494c50d7b14e4d3aa89fb8',
+    'run_mmfi_action_targets.py': '5fbb4f3ee3144c519423c51acc2cc7cbcc2ae980114ea6ec108a7e69608effd8',
+    'run_piw_action_targets.py': '8f510e3b3436b1de98a2163887d6af815831a2cfbd10181cfeb381ca4900c6f5',
+}
 
 
 def signed(row, key):
@@ -69,9 +85,59 @@ def source_runtime(source):
     return runtime, plan
 
 
+def source_compatibility(common, recorded):
+    """Exact historical files plus ONLY explicitly audited, hash-pinned additions."""
+    if not isinstance(recorded, dict) or not recorded:
+        raise ValueError('Missing historical scientific source inventory')
+    current = common.sources()
+    base = Path(common.HERE).resolve()
+    for name, expected in {**current, **recorded}.items():
+        relative = PurePosixPath(name)
+        if (not name or relative.is_absolute() or relative.as_posix() != name
+                or any(p in ('', '.', '..') for p in relative.parts)
+                or '\\' in name or ':' in name
+                or not isinstance(expected, str) or len(expected) != 64
+                or any(c not in '0123456789abcdef' for c in expected)):
+            raise ValueError(f'Invalid scientific source entry: {name!r}')
+        path = base / relative
+        native.reject_links(path)
+        if (not path.resolve().is_relative_to(base) or not path.is_file()
+                or (name in recorded and current.get(name) != expected)):
+            raise ValueError(f'Historical scientific source missing/changed: {name}')
+    additions = {n: h for n, h in current.items() if n not in recorded}
+    for name, actual in additions.items():
+        if AUDITED_SOURCE_ADDITIONS.get(name) != actual:
+            raise ValueError(f'Unaudited scientific source addition/hash: {name}')
+    return dict(policy='exact_recorded_sources_plus_hash_pinned_additions_v1',
+        recorded_sha256=digest(recorded), current_sha256=digest(current),
+        recorded_count=len(recorded), current_count=len(current), additions=additions)
+
+
+def bind_historical_sources(runtime, plan):
+    """Private read-only view; never patch shared common or rewrite an old plan.
+
+    Retain the native verifier's plan/input/poison/bank/prior/content guards.
+    Its source equality sees a freshly validated projection onto old files;
+    the new transfer plan separately binds the complete current snapshot.
+    """
+    original = runtime.common
+    recorded = dict(plan['sources'])
+    receipt = source_compatibility(original, recorded)
+    private = ModuleType(original.__name__)
+    private.__dict__.update(original.__dict__)
+    def recorded_sources():
+        if source_compatibility(original, recorded) != receipt:
+            raise ValueError('Scientific source changed during historical audit')
+        return dict(recorded)
+    private.sources = recorded_sources
+    runtime.common = private  # runtime itself is a private load_runtime() module
+    return receipt
+
+
 def source_audit(source, *, full_hash=False):
     """Validate OLD bindings as OLD bindings, never relabel/copy a trigger."""
     runtime, plan = source_runtime(source)
+    compatibility = bind_historical_sources(runtime, plan)
     inputs = runtime.verify_inputs(plan, full_hash=full_hash)
     evaluation = read(Path(source) / 'backtime/evaluation.json')
     env = evaluation['binding']['execution']
@@ -94,6 +160,7 @@ def source_audit(source, *, full_hash=False):
              'backtime/per_sample.npz')
     record = dict(root=str(Path(source).resolve()),
         files={n: sha(Path(source) / n) for n in names},
+        source_compatibility=compatibility,
         input_content_sha256=inputs['full_content_sha256'],
         ordered_splits=inputs['splits'], generator_sha256=trigger.provenance()['generator_sha256'],
         original_execution=env, surrogate='hpeli', fit_epochs=100,
@@ -654,6 +721,9 @@ def main(argv=None):
     if args.mode in ('inspect','status'):
         return inspect(args)
     plan = make_plan(args, full_hash=True)
+    compatibility = plan['source']['source_compatibility']
+    print(f"SOURCE_COMPAT_PASS: {compatibility['recorded_count']} historical files unchanged; "
+          f"{len(compatibility['additions'])} hash-pinned additions; old artifacts read-only", flush=True)
     root = Path(args.outdir)
     if args.mode == 'check':
         if (root/'plan.json').exists():

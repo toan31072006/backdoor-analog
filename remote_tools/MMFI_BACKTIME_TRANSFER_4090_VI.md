@@ -17,6 +17,8 @@
 - Verification: CPU/synthetic tests; chưa xác minh CUDA/full MM-Fi trên Vân.
   Checkpoint nguồn mới được kiểm tra qua output người dùng cung cấp; launcher
   sẽ kiểm tra lại hash/binding/poison/fit profile khi CheckOnly/Prepare.
+  Sau sửa compatibility: **130 tests passed** (38 transfer +92 hồi quy),
+  gồm verifier native với input receipts tổng hợp; không phải full-data run.
 
 ## Cấu hình và control
 
@@ -70,7 +72,9 @@ Dùng explicit arguments với `powershell.exe -File`, không đổi policy toà
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File $btScript -Mode CheckOnly -SourceRun $btSource -Outdir $btOut
+if ($LASTEXITCODE -ne 0) { throw 'CheckOnly lỗi; dừng và gửi output, không chạy Prepare.' }
 powershell -NoProfile -ExecutionPolicy Bypass -File $btScript -Mode Prepare -SourceRun $btSource -Outdir $btOut
+if ($LASTEXITCODE -ne 0) { throw 'Prepare lỗi; giữ logs/output, không chạy Launch hoặc tự retry.' }
 ```
 
 Mặc định DataHome=`C:\Users\Van\backdooranalog`, env cũ
@@ -89,6 +93,27 @@ chỗ khác, truyền **folder chứa checkpoint.pt/config.resolved.yaml/eval_ca
 bằng `-MetaFiClean` / `-WiFlowClean` cho mọi lệnh. Không trỏ vào A1 hoặc HPE-Li.
 CheckOnly chỉ đọc và kiểm tra hashes/full inputs, không smoke/train/GPU.
 Nếu source hash/poison/config không khớp, dừng và gửi lỗi; không sửa manifest cũ.
+
+### Sửa lỗi inventory source sau pull (2026-11-09)
+
+Plan BackTime cũ bind toàn bộ inventory `ATKBackd`, không chỉ dependency
+BackTime. Pull `ff2d478..b847a87` thêm tám scientific files Cross/Nod (tests
+không nằm trong inventory), nên phép so sánh nguyên dictionary báo
+`Scientific source changed since plan creation` dù các file cũ chưa đổi.
+
+Chỉ sidecar transfer mới có compatibility policy: **mọi file đã ghi trong
+plan cũ vẫn phải tồn tại, không qua link/junction và giữ đúng SHA256**.
+Chỉ tám file bổ sung đã audit được chấp nhận, từng file pin đúng SHA256;
+file bổ sung lạ hoặc khác hash cũng bị chặn. Không bỏ qua source guard,
+không sửa native verifier/plan/inputs/checkpoints cũ hoặc fit lại attacker.
+Verifier native vẫn chạy đầy đủ qua một module view riêng, không monkeypatch
+module dùng chung. Source inventory hiện tại đầy đủ và receipt tương thích
+được bind vào **plan transfer mới**, rồi kiểm tra lại khi resume/evaluate.
+
+Nếu đã gặp lỗi trên, giữ nguyên output/logs; chỉ pull bản sửa vào checkout
+idle/sạch rồi chạy lại **CheckOnly**. Mong đợi `SOURCE_COMPAT_PASS` và sau đó
+`CHECK_PASS`; chỉ dòng đầu chưa đủ để chạy Prepare. Nếu vẫn lỗi, gửi nguyên
+traceback; không cập nhật hash trong manifest hoặc xóa output để vượt guard.
 
 Prepare yêu cầu GPU không có compute job khác, output volume local còn ≥10GiB.
 Hai real CUDA B32 smokes dùng frozen trigger/đúng optimizer, chạy cùng lúc,
