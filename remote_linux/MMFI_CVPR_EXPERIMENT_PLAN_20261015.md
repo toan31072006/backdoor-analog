@@ -2,6 +2,52 @@
 
 ## Material Passport
 
+### Transition 2026-11-10: stopped PiW v1, reuse completed attacker and Clean
+
+User supplied live Windows output: PiW runner PID26052 in
+`C:\Users\Van\PiWBackTimeGit_20261110`, output
+`U:\backdooranalog\runs\piw_backtime_three_backbones_s42_v1`.
+Saved attacker100/100, surrogate_updates43600, generator_updates248043;
+`attacker/trigger.pt` exists. User then explicitly requested stopping this
+job and supplied guarded Stop-Process success plus no remaining PID26052.
+These are user-terminal observations, not an assistant remote artifact audit.
+Existing WiFlow/MM-Fi remains out of intervention scope.
+
+Prepare a NEW v3 profile/output/idle checkout. Add optional `-AttackerRun` /
+`--attacker-reference RUN_DIR`: read the completed frozen PiW v1 generator
+directly from its original file, never relabel/rebind/copy its checkpoint,
+rewrite its plan/lock/provenance, resume surrogate optimizer/RNG, import a
+victim, or refit if import fails. Pin published v1 runner source (LF/CRLF),
+unchanged scientific adapter/core/HPE-Li/preprocessing/target sources,
+original plan/capacity/checkpoint/provenance checksums, full input/split/order
+fingerprints, seed/rho/target/attacker config and all100 finite epoch records,
+81 sparse variables, paired doses/adaptive IDs and completion counters.
+Keep original training runtime/execution in the new signed plan and final
+evaluation. Read the old lock only to reject a live source PID; a stale lock
+after force-stop is preserved. Import is CPU/read-only, no TEST arrays.
+Freeze all source file hashes and recheck at resume/use; do not reselect.
+
+With imported attacker, launch trains ONLY HPE-Li BackTime200 -> WiFlow
+BackTime200 -> MetaFi++ BackTime200 from scratch; ZERO attacker refitting and
+ZERO Clean training. Historical Clean checks and all scientific recipes,
+poison IDs/doses, metrics, final199 and deferred-TEST rules remain unchanged.
+Fresh-attacker mode remains explicit by omission of the import option; the
+current user's transition must keep AttackerRun on every command.
+Local code/tests/docs and publication continue the earlier update request.
+No remote training/Prepare/restart is authorized by publication. Next user
+step: clone into a NEW folder and run metadata-only FindClean; actual three
+Clean compatibility and original attacker audit on Van remain pending.
+Local final v3 gate: **178 passed**, exit0,135.29s (87PiW +91historical
+BackTime/MM-Fi/runner/transfer), four expected CPU pin_memory warnings.
+Includes native CPU toy attacker100 reused unchanged for three toy200
+victims, no-refit/no-GPU/no-TEST import, read-only original files, strict
+foreign/partial/tamper rejection, active source PID/stale-lock preservation,
+signed source origin and resume checks. PowerShell AST/Inspect with spaced
+AttackerRun and metadata-only FindClean passed without output writes.
+MM-Fi source blob0f5e7b99 and manuscript SHA256 remain unchanged. These gates
+do not establish real source/Clean compatibility, CUDA capacity or efficacy
+on Van. Original v1 artifacts stay untouched; no remote launch from here.
+
 ### Publication request 2026-11-10: update while an existing job is training
 
 User requests the reuse-Clean update but reports training is already in

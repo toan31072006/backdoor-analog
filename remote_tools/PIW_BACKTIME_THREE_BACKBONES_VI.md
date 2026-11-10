@@ -1,4 +1,4 @@
-# PiW BackTime: HPE-Li → WiFlow → MetaFi++ — reuse Clean v2, 2026-11-10
+# PiW BackTime: HPE-Li → WiFlow → MetaFi++ — reuse Clean + attacker v3, 2026-11-10
 
 ## Material Passport
 
@@ -11,14 +11,14 @@
 ## Thứ tự chạy đã chốt với người dùng
 
 **Nếu job v1 đang chạy:** không pull/sửa checkout, không đổi `plan.json`, không
-xóa lock và không chạy v2 cùng output. Bản v2 chưa có adapter chuyển trạng thái
-attacker/victim v1 đang train sang v2. Push GitHub không đổi queue đã chạy trong
-process v1. Cần xem log/checkpoint hiện tại trước khi quyết định chuyển; không
-giả checkpoint v1 thành checkpoint v2 hoặc tự dừng job để áp bản sửa.
+xóa lock và không chạy v3 cùng output. Push GitHub không đổi queue trong process
+v1. Không tự dừng job. User đã xác nhận dừng riêng PID26052 ngày2026-11-10;
+attacker của run đó đã lưu100/100 và có `trigger.pt`. v3 chỉ hỗ trợ dùng lại
+**attacker đã hoàn tất** read-only, không chuyển optimizer/RNG hoặc victim v1.
 
 **Một process PiW duy nhất**, chạy tuần tự HPE-Li → WiFlow → MetaFi++,
 song song với **job WiFlow/MM-Fi đã có**. Không phải ba PiW jobs cùng lúc.
-Sau khi fit attacker PiW100, queue cố định trong `plan.json` là:
+Sau khi fit attacker PiW100 **hoặc import attacker100 đã hoàn tất**, queue cố định là:
 
 1. HPE-Li BackTime200, dùng Clean HPE-Li đã có.
 2. WiFlow BackTime200, dùng Clean WiFlow đã có.
@@ -37,9 +37,9 @@ PiW one-person: official TRAIN sau next-frame filter **27,876**, TEST **2,586**;
 input **3x180x20**, output **1x14x3**, tọa độ mét. Native loader normalize
 amplitude/phase một lần. Không đổi split hoặc cắt subset để lấy kết quả chính.
 
-Một attacker HPE-Li mới được fit bằng TRAIN, sau đó dùng chung frozen trigger,
-adaptive poison IDs và paired doses cho ba victim độc lập. Không mang attacker
-MM-Fi/17 khớp hoặc checkpoint đã train sang PiW. Đây là **shared-surrogate
+Một attacker HPE-Li được fit một lần bằng TRAIN (ở v1 hoặc fresh), sau đó dùng
+chung frozen trigger, adaptive poison IDs và paired doses cho ba victim độc lập.
+Không mang attacker MM-Fi/17 khớp hoặc surrogate/victim weights sang PiW. Đây là **shared-surrogate
 cross-backbone retraining**, không phải fit attacker riêng cho từng backbone.
 
 Attacker: native alternating BackTime loop, 100 epochs, Adam surrogate 1e-4,
@@ -109,6 +109,55 @@ residuals; replay metrics và hashes trước COMPLETE. Không coi Target-PCK l�
 
 ## File và lệnh trên Vân (chưa chạy tại đây)
 
+### Chuyển từ v1 đã dừng, giữ attacker100 đã chạy
+
+Giữ nguyên cả checkout và output v1. Dùng folder **mới** (không cần xóa stale
+lock v1). Chỉ thực hiện sau khi bản cập nhật được xác nhận đã push:
+
+```powershell
+git clone --branch main --single-branch https://github.com/toan31072006/backdoor-analog.git C:\Users\Van\PiWBackTimeReuseV3_20261110
+if ($LASTEXITCODE -ne 0) { throw 'Clone failed; stop here. Do not overwrite an existing folder.' }
+$piwHelper = 'C:\Users\Van\PiWBackTimeReuseV3_20261110\remote_tools\Start-PiWBackTimeThreeBackbones.ps1'
+$piwOptions = @{
+    DataHome = 'C:\Users\Van\backdooranalog'
+    PythonExe = 'C:\Users\Van\backdooranalog\envs\dose-backdoor\python.exe'
+    AttackerRun = 'U:\backdooranalog\runs\piw_backtime_three_backbones_s42_v1'
+    Outdir = 'U:\backdooranalog\runs\piw_backtime_three_backbones_reuse_clean_attacker_s42_v3'
+}
+& $piwHelper -Mode FindClean @piwOptions
+```
+
+Gửi output FindClean để xác nhận ba Clean nguồn. Lệnh này chỉ đọc metadata,
+không dùng CUDA/TEST hoặc train. Không tự chuyển thẳng sang Launch.
+Sau khi kiểm tra danh sách nguồn (và chỉ rõ `CleanHPELi`, `CleanWiFlow`,
+`CleanMetaFi` nếu nhiều nguồn khớp), giữ cùng `piwOptions` cho mọi bước:
+
+```powershell
+& $piwHelper -Mode CheckOnly @piwOptions
+if ($LASTEXITCODE -ne 0) { throw 'Audit failed; no Prepare or Launch.' }
+# Chỉ sau khi CheckOnly pass và người vận hành quyết định thử capacity:
+& $piwHelper -Mode Prepare @piwOptions
+if ($LASTEXITCODE -ne 0) { throw 'Capacity failed; no Launch.' }
+# Launch là quyết định riêng, sau khi xem cả hai gate:
+# & $piwHelper -Mode Launch @piwOptions
+```
+
+CheckOnly xác minh source v1 đã publish, source khoa học không đổi, full
+input/split/order fingerprints, seed/rho/target/config, plan/capacity receipt,
+frozen-state checksum và provenance, đủ100 epoch/updates,81 biến, poison IDs
+và doses. Nguồn đang chạy hoặc thiếu/sai sẽ dừng; **không tự fit lại**.
+Plan/evaluation v3 lưu original runtime/execution và mọi source hash. Trigger
+được đọc trực tiếp ở run v1; không tạo `attacker/trigger.pt` giả mang hash v3.
+Không import `fit_checkpoint.pt`, optimizer, RNG, surrogate hoặc victim weights.
+Stale lock v1 được đọc kiểm tra PID rồi giữ nguyên; không xóa.
+
+Với `AttackerRun`, chỉ còn **3×200 epoch victim BackTime**, không100 attacker
+và không3 Clean200. Các batch GPU smoke khi Prepare vẫn là model tạm, không
+phải train một Clean đối chứng hoặc fit lại attacker100. Thiếu/lệch Clean nguồn
+vẫn dừng, không tự đổi recipe để nhận checkpoint cũ.
+
+### Trường hợp fresh attacker (không phải lượt chuyển của người dùng hiện tại)
+
 Runner `ATKBackd/run_piw_backtime_three_backbones.py`; helper
 `remote_tools/Start-PiWBackTimeThreeBackbones.ps1`. Chỉ cập nhật vào checkout
 **idle**, không pull vào checkout đang có job chạy hoặc đã Prepare. DataHome
@@ -154,7 +203,7 @@ CheckOnly mới audit đầy đủ và freeze nguồn. Nếu có nhiều nguồn
 đã tìm được; giữ cùng options khi Prepare/Launch/Verify.
 Python tương đương: lặp `--clean-reference hpeli=RUN_DIR`,
 `--clean-reference wiflow=RUN_DIR`, `--clean-reference metafiplusplus=RUN_DIR`.
-Dùng **output v2 mới**, không sửa/ghi đè plan v1 đã Prepare. Nguồn đã freeze
+Dùng **output v3 mới**, không sửa/ghi đè plan v1/v2 đã Prepare. Nguồn đã freeze
 không được tự chọn lại khi xuất hiện run mới hoặc resume.
 
 `Inspect` không đọc dataset/CUDA hoặc ghi output. `CheckOnly` full-data CPU audit,
@@ -179,12 +228,14 @@ vượt guard: kiểm tra PID/output trước rồi hỏi người vận hành. 
 shrink batch, AMP fallback hoặc đổi recipe sau Prepare. Nếu Prepare fail/OOM,
 giữ log, không tiếp tục Launch.
 
-Output mặc định `U:\backdooranalog\runs\piw_backtime_three_backbones_reuse_clean_s42_v2`:
+Output mặc định `U:\backdooranalog\runs\piw_backtime_three_backbones_reuse_clean_attacker_s42_v3`:
 `plan.json`, `capacity.json`, `attacker/fit_checkpoint.pt`, `attacker/trigger.pt`,
 `attacker/provenance.json`; `victims/<backbone>/backtime/checkpoint.pt`,
 và mỗi BackTime cell có `predictions.npz`/`evaluation.json`.
 Không tạo `victims/<backbone>/clean`. `plan.json` chứa original reference paths,
-hashes, source profile/plan/runtime/execution. Evaluation chứa audit/replay nguồn;
+hashes, source profile/plan/runtime/execution. Khi import attacker, không tạo
+attacker local; `attacker_reference` trỏ file v1 với original binding, không ghi
+đè hoặc relabel. Evaluation chứa audit/replay nguồn;
 không đổi provenance của Clean thành provenance của victim mới.
 
 ## Verification boundaries
@@ -222,3 +273,15 @@ test mới trong amendment của experiment plan; không suy CPU toy thành full
 Gate v2: **150 passed**, exit0,105.35s (59PiW +91regression), bốn CPU pin_memory
 warnings như dự kiến. PowerShell AST/Inspect/FindClean pass, bao gồm forwarding
 paths có dấu cách, không ghi output. Gate này không phải audit artifact/CUDA thật trên Vân.
+
+Gate v3 kiểm tra import completed attacker100 read-only, strict original-source/
+plan/capacity/config/full-input/provenance/frozen-hash binding, đủ100 epoch và
+counters/IDs/doses, source PID active/stale-lock, source tamper/partial/foreign
+rejection, no-refit/no-GPU/no-TEST import, new signed-plan origin/resume,
+PowerShell forwarding AttackerRun có dấu cách và metadata-only FindClean.
+Native CPU toy attacker100 được dùng lại cho ba toy BackTime victims200;
+generator/IDs/doses giữ nguyên và source files không đổi. Không phải audit
+checkpoint thật trên Vân hoặc xác nhận compatibility của ba Clean thật.
+Kết quả cuối: **178 passed**, exit0,135.29s (87PiW +91hồi quy), bốn CPU
+pin_memory warnings dự kiến. PowerShell AST/Inspect có AttackerRun chứa dấu
+cách và FindClean pass, không ghi output. MM-Fi source/manuscript không đổi.

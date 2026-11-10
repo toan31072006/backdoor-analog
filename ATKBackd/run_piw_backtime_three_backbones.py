@@ -24,9 +24,10 @@ os.environ.setdefault('MKL_THREADING_LAYER', 'SEQUENTIAL')
 import numpy as np
 import run_piw_hpeli_clean as base
 import piw_backtime_clean_reference as clean_ref
+import piw_backtime_attacker_reference as attacker_ref
 
 HERE = Path(__file__).resolve().parent
-PROFILE = 'piw_backtime_hpeli_shared_three_backbones_reuse_clean_s42_v2'
+PROFILE = 'piw_backtime_hpeli_shared_three_backbones_reuse_clean_attacker_s42_v3'
 BACKBONES = ('hpeli', 'wiflow', 'metafiplusplus')
 GRID = [0., .2, .4, .6, .8, 1.]
 RECIPES = {
@@ -37,7 +38,7 @@ RECIPES = {
 }
 
 
-def config(data_home, outdir, dataset=None, device='cuda:0', clean_references=None):
+def config(data_home, outdir, dataset=None, device='cuda:0', clean_references=None, attacker_reference=None):
     from piw_v2_adapter import target_contract
     from attack.backtime_piw import configuration
     cfg = base.configuration(data_home, outdir, device, dataset)
@@ -47,10 +48,12 @@ def config(data_home, outdir, dataset=None, device='cuda:0', clean_references=No
     cfg.update(profile=PROFILE, backbones=list(BACKBONES), roles=['backtime'],
         training_queue=[dict(backbone=b, role='backtime') for b in BACKBONES],
         clean_references={b: str(Path(refs[b]).resolve()) if refs.get(b) else None for b in BACKBONES},
+        attacker_reference=str(Path(attacker_reference).resolve()) if attacker_reference else None,
         drop_last=True, target=target_contract(), eval_doses=GRID, rho=.1,
         recipes=deepcopy(RECIPES), attacker=asdict(configuration()),
         execution_policy='one serial PiW worker: HPE-Li -> WiFlow -> MetaFi++; may coexist with the existing MM-Fi WiFlow job after capacity gate; no automatic retry/kill/fallback',
-        attacker_policy='fresh HPE-Li TRAIN surrogate; shared frozen attacker and adaptive IDs/doses for three scratch victims',
+        attacker_policy=('reuse completed source-pinned PiW v1 attacker read-only; no refit or optimizer/RNG/victim import'
+                         if attacker_reference else 'fresh HPE-Li TRAIN surrogate; shared frozen attacker and adaptive IDs/doses for three scratch victims'),
         control_policy='read-only audited historical Clean references; auto-discover metadata in DataHome/runs and output parent when unspecified; freeze unique matching source without TEST-score selection; never train Clean; missing/mismatched/ambiguous reference is an error',
         interpretation='exploratory PiW14 digital-amplitude BackTime adaptation, seed42, not exact forecasting reproduction or complete paper table')
     return json.loads(json.dumps(cfg, allow_nan=False))
@@ -126,6 +129,8 @@ def preflight(cfg):
     for dataset in datasets.values():
         for row in dataset.items:
             target_pose(dataset.load_pose(row['kpt']), 1.)
+    attacker_reference = (attacker_ref.audit(cfg['attacker_reference'], cfg, inputs)
+                          if cfg['attacker_reference'] else None)
     references = {}
     for b in BACKBONES:
         valid, errors = [], []
@@ -144,7 +149,8 @@ def preflight(cfg):
         model.load_state_dict(clean_ref.load(reference)['model'], strict=True)
         del model
     record = signed(dict(profile=PROFILE, cfg=cfg, sources=sources(),
-                         runtime=runtime(), inputs=inputs, clean_references=references))
+                         runtime=runtime(), inputs=inputs, clean_references=references,
+                         attacker_reference=attacker_reference))
     write_json(plan_path(cfg), record)
     return record
 
@@ -152,7 +158,8 @@ def preflight(cfg):
 def load_plan(cfg, full_hash=False):
     saved = read_json(plan_path(cfg))
     unsigned = {k: v for k, v in saved.items() if k != 'plan_sha256'}
-    canonical = config(cfg['data_home'], cfg['outdir'], cfg['dataset_root'], cfg['device'], cfg['clean_references'])
+    canonical = config(cfg['data_home'], cfg['outdir'], cfg['dataset_root'], cfg['device'],
+                       cfg['clean_references'], cfg['attacker_reference'])
     if (saved.get('plan_sha256') != base.object_sha(unsigned) or cfg != canonical
             or saved.get('cfg') != cfg or saved.get('sources') != sources()
             or saved.get('runtime') != runtime()
@@ -165,6 +172,14 @@ def load_plan(cfg, full_hash=False):
         if record.get('backbone') != b:
             raise ValueError('Historical Clean reference backbone changed')
         clean_ref.files_match(record)
+    if cfg['attacker_reference']:
+        reference = saved.get('attacker_reference')
+        if not reference or reference.get('source_run') != cfg['attacker_reference']:
+            raise ValueError('Missing/foreign historical attacker audit; no refit fallback')
+        attacker_ref.files_match(reference)
+        attacker_ref.require_idle(reference['source_run'])
+    elif saved.get('attacker_reference') is not None:
+        raise ValueError('Unexpected historical attacker reference')
     for split, entry in saved['inputs']['splits'].items():
         path = Path(cfg['dataset_root']) / split / (split + '_list.txt')
         if base.file_sha(path) != entry['official_list_sha256']:
@@ -322,6 +337,9 @@ def capacity(plan):
 
 
 def attacker_path(plan):
+    if plan['cfg'].get('attacker_reference'):
+        # The historical file is never copied, relabeled or rebound to v3.
+        return Path(plan['cfg']['attacker_reference']) / 'attacker/trigger.pt'
     return Path(plan['cfg']['outdir']) / 'attacker/trigger.pt'
 
 
@@ -329,6 +347,9 @@ def fit_attacker(plan):
     import torch
     from attack import backtime_piw as attack
     cfg = plan['cfg']
+    if cfg.get('attacker_reference'):
+        print('REUSE_COMPLETED_ATTACKER: no attacker training; original artifacts read-only', flush=True)
+        return load_attacker(plan)
     execution = capacity(plan)
     seed(cfg['device'])
     folder = attacker_path(plan).parent
@@ -360,27 +381,16 @@ def fit_attacker(plan):
 
 def load_attacker(plan):
     import torch
-    from attack.backtime_piw import FrozenPiWBackTimeTrigger
+    if plan['cfg'].get('attacker_reference'):
+        reference = plan.get('attacker_reference')
+        if not reference or reference.get('source_run') != plan['cfg']['attacker_reference']:
+            raise ValueError('Missing/foreign historical attacker audit; no refit fallback')
+        trigger, doses = attacker_ref.load(reference, plan['cfg'], plan['inputs'])
+        return trigger.to(plan['cfg']['device']), doses
     blob = torch.load(attacker_path(plan), map_location='cpu', weights_only=False)
     if blob.get('plan_sha256') != plan['plan_sha256'] or blob.get('execution') != capacity(plan):
         raise ValueError('Frozen attacker plan/execution changed')
-    trigger = FrozenPiWBackTimeTrigger.from_state_dict(blob['trigger'])
-    actual_config = json.loads(json.dumps(asdict(trigger.config)))
-    if actual_config != plan['cfg']['attacker']:
-        raise ValueError('Frozen attacker config differs from the declared PiW recipe')
-    n = plan['inputs']['splits']['train_data']['retained_count']
-    doses = np.random.default_rng(42).uniform(.2, 1., n).astype(np.float32)
-    diag = trigger.provenance()['diagnostics']
-    indices = trigger.training_indices
-    if (not np.array_equal(blob['doses'], doses) or len(indices) != math.floor(.1*n)
-            or len(set(indices)) != len(indices) or any(type(i) is not int or not 0 <= i < n for i in indices)
-            or diag.get('fit_epochs') != 100 or diag.get('test_used') is not False
-            or diag.get('n_fit') != n or diag.get('generator_updates') != len(indices)*89
-            or diag.get('clean_warmup_epochs') != 11
-            or diag.get('surrogate_updates') != math.ceil(n/64)*100
-            or diag.get('fit_profile') != 'full_TRAIN_streaming_author_schedule_PiW14_adaptation'
-            or diag.get('dataset_sha256') != plan['inputs']['fingerprint']):
-        raise ValueError('Incomplete/foreign attacker or adaptive dose plan')
+    trigger, doses = attacker_ref.validate(blob, plan['cfg'], plan['inputs'])
     return trigger.to(plan['cfg']['device']), doses
 
 
@@ -541,7 +551,8 @@ def evaluate(plan, backbone):
         predictions=grids['backtime'],reference_predictions=grids['clean'],targets=targets,
         displacement_residuals=residual)
     result = dict(profile=PROFILE, status='COMPLETE', plan_sha256=plan['plan_sha256'],backbone=backbone,
-                  metrics=metrics, clean_reference=reference_audit, artifacts={
+                  metrics=metrics, clean_reference=reference_audit,
+                  attacker_reference=plan.get('attacker_reference'), artifacts={
                       'predictions.npz':base.file_sha(folder/'predictions.npz'),
                       'checkpoint.pt':base.file_sha(folder/'checkpoint.pt'),
                       'clean_checkpoint.pt':base.file_sha(plan['clean_references'][backbone]['checkpoint']),
@@ -578,6 +589,7 @@ def verify_evaluation(plan, backbone):
         reference_audit = clean_ref.replay(plan['clean_references'][backbone], truth, z['names'].tolist(), z['reference_predictions'][:,0])
     replay_equal(result['metrics'],metrics)
     replay_equal(result['clean_reference'], reference_audit)
+    replay_equal(result.get('attacker_reference'), plan.get('attacker_reference'))
     return result
 
 
@@ -588,6 +600,8 @@ def main(argv=None):
     parser.add_argument('--dataset')
     parser.add_argument('--outdir',required=True)
     parser.add_argument('--device',default='cuda:0')
+    parser.add_argument('--attacker-reference', metavar='RUN_DIR',
+                        help='Completed PiW v1 attacker run, read-only; no attacker refit or victim-state migration')
     parser.add_argument('--clean-reference',action='append',default=[],metavar='BACKBONE=RUN_DIR',
                         help='Optional explicit historical Clean run directory; otherwise bounded metadata discovery, no Clean retraining')
     args = parser.parse_args(argv)
@@ -597,7 +611,7 @@ def main(argv=None):
         if not sep or not path or b not in BACKBONES or b in references:
             parser.error('Use one --clean-reference BACKBONE=RUN_DIR per known backbone')
         references[b] = path
-    cfg = config(args.data_home,args.outdir,args.dataset,args.device,references)
+    cfg = config(args.data_home,args.outdir,args.dataset,args.device,references,args.attacker_reference)
     if args.mode == 'inspect':
         print(json.dumps(cfg,indent=2))
         return

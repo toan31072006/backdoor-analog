@@ -418,7 +418,8 @@ def test_launch_stops_queue_on_failure_without_retry_or_starting_later_model(tmp
     assert calls == [('hpeli','backtime')]
 
 
-def test_full_cpu_toy_lifecycle_and_tamper(tmp_path,monkeypatch):
+@pytest.mark.parametrize('reuse_attacker',[False,True])
+def test_full_cpu_toy_lifecycle_and_tamper(tmp_path,monkeypatch,reuse_attacker):
     """Attacker100 + three toy victims200 + read-only Clean; not full PiW."""
     train,test = Dataset(64),Dataset(4)
     cfg = r.config(tmp_path/'home',tmp_path/'output',device='cpu')
@@ -431,6 +432,16 @@ def test_full_cpu_toy_lifecycle_and_tamper(tmp_path,monkeypatch):
     monkeypatch.setattr(r,'build_model',lambda *_:Tiny())
     monkeypatch.setattr(r,'datasets_for',lambda _:dict(training=train,validation=test))
     r.fit_attacker(plan)
+    if reuse_attacker:
+        native = torch.load(r.attacker_path(plan), map_location='cpu', weights_only=False)
+        frozen = a.FrozenPiWBackTimeTrigger.from_state_dict(native['trigger'])
+        source = historical_attacker(tmp_path,cfg,inputs,frozen=frozen)
+        cfg['attacker_reference'] = str(source)
+        plan['attacker_reference'] = r.attacker_ref.audit(source,cfg,inputs)
+        before = {str(p):r.base.file_sha(p) for p in source.rglob('*') if p.is_file()}
+        monkeypatch.setattr(a,'fit_stream',lambda *_a,**_kw:pytest.fail('attacker was refitted'))
+        reused,_ = r.fit_attacker(plan)
+        assert core._sha(reused.state_dict()) == core._sha(frozen.state_dict())
     for b in r.BACKBONES:
         r.train(plan,b,'backtime')
     for b in r.BACKBONES:
@@ -440,6 +451,8 @@ def test_full_cpu_toy_lifecycle_and_tamper(tmp_path,monkeypatch):
         assert result['clean_reference']['training_started'] is False
         assert not r.cell(plan,b,'clean').exists()
         r.clean_ref.files_match(refs[b])
+    if reuse_attacker:
+        assert before == {str(p):r.base.file_sha(p) for p in source.rglob('*') if p.is_file()}
     path = r.cell(plan,'hpeli','backtime')/'evaluation.json'
     result = r.read_json(path)
     result['metrics']['mainmetrics']['mean_dce_mm'] += 1
@@ -592,3 +605,192 @@ def test_reference_source_hash_mismatch_is_rejected(tmp_path):
     r.write_json(path,r.signed(m))
     with pytest.raises(ValueError,match='source differs'):
         r.clean_ref.audit(root,'hpeli',cfg,inputs)
+
+
+def historical_attacker(tmp_path,cfg,inputs,*,frozen=None):
+    """Synthetic original-plan fixture; only lifecycle test uses a real toy fit."""
+    folder=tmp_path/'piw_attacker_v1'
+    source=deepcopy(cfg)
+    source.pop('attacker_reference',None)
+    source.pop('clean_references',None)
+    source.update(profile=r.attacker_ref.SOURCE_PROFILE,outdir=str(folder),
+        roles=['clean','backtime'],control_policy='three new matched scratch Clean references; no historical checkpoint imports')
+    source['training_queue']=[dict(backbone=b,role=role) for b in r.BACKBONES for role in ('clean','backtime')]
+    hashes={'ATKBackd/'+n:r.base.file_sha(r.HERE/n) for n in r.attacker_ref.SCIENTIFIC_SOURCES}
+    hashes['ATKBackd/run_piw_backtime_three_backbones.py']=sorted(r.attacker_ref.RUNNER_HASHES)[0]
+    manifest=r.signed(dict(profile=source['profile'],cfg=source,sources=hashes,inputs=inputs,runtime={'historical':True}))
+    r.write_json(folder/'plan.json',manifest)
+    execution=dict(device='historical CPU fixture')
+    receipt=dict(profile=source['profile'],plan_sha256=manifest['plan_sha256'],execution=execution,
+        surrogate_batch=64,generator_batch=1,checkpoints_saved=False,training_launched=False,
+        victim_smokes=[dict(backbone=b,role=role,physical_batch=32,
+            effective_batch=32*r.RECIPES[b]['accumulation'],loss=.1)
+            for b in r.BACKBONES for role in ('clean','backtime')])
+    r.write_json(folder/'capacity.json',{**receipt,'receipt_sha256':r.base.object_sha(receipt)})
+    n=inputs['splits']['train_data']['retained_count']
+    if frozen is None:
+        k,steps=int(.1*n),int(np.ceil(n/64))
+        diag=dict(fit_profile='full_TRAIN_streaming_author_schedule_PiW14_adaptation',
+            n_fit=n,n_poisoned_fit=k,poison_indices=list(range(k)),fit_epochs=100,clean_warmup_epochs=11,
+            surrogate_updates=steps*100,generator_updates=k*89,test_used=False,
+            dataset_sha256=inputs['fingerprint'],fresh_surrogate_template_unchanged=True,
+            history=[dict(epoch=i+1,epoch_index=i,phase='alternating' if i>10 else 'clean_warmup',
+                surrogate_updates=steps*(i+1),generator_updates=k*max(0,i-10),
+                surrogate_smooth_l1=.1,generator_target_mse=.2 if i>10 else None,
+                generator_dc_sum=.001 if i>10 else None) for i in range(100)])
+        original=trigger()
+        frozen=a.FrozenPiWBackTimeTrigger(original.config,original.generator,diag,selection_scores=torch.ones(n))
+    blob=dict(plan_sha256=manifest['plan_sha256'],execution=execution,
+        doses=np.random.default_rng(42).uniform(.2,1.,n).astype(np.float32),trigger=frozen.state_dict())
+    (folder/'attacker').mkdir(exist_ok=True)
+    torch.save(blob,folder/'attacker/trigger.pt')
+    r.write_json(folder/'attacker/provenance.json',frozen.provenance())
+    return folder
+
+
+def test_completed_attacker_import_is_read_only_no_fit_gpu_or_test(tmp_path,monkeypatch):
+    data=Dataset(64)
+    cfg=r.config(tmp_path/'home',tmp_path/'new',device='cpu')
+    inputs=toy_inputs(data,data)
+    folder=historical_attacker(tmp_path,cfg,inputs)
+    before={str(p):r.base.file_sha(p) for p in folder.rglob('*') if p.is_file()}
+    forbidden=lambda *_a,**_kw:pytest.fail('import touched fitting/GPU/TEST/model')
+    monkeypatch.setattr(a,'fit_stream',forbidden)
+    monkeypatch.setattr(np,'load',forbidden)
+    monkeypatch.setattr(r.base,'_setup_execution',forbidden)
+    monkeypatch.setattr(r,'datasets_for',forbidden)
+    monkeypatch.setattr(r,'build_model',forbidden)
+    cfg['attacker_reference']=str(folder)
+    record=r.attacker_ref.audit(folder,cfg,inputs)
+    plan=dict(cfg=cfg,inputs=inputs,attacker_reference=record)
+    op,doses=r.fit_attacker(plan)
+    source=torch.load(folder/'attacker/trigger.pt',map_location='cpu',weights_only=False)
+    assert core._sha(op.state_dict()) == core._sha(source['trigger'])
+    np.testing.assert_array_equal(doses,source['doses'])
+    assert record['training_started'] is False
+    assert r.attacker_path(plan)==folder/'attacker/trigger.pt'
+    assert not Path(cfg['outdir']).exists()
+    assert before == {str(p):r.base.file_sha(p) for p in folder.rglob('*') if p.is_file()}
+
+
+@pytest.mark.parametrize('mutation',['profile','plan_hash','target','rho','seed','inputs','outdir',
+    'runner','source','capacity_hash','capacity_parent','execution','doses',
+    'frozen_hash','partial','history','counter','recipients','nonfinite','provenance'])
+def test_foreign_or_partial_attacker_import_rejected(tmp_path,mutation):
+    data=Dataset(64)
+    cfg=r.config(tmp_path/'home',tmp_path/'new',device='cpu')
+    inputs=toy_inputs(data,data)
+    folder=historical_attacker(tmp_path,cfg,inputs)
+    manifest=r.read_json(folder/'plan.json')
+    receipt=r.read_json(folder/'capacity.json')
+    blob=torch.load(folder/'attacker/trigger.pt',map_location='cpu',weights_only=False)
+    if mutation in ('profile','plan_hash','target','rho','seed','inputs','outdir','runner','source'):
+        manifest.pop('plan_sha256')
+        if mutation=='profile': manifest['profile']='MM-Fi'
+        if mutation=='target': manifest['cfg']['target']['pivot']=1
+        if mutation=='rho': manifest['cfg']['rho']=.2
+        if mutation=='seed': manifest['cfg']['seed']=43
+        if mutation=='inputs': manifest['inputs']['splits']['train_data']['ordered_names'].reverse()
+        if mutation=='outdir': manifest['cfg']['outdir']=str(tmp_path/'different source')
+        if mutation=='runner': manifest['sources']['ATKBackd/run_piw_backtime_three_backbones.py']='a'*64
+        if mutation=='source': manifest['sources']['ATKBackd/attack/backtime_mmfi.py']='a'*64
+        manifest=r.signed(manifest)
+        if mutation=='plan_hash': manifest['plan_sha256']='a'*64
+        r.write_json(folder/'plan.json',manifest)
+    elif mutation in ('capacity_hash','capacity_parent'):
+        if mutation=='capacity_parent': receipt['plan_sha256']='a'*64
+        receipt.pop('receipt_sha256')
+        receipt['receipt_sha256']=r.base.object_sha(receipt) if mutation=='capacity_parent' else 'a'*64
+        r.write_json(folder/'capacity.json',receipt)
+    elif mutation=='provenance':
+        r.write_json(folder/'attacker/provenance.json',{'wrong':True})
+    else:
+        if mutation=='execution': blob['execution']['device']='changed'
+        if mutation=='doses': blob['doses'][0]=.001
+        frozen=blob['trigger']
+        if mutation=='partial': frozen['diagnostics']['fit_epochs']=99
+        if mutation=='history': frozen['diagnostics']['history'].pop()
+        if mutation=='counter': frozen['diagnostics']['history'][-1]['generator_updates']-=1
+        if mutation=='recipients': frozen['diagnostics']['poison_indices'][0]=len(data)
+        if mutation=='nonfinite': frozen['generator']['conv1'][0,0]=float('nan')
+        frozen.pop('sha256')
+        frozen['sha256']=core._sha(frozen) if mutation!='frozen_hash' else 'a'*64
+        torch.save(blob,folder/'attacker/trigger.pt')
+    with pytest.raises(ValueError):
+        r.attacker_ref.audit(folder,cfg,inputs)
+    assert not Path(cfg['outdir']).exists()
+
+
+def test_attacker_reference_rejects_active_source_and_keeps_lock(tmp_path):
+    import os
+    root=tmp_path/'source'
+    r.write_json(root/'runner.lock',dict(pid=os.getpid(),token='owned'))
+    with pytest.raises(ValueError,match='still active'):
+        r.attacker_ref.require_idle(root)
+    assert r.read_json(root/'runner.lock')['token']=='owned'
+
+
+def test_stopped_source_stale_lock_is_kept_read_only(tmp_path):
+    root=tmp_path/'source'
+    r.write_json(root/'runner.lock',dict(pid=2147483647,token='stale-preserved'))
+    r.attacker_ref.require_idle(root)
+    assert r.read_json(root/'runner.lock')['token']=='stale-preserved'
+
+
+def test_attacker_reference_missing_audit_never_falls_back_to_fit(tmp_path,monkeypatch):
+    cfg=r.config(tmp_path/'home',tmp_path/'new',device='cpu',attacker_reference=tmp_path/'old')
+    monkeypatch.setattr(a,'fit_stream',lambda *_a,**_kw:pytest.fail('refit'))
+    monkeypatch.setattr(r,'capacity',lambda *_:pytest.fail('GPU called'))
+    with pytest.raises(ValueError,match='no refit fallback'):
+        r.fit_attacker(dict(cfg=cfg))
+
+
+def test_attacker_reference_tamper_and_overlapping_output_rejected(tmp_path):
+    data=Dataset(64)
+    cfg=r.config(tmp_path/'home',tmp_path/'new',device='cpu')
+    inputs=toy_inputs(data,data)
+    folder=historical_attacker(tmp_path,cfg,inputs)
+    record=r.attacker_ref.audit(folder,cfg,inputs)
+    other=deepcopy(cfg)
+    other['outdir']=str(folder/'nested')
+    with pytest.raises(ValueError,match='separate'):
+        r.attacker_ref.audit(folder,other,inputs)
+    with (folder/'attacker/trigger.pt').open('ab') as stream:
+        stream.write(b'tampered')
+    with pytest.raises(ValueError,match='Historical attacker changed'):
+        r.attacker_ref.load(record,cfg,inputs)
+
+
+def test_import_preflight_freezes_origin_and_rechecks_on_resume(tmp_path,monkeypatch):
+    data=Dataset(64)
+    cfg=r.config(tmp_path/'home',tmp_path/'new',device='cpu')
+    inputs=toy_inputs(data,data)
+    for split,entry in inputs['splits'].items():
+        path=Path(cfg['dataset_root'])/split/(split+'_list.txt')
+        path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_text('\n'.join(entry['ordered_names']),encoding='utf-8')
+        entry.update(official_list_sha256=r.base.file_sha(path),files=[])
+    inputs['fingerprint']=r.base.object_sha(inputs['splits'])
+    folder=historical_attacker(tmp_path,cfg,inputs)
+    cfg=r.config(tmp_path/'home',tmp_path/'new',device='cpu',attacker_reference=folder)
+    for b in r.BACKBONES:
+        historical_clean(tmp_path,b,cfg,inputs,data)
+    monkeypatch.setattr(r.base,'audit_inputs',lambda _:(inputs,{}))
+    monkeypatch.setattr(r,'build_model',lambda *_:Tiny())
+    plan=r.preflight(cfg)
+    assert r.load_plan(cfg)==plan
+    assert plan['attacker_reference']['source_run']==str(folder)
+    assert not (Path(cfg['outdir'])/'attacker').exists()
+    with (folder/'attacker/provenance.json').open('ab') as stream:
+        stream.write(b' ')
+    with pytest.raises(ValueError,match='Historical attacker changed'):
+        r.load_plan(cfg)
+
+
+def test_import_inspect_accepts_spaces_without_data_or_writes(tmp_path,monkeypatch,capsys):
+    monkeypatch.setattr(r.attacker_ref,'audit',lambda *_:pytest.fail('inspect opened attacker'))
+    r.main(['--data-home',str(tmp_path/'home'),'--outdir',str(tmp_path/'out'),
+            '--attacker-reference',str(tmp_path/'old run with spaces')])
+    cfg=json.loads(capsys.readouterr().out)
+    assert cfg['attacker_reference']==str(tmp_path/'old run with spaces')
+    assert not (tmp_path/'out').exists()
