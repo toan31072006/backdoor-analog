@@ -1,4 +1,98 @@
-# PiW BackTime: HPE-Li → WiFlow → MetaFi++ — reuse Clean + attacker v3, 2026-11-10
+# PiW BackTime v4: train trước, Clean chỉ để đánh giá — 2026-11-10
+
+## Material Passport — hiện hành
+
+- Người dùng yêu cầu tận dụng phần đã chạy, không đợi đủ ba Clean, giữ thứ tự
+  **HPE-Li → WiFlow → MetaFi++**. Một worker PiW, không can thiệp job MM-Fi.
+- Attacker PiW v1 đã được người dùng xác nhận đủ100/100 và có trigger.pt.
+  Đọc trực tiếp attacker nguồn, không fit lại hoặc chuyển trọng số surrogate
+  sang victim. Các hash/plan/poison IDs/doses/source audits vẫn bắt buộc.
+- Clean HPE-Li v3 đã qua preflight trên Vân theo output người dùng: final199,
+  MPJPE92.370288mm/PA58.454966mm. Đây không phải assistant replay TEST mới.
+- Clean không là dependency để train. Thiếu/không tương thích/nhập nhằng khi
+  tự dò chỉ ghi **EVALUATION_PENDING_CLEAN**. Nguồn chỉ rõ bằng tham số nhưng
+  sai vẫn báo lỗi; không tự chọn bản khác, đổi recipe hoặc train Clean mới.
+- Ba victim BackTime độc lập, scratch200/final199, cùng recipe đã khóa bên
+  dưới. Zero Clean training. Target vẫn pivot7->[11,13]/hip-axis40d, không
+  đổi sang payload trunk Bend. Không sửa bài hoặc artifact lịch sử.
+
+## Chạy một lần trên Vân
+
+Dùng checkout/output **v4 mới trên U:** vì C: đã đầy. Không pull vào checkout
+đang chạy hoặc dùng output v1/v2/v3 đã khóa. Chỉ dùng lệnh clone sau khi bản v4
+đã được xác nhận push; cập nhật local chưa làm thay đổi GitHub/máy Vân.
+
+```powershell
+& {
+    $ErrorActionPreference = 'Stop'
+    New-Item -ItemType Directory -Path 'U:\backdooranalog\code' -Force | Out-Null
+    New-Item -ItemType Directory -Path 'U:\backdooranalog\setup_tmp' -Force | Out-Null
+    $env:TEMP = 'U:\backdooranalog\setup_tmp'
+    $env:TMP = 'U:\backdooranalog\setup_tmp'
+    $piwRepo = 'U:\backdooranalog\code\PiWTrainFirstV4_' + [guid]::NewGuid().ToString('N').Substring(0,8)
+    git clone --depth 1 --branch main --single-branch https://github.com/toan31072006/backdoor-analog.git $piwRepo
+    if ($LASTEXITCODE -ne 0) { throw 'Clone failed; stop here.' }
+    Write-Output "PiW v4 checkout: $piwRepo"
+    & "$piwRepo\remote_tools\Start-PiWBackTimeThreeBackbones.ps1" -Mode Start `
+        -DataHome 'C:\Users\Van\backdooranalog' `
+        -AttackerRun 'U:\backdooranalog\runs\piw_backtime_three_backbones_s42_v1' `
+        -CleanHPELi 'C:\Users\Van\backdooranalog\runs\piw_hpeli_body_axis_s42_lr001_v3'
+}
+```
+
+**Start là lệnh chạy train rõ ràng**, không phải Inspect: CPU/data/source audit
+→ disposable GPU capacity smoke nếu chưa có receipt → reuse frozen attacker
+→ HPE-Li200 → WiFlow200 → MetaFi++200. Giữ terminal mở và Windows không sleep.
+Không retry OOM, giảm batch, kill job khác hoặc fit lại khi attacker import lỗi.
+Capacity smoke không phải một run Clean200/attacker100 mới. Receipt đã có được
+kiểm binding/execution, không tự chạy lại. Inspect vẫn là mặc định không train.
+
+Output mặc định: `U:\backdooranalog\runs\piw_backtime_three_backbones_train_first_s42_v4`.
+Resume dùng cùng checkout và options, gọi lại **Start**: final199 hợp lệ được
+skip trước khi dựng model/G/dataloader; partial checkpoint resume model,
+optimizer và RNG đúng epoch kế tiếp. Không migrate hoặc relabel victim v1/v3
+thành v4. Không xóa lock để vượt guard; stale lock của attacker v1 giữ nguyên.
+
+## Đánh giá và thêm Clean sau — không train lại victim
+
+Giữ nguyên deferred-TEST: chỉ mở prediction arrays/chấm TEST sau **cả ba victim
+mới final199**. Có Clean nào đã audit thì đánh giá backbone đó. Ví dụ chỉ có
+Clean HPE-Li: vẫn train đủ ba, evaluate HPE-Li, báo hai mục còn chờ và
+`ALL_THREE_TRAINED_EVALUATION_PARTIAL`, không gọi là full comparison COMPLETE.
+`ALL_THREE_COMPLETE` chỉ in khi đủ ba kết quả đã replay.
+
+Khi tìm được Clean WiFlow/MetaFi++ tương thích, dùng helper **cùng checkout**:
+
+```powershell
+# $piwRepo là checkout v4 đã in ở trên; RUN_DIR là thư mục run Clean gốc.
+& "$piwRepo\remote_tools\Start-PiWBackTimeThreeBackbones.ps1" -Mode Evaluate `
+    -DataHome 'C:\Users\Van\backdooranalog' `
+    -CleanWiFlow 'RUN_DIR_CLEAN_WIFLOW' -CleanMetaFi 'RUN_DIR_CLEAN_METAFI'
+```
+
+Evaluate chỉ load/evaluate, không gọi fit/train. Late refs audit cùng full
+inputs/source/recipe/final199/weights rồi lưu sidecar riêng
+`evaluation_references/<backbone>.json` gắn hash training plan; không sửa plan,
+victim hoặc kết quả đã đánh giá. Không thay thế một reference đã freeze hoặc
+tự chọn lại nguồn theo TEST score. Thiếu nguồn vẫn PENDING, không tự train bù.
+Verify replay các kết quả có Clean, giữ rõ mục thiếu. Status chỉ đọc metadata.
+
+## Kiểm thử v4
+
+**189 passed**, exit0,259.04s: 98PiW +91hồi quy BackTime/MM-Fi/transfer;
+bốn cảnh báo CPU pin_memory dự kiến. Gồm ba backbone thật CPU backward,
+native toy attacker100 reuse, chỉ có Clean HPE-Li vẫn train ba toy200,
+không refit/train Clean, skip final199 trước model/G/data, exact resume
+epoch73 (model/optimizer/RNG), thêm Clean sau mà không đổi plan/victim/kết quả,
+và từ chối binding/tamper. PowerShell AST, Inspect không ghi output, và guard
+Start không có AttackerRun đạt. Không phải full-data/CUDA/efficacy trên Vân;
+Start vẫn phải audit attacker nguồn và kiểm tra capacity thật. MM-Fi core và
+manuscript giữ nguyên.
+
+<details>
+<summary>Lịch sử v3 bên dưới — không dùng lệnh cũ để chạy v4</summary>
+
+## PiW BackTime v3 — ghi chú lịch sử, đã được v4 thay thế về Clean dependency
 
 ## Material Passport
 
@@ -285,3 +379,5 @@ checkpoint thật trên Vân hoặc xác nhận compatibility của ba Clean th�
 Kết quả cuối: **178 passed**, exit0,135.29s (87PiW +91hồi quy), bốn CPU
 pin_memory warnings dự kiến. PowerShell AST/Inspect có AttackerRun chứa dấu
 cách và FindClean pass, không ghi output. MM-Fi source/manuscript không đổi.
+
+</details>

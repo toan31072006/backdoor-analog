@@ -2,6 +2,50 @@
 
 ## Material Passport
 
+### User correction 2026-11-10: train-first v4, do not wait for three Clean
+
+User confirms: reuse what has already run; order **HPE-Li -> WiFlow ->
+MetaFi++**. Remove the mistaken all-three-Clean prerequisite for victim
+training. New v4 profile/output/idle checkout, not a rewrite of v1/v3 plans.
+Reuse completed PiW v1 attacker100 read-only with all existing strict audits;
+no refit, optimizer/RNG migration or surrogate weights in victims. User's
+terminal HPE-Li Clean v3 preflight passed final199/seed42/full inputs/source/
+weights/recipe; stored MPJPE92.3702880364mm, PA58.4549661776mm. This is user
+output, not a new assistant remote audit/re-inference.
+
+Exactly three scratch BackTime victims200/final199 serial in the fixed order;
+same full PiW split, seed42/rho.1/target/paired doses/attacker and recipes.
+ZERO Clean training. Auto-discovered missing/incompatible/ambiguous Clean
+becomes explicit EVALUATION_PENDING_CLEAN, not a block on training. Explicit
+invalid source paths still error. Freeze compatible available references;
+never silently substitute a different architecture or protocol. Clean files
+are rechecked on evaluation, not a dependency for resuming victim training.
+
+Keep TEST deferred until all three NEW victims final199; evaluate only
+backbones with audited Clean. Report ALL_THREE_TRAINED_EVALUATION_PARTIAL if
+any source is missing, not full comparison COMPLETE. Later Evaluate can audit
+and freeze newly found compatible references in separate immutable sidecars
+bound to training plan; no plan/checkpoint/result rewrites, fit/train or TEST
+score selection. Existing evaluations are verified and reused unchanged.
+
+Start is an explicit opt-in: audit, capacity smoke if no receipt, then train
+and evaluate available controls. It never retries a failed stage. Existing
+valid capacity is checked, not repeated; final199 victims are checked/skipped
+before model/G/data construction; partial victims resume model/optimizer/RNG.
+Do not pull into an active checkout, touch MM-Fi jobs/source/manuscript,
+delete old locks or clean C:. New code/temp/output on U:. Setup/test and prior
+publication workflow continue; no assistant remote launch is implied.
+
+V4 final local gate: **189 passed**, exit0,259.04s (98PiW +91historical
+BackTime/MM-Fi/runner/transfer), four expected CPU pin_memory warnings.
+Includes real three-backbone CPU backward, native toy attacker100 reuse,
+HPE-Li-only/no Clean queue, no-refit/no-Clean-train, three toy200 victims,
+final199 skip before model/G/data, exact epoch73 optimizer/RNG/model resume,
+late reference binding/tamper and unchanged historical/victim/evaluation
+files. PowerShell AST, Inspect/no output writes and empty-attacker Start
+guard passed. CPU fixtures are not full PiW/CUDA compatibility or efficacy.
+MM-Fi core blob0f5e7b99 and manuscript SHA256C48C3A8C remain unchanged.
+
 ### Transition 2026-11-10: stopped PiW v1, reuse completed attacker and Clean
 
 User supplied live Windows output: PiW runner PID26052 in

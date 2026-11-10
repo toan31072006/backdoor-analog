@@ -2,7 +2,8 @@
 
 New serial experiment: HPE-Li -> WiFlow -> MetaFi++, BackTime victims only.
 Reuse audited historical Clean controls read-only; no MM-Fi job management.
-Prepare audits data and runs disposable capacity smokes; Launch is separate.
+Missing Clean delays only evaluation, never victim training. Start explicitly
+audits, capacity-checks and runs the queue; Inspect remains read-only/default.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ import piw_backtime_clean_reference as clean_ref
 import piw_backtime_attacker_reference as attacker_ref
 
 HERE = Path(__file__).resolve().parent
-PROFILE = 'piw_backtime_hpeli_shared_three_backbones_reuse_clean_attacker_s42_v3'
+PROFILE = 'piw_backtime_hpeli_shared_three_backbones_train_first_s42_v4'
 BACKBONES = ('hpeli', 'wiflow', 'metafiplusplus')
 GRID = [0., .2, .4, .6, .8, 1.]
 RECIPES = {
@@ -54,7 +55,7 @@ def config(data_home, outdir, dataset=None, device='cuda:0', clean_references=No
         execution_policy='one serial PiW worker: HPE-Li -> WiFlow -> MetaFi++; may coexist with the existing MM-Fi WiFlow job after capacity gate; no automatic retry/kill/fallback',
         attacker_policy=('reuse completed source-pinned PiW v1 attacker read-only; no refit or optimizer/RNG/victim import'
                          if attacker_reference else 'fresh HPE-Li TRAIN surrogate; shared frozen attacker and adaptive IDs/doses for three scratch victims'),
-        control_policy='read-only audited historical Clean references; auto-discover metadata in DataHome/runs and output parent when unspecified; freeze unique matching source without TEST-score selection; never train Clean; missing/mismatched/ambiguous reference is an error',
+        control_policy='read-only audited historical Clean references; freeze unique compatible sources without TEST-score selection; missing/incompatible/ambiguous auto-discovery delays only evaluation; explicit invalid sources are errors; never train Clean; late references use separate immutable evaluation sidecars',
         interpretation='exploratory PiW14 digital-amplitude BackTime adaptation, seed42, not exact forecasting reproduction or complete paper table')
     return json.loads(json.dumps(cfg, allow_nan=False))
 
@@ -120,36 +121,38 @@ def preflight(cfg):
         raise ValueError('Unbound checkpoints found; choose a new output')
     found = clean_ref.discover(cfg)
     candidates = {b: [cfg['clean_references'][b]] if cfg['clean_references'][b] else found[b] for b in BACKBONES}
-    missing = [b for b in BACKBONES if not candidates[b]]
-    if missing:
-        raise ValueError('No historical Clean found for ' + ', '.join(missing)
-                         + '; use mode discover or --clean-reference BACKBONE=RUN_DIR'
-                         + '; Clean will NOT be retrained automatically')
     inputs, datasets = base.audit_inputs(cfg)
     for dataset in datasets.values():
         for row in dataset.items:
             target_pose(dataset.load_pose(row['kpt']), 1.)
     attacker_reference = (attacker_ref.audit(cfg['attacker_reference'], cfg, inputs)
                           if cfg['attacker_reference'] else None)
-    references = {}
+    references, reference_status = dict.fromkeys(BACKBONES), {}
     for b in BACKBONES:
         valid, errors = [], []
         for folder in candidates[b]:
             try:
-                valid.append(clean_ref.audit(folder, b, cfg, inputs))
-            except (ValueError, OSError, KeyError) as exc:
+                reference = clean_ref.audit(folder, b, cfg, inputs)
+                model = build_model(b, 'cpu')
+                model.load_state_dict(clean_ref.load(reference)['model'], strict=True)
+                del model
+                valid.append(reference)
+            except (ValueError, OSError, KeyError, RuntimeError) as exc:
                 errors.append(f'{folder}: {exc}')
         if len(valid) != 1:
-            raise ValueError(f'{b}: expected ONE matching historical Clean, found {len(valid)}. '
-                             f'Valid: {[v["manifest"] for v in valid]}. Rejected: {errors}. '
-                             'Specify --clean-reference to disambiguate; no Clean retraining.')
-        references[b] = valid[0]
-    for b, reference in references.items():
-        model = build_model(b, 'cpu')
-        model.load_state_dict(clean_ref.load(reference)['model'], strict=True)
-        del model
+            message = (f'{b}: expected ONE matching historical Clean, found {len(valid)}. '
+                       f'Valid: {[v["manifest"] for v in valid]}. Rejected: {errors}. '
+                       'No Clean retraining.')
+            if cfg['clean_references'][b]:
+                raise ValueError(message)
+            reference_status[b] = dict(status='EVALUATION_PENDING_CLEAN', detail=message)
+            print(message + ' Victim training is NOT blocked.', flush=True)
+        else:
+            references[b] = valid[0]
+            reference_status[b] = dict(status='READY', manifest=valid[0]['manifest'])
     record = signed(dict(profile=PROFILE, cfg=cfg, sources=sources(),
                          runtime=runtime(), inputs=inputs, clean_references=references,
+                         clean_reference_status=reference_status,
                          attacker_reference=attacker_reference))
     write_json(plan_path(cfg), record)
     return record
@@ -167,11 +170,12 @@ def load_plan(cfg, full_hash=False):
             or saved.get('inputs', {}).get('fingerprint') != base.object_sha(saved['inputs']['splits'])):
         raise ValueError('Plan/config/source/runtime/input binding changed')
     if set(saved.get('clean_references', {})) != set(BACKBONES):
-        raise ValueError('Missing historical Clean reference audit; no training fallback')
+        raise ValueError('Invalid historical Clean reference registry')
     for b, record in saved['clean_references'].items():
-        if record.get('backbone') != b:
+        if record is not None and record.get('backbone') != b:
             raise ValueError('Historical Clean reference backbone changed')
-        clean_ref.files_match(record)
+        # Clean files are an evaluation dependency, not a training dependency.
+        # Their frozen hashes are rechecked before any evaluation uses them.
     if cfg['attacker_reference']:
         reference = saved.get('attacker_reference')
         if not reference or reference.get('source_run') != cfg['attacker_reference']:
@@ -418,13 +422,67 @@ def cell(plan, backbone, role):
     return Path(plan['cfg']['outdir']) / 'victims' / backbone / role
 
 
+def reference_path(plan, backbone):
+    if backbone not in BACKBONES:
+        raise ValueError('Unknown Clean backbone')
+    return Path(plan['cfg']['outdir']) / 'evaluation_references' / (backbone + '.json')
+
+
+def evaluation_reference(plan, backbone):
+    """Get a frozen reference, never rediscover or select by TEST results."""
+    path = reference_path(plan, backbone)
+    original = plan.get('clean_references', {}).get(backbone)
+    if not path.exists():
+        return original
+    record = read_json(clean_ref.regular(path))
+    unsigned = {k: v for k, v in record.items() if k != 'plan_sha256'}
+    reference = record.get('reference', {})
+    if (record.get('plan_sha256') != base.object_sha(unsigned)
+            or record.get('profile') != PROFILE
+            or record.get('training_plan_sha256') != plan['plan_sha256']
+            or record.get('backbone') != backbone or reference.get('backbone') != backbone
+            or original is not None):
+        raise ValueError('Late Clean reference binding changed or shadows the training plan')
+    return reference
+
+
+def require_trained(plan):
+    # Keep the original deferred-TEST contract: all three final199 first.
+    for backbone in BACKBONES:
+        checkpoint(plan, backbone, 'backtime', final=True)
+
+
+def register_evaluation_reference(plan, backbone, folder):
+    """Attach a compatible Clean AFTER training, without changing plan/victims."""
+    require_trained(plan)
+    current = evaluation_reference(plan, backbone)
+    if current is not None:
+        if Path(folder).resolve() != Path(current['manifest']).parent.resolve():
+            raise ValueError('Clean reference is already frozen; cannot replace it')
+        clean_ref.files_match(current)
+        return current
+    reference = clean_ref.audit(folder, backbone, plan['cfg'], plan['inputs'])
+    model = build_model(backbone, 'cpu')
+    model.load_state_dict(clean_ref.load(reference)['model'], strict=True)
+    del model
+    path = reference_path(plan, backbone)
+    if (cell(plan, backbone, 'backtime') / 'evaluation.json').exists():
+        raise ValueError('Cannot attach a different Clean to an existing evaluation')
+    write_json(path, signed(dict(profile=PROFILE, training_plan_sha256=plan['plan_sha256'],
+                                backbone=backbone, reference=reference)))
+    return evaluation_reference(plan, backbone)
+
+
 def checkpoint(plan, backbone, role, final=False):
     import torch
     from attack.backtime_mmfi import _sha
     if role == 'clean':
         if backbone not in BACKBONES:
             raise ValueError('Unknown Clean backbone')
-        return clean_ref.load(plan['clean_references'][backbone])
+        reference = evaluation_reference(plan, backbone)
+        if reference is None:
+            raise ValueError(f'{backbone}: EVALUATION_PENDING_CLEAN; never train a Clean fallback')
+        return clean_ref.load(reference)
     blob = torch.load(cell(plan, backbone, role)/'checkpoint.pt', map_location='cpu', weights_only=False)
     value = dict(blob)
     claimed = value.pop('sha256', None)
@@ -471,21 +529,26 @@ def train(plan, backbone, role):
     from attack.backtime_mmfi import _sha
     cfg = plan['cfg']
     execution = capacity(plan)
+    folder = cell(plan, backbone, role)
+    path, start, resume = folder/'checkpoint.pt', 0, None
+    if path.exists():
+        resume = checkpoint(plan, backbone, role)
+        if resume['epoch'] == 199:
+            print(f'SKIP_TRAINED: {backbone}/backtime final199 verified; no retraining', flush=True)
+            return
     trigger, doses = load_attacker(plan)
     seed(cfg['device'])
     model = build_model(backbone, cfg['device'])
     opt = optimizer(model, backbone)
     data = datasets_for(plan)['training']
     data = Pairs(data, trigger.training_indices, doses)
-    folder = cell(plan, backbone, role)
     folder.mkdir(parents=True, exist_ok=True)
-    path, start = folder/'checkpoint.pt', 0
-    if path.exists():
-        blob = checkpoint(plan, backbone, role)
-        model.load_state_dict(blob['model'], strict=True)
-        opt.load_state_dict(blob['optimizer'])
-        base._restore_rng(blob['rng'], cfg['device'])
-        start = blob['epoch']+1
+    if resume is not None:
+        model.load_state_dict(resume['model'], strict=True)
+        opt.load_state_dict(resume['optimizer'])
+        base._restore_rng(resume['rng'], cfg['device'])
+        start = resume['epoch']+1
+        print(f'RESUME: {backbone}/backtime next epoch={start}/199', flush=True)
     loader = DataLoader(data, batch_size=32, shuffle=True, num_workers=0, drop_last=True)
     attacker_hash = base.file_sha(attacker_path(plan))
     for epoch in range(start, 200):
@@ -519,9 +582,9 @@ def evaluate(plan, backbone):
     import torch
     from piw_v2_adapter import measure_predictions, target_pose
     from run_piw_hpeli_lr_control import atomic_npz
-    for b in BACKBONES:
-        for role in ('clean','backtime'):
-            checkpoint(plan,b,role,final=True)
+    require_trained(plan)
+    checkpoint(plan, backbone, 'clean', final=True)
+    reference = evaluation_reference(plan, backbone)
     folder = cell(plan,backbone,'backtime')
     if (folder/'evaluation.json').exists():
         return verify_evaluation(plan,backbone)
@@ -543,7 +606,7 @@ def evaluate(plan, backbone):
         del model
         if cfg['device'].startswith('cuda:'):
             torch.cuda.empty_cache()
-    reference_audit = clean_ref.replay(plan['clean_references'][backbone], truth, names.tolist(), grids['clean'][:,0])
+    reference_audit = clean_ref.replay(reference, truth, names.tolist(), grids['clean'][:,0])
     metrics = measure_predictions(truth, grids['backtime'][:,0], grids['backtime'], grids['clean'][:,0], grids['clean'])
     targets = np.stack([target_pose(truth,d) for d in GRID],axis=1)
     residual = (grids['backtime'][:,:, [11,13]]-grids['backtime'][:,0:1,[11,13]])-(targets[:,:,[11,13]]-truth[:,None,[11,13]])
@@ -552,10 +615,11 @@ def evaluate(plan, backbone):
         displacement_residuals=residual)
     result = dict(profile=PROFILE, status='COMPLETE', plan_sha256=plan['plan_sha256'],backbone=backbone,
                   metrics=metrics, clean_reference=reference_audit,
+                  clean_reference_binding_sha256=base.object_sha(reference),
                   attacker_reference=plan.get('attacker_reference'), artifacts={
                       'predictions.npz':base.file_sha(folder/'predictions.npz'),
                       'checkpoint.pt':base.file_sha(folder/'checkpoint.pt'),
-                      'clean_checkpoint.pt':base.file_sha(plan['clean_references'][backbone]['checkpoint']),
+                      'clean_checkpoint.pt':base.file_sha(reference['checkpoint']),
                       'trigger.pt':base.file_sha(attacker_path(plan))})
     write_json(folder/'evaluation.json',result)
     return verify_evaluation(plan,backbone)
@@ -564,12 +628,18 @@ def evaluate(plan, backbone):
 def verify_evaluation(plan, backbone):
     from piw_v2_adapter import measure_predictions, target_pose
     from run_piw_hpeli_lr_control import replay_equal
+    require_trained(plan)
+    reference = evaluation_reference(plan, backbone)
+    if reference is None:
+        raise ValueError(f'{backbone}: EVALUATION_PENDING_CLEAN')
+    clean_ref.files_match(reference)
     folder = cell(plan,backbone,'backtime')
     result = read_json(folder/'evaluation.json')
     paths = {'predictions.npz':folder/'predictions.npz', 'checkpoint.pt':folder/'checkpoint.pt',
-             'clean_checkpoint.pt':Path(plan['clean_references'][backbone]['checkpoint']),'trigger.pt':attacker_path(plan)}
+             'clean_checkpoint.pt':Path(reference['checkpoint']),'trigger.pt':attacker_path(plan)}
     if (result.get('profile') != PROFILE or result.get('status') != 'COMPLETE'
             or result.get('backbone') != backbone or result.get('plan_sha256') != plan['plan_sha256']
+            or result.get('clean_reference_binding_sha256') != base.object_sha(reference)
             or result.get('artifacts') != {k:base.file_sha(p) for k,p in paths.items()}):
         raise ValueError('Evaluation binding/artifact changed')
     with np.load(folder/'predictions.npz',allow_pickle=False) as z:
@@ -586,16 +656,35 @@ def verify_evaluation(plan, backbone):
         if not np.array_equal(residual,z['displacement_residuals']):
             raise ValueError('Saved displacement residuals changed')
         metrics = measure_predictions(truth,z['predictions'][:,0],z['predictions'],z['reference_predictions'][:,0],z['reference_predictions'])
-        reference_audit = clean_ref.replay(plan['clean_references'][backbone], truth, z['names'].tolist(), z['reference_predictions'][:,0])
+        reference_audit = clean_ref.replay(reference, truth, z['names'].tolist(), z['reference_predictions'][:,0])
     replay_equal(result['metrics'],metrics)
     replay_equal(result['clean_reference'], reference_audit)
     replay_equal(result.get('attacker_reference'), plan.get('attacker_reference'))
     return result
 
 
+def evaluate_available(plan, references=None, verify_only=False):
+    require_trained(plan)
+    for backbone, folder in (references or {}).items():
+        register_evaluation_reference(plan, backbone, folder)
+    complete, pending = [], []
+    for backbone in BACKBONES:
+        if evaluation_reference(plan, backbone) is None:
+            pending.append(backbone)
+            print(f'EVALUATION_PENDING_CLEAN: {backbone}; victim saved, no retraining', flush=True)
+            continue
+        result = verify_evaluation(plan, backbone) if verify_only else evaluate(plan, backbone)
+        complete.append(backbone)
+        print(json.dumps({backbone:result['metrics']['mainmetrics']}), flush=True)
+    summary = dict(training_complete=True, evaluated=complete, evaluation_pending_clean=pending)
+    print(json.dumps(summary), flush=True)
+    print('ALL_THREE_COMPLETE' if not pending else 'ALL_THREE_TRAINED_EVALUATION_PARTIAL', flush=True)
+    return summary
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode',choices=['inspect','discover','check','prepare','launch','status','verify'],default='inspect')
+    parser.add_argument('--mode',choices=['inspect','discover','check','prepare','start','launch','evaluate','status','verify'],default='inspect')
     parser.add_argument('--data-home',required=True)
     parser.add_argument('--dataset')
     parser.add_argument('--outdir',required=True)
@@ -621,30 +710,39 @@ def main(argv=None):
         return
     if args.mode == 'status':
         root = Path(cfg['outdir'])
+        saved = read_json(plan_path(cfg)) if plan_path(cfg).is_file() else None
         print(json.dumps(dict(plan=plan_path(cfg).is_file(), capacity=(root/'capacity.json').is_file(),
             attacker=attacker_path(dict(cfg=cfg)).is_file(),
+            clean_available={b:bool(saved and evaluation_reference(saved,b)) for b in BACKBONES},
+            checkpoints={b:(root/'victims'/b/'backtime/checkpoint.pt').is_file() for b in BACKBONES},
             evaluations={b:(root/'victims'/b/'backtime/evaluation.json').is_file() for b in BACKBONES}),indent=2))
         return
-    if args.mode == 'verify':
-        plan = load_plan(cfg,full_hash=True)
-        print(json.dumps({b:verify_evaluation(plan,b)['metrics']['mainmetrics'] for b in BACKBONES},indent=2))
-        return
     with lock(cfg):
+        if args.mode in ('evaluate','verify'):
+            # New references are evaluation-only inputs, not modifications of
+            # the signed training configuration or checkpoint binding.
+            original = read_json(plan_path(cfg))['cfg']['clean_references']
+            eval_cfg = config(args.data_home,args.outdir,args.dataset,args.device,original,args.attacker_reference)
+            plan = load_plan(eval_cfg,full_hash=True)
+            evaluate_available(plan,references if args.mode=='evaluate' else None,
+                               verify_only=args.mode=='verify')
+            return
         if args.mode in ('check','prepare'):
             plan = preflight(cfg)
             if args.mode == 'prepare':
                 smoke(plan)
             print('CHECK_PASS' if args.mode=='check' else 'PREPARED_NOT_LAUNCHED',flush=True)
             return
-        plan = load_plan(cfg,full_hash=True)
+        plan = preflight(cfg) if args.mode=='start' else load_plan(cfg,full_hash=True)
+        if args.mode=='start' and not (Path(cfg['outdir'])/'capacity.json').exists():
+            smoke(plan)
         capacity(plan)
         trigger,_ = fit_attacker(plan)
         del trigger
         for queued in cfg['training_queue']:
             train(plan,queued['backbone'],queued['role'])
-        for backbone in BACKBONES:
-            print(json.dumps(evaluate(plan,backbone)['metrics']['mainmetrics']),flush=True)
-        print('ALL_THREE_COMPLETE',flush=True)
+        print('ALL_THREE_TRAINED: hpeli -> wiflow -> metafiplusplus, final199',flush=True)
+        evaluate_available(plan)
 
 
 if __name__ == '__main__':

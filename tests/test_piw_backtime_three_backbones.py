@@ -315,7 +315,7 @@ def test_preflight_plan_binding_and_nonempty_output_guards(tmp_path,monkeypatch)
     inputs = dict(splits={},fingerprint=r.base.object_sha({}))
     monkeypatch.setattr(r,'sources',lambda:dict(fixture='a'*64))
     monkeypatch.setattr(r.base,'audit_inputs',lambda _: (inputs,{}))
-    monkeypatch.setattr(r.clean_ref,'audit',lambda _,b,*__:dict(backbone=b))
+    monkeypatch.setattr(r.clean_ref,'audit',lambda _,b,*__:dict(backbone=b,manifest=str(tmp_path/b/'plan.json')))
     monkeypatch.setattr(r.clean_ref,'files_match',lambda _:None)
     monkeypatch.setattr(r.clean_ref,'load',lambda _:dict(model=Tiny().state_dict()))
     monkeypatch.setattr(r,'build_model',lambda *_:Tiny())
@@ -387,6 +387,8 @@ def test_launch_dispatch_is_serial_hpeli_wiflow_metafi_with_no_extra_jobs(tmp_pa
     monkeypatch.setattr(r,'capacity',lambda _:calls.append('capacity'))
     monkeypatch.setattr(r,'fit_attacker',lambda _:(calls.append('attacker'),None))
     monkeypatch.setattr(r,'train',lambda _,b,role:calls.append((b,role)))
+    monkeypatch.setattr(r,'require_trained',lambda _:None)
+    monkeypatch.setattr(r,'evaluation_reference',lambda *_:dict(fixture=True))
     def evaluate(_,b):
         calls.append(('evaluate',b))
         return dict(metrics=dict(mainmetrics={}))
@@ -468,12 +470,16 @@ def test_clean_training_is_rejected_before_any_gpu_or_model_work(monkeypatch):
         r.train({},'hpeli','clean')
 
 
-def test_missing_clean_refs_stop_before_data_audit_or_attacker(tmp_path,monkeypatch):
-    monkeypatch.setattr(r.base,'audit_inputs',lambda _:pytest.fail('expensive data audit called'))
+def test_missing_clean_refs_do_not_block_training_plan_or_open_test(tmp_path,monkeypatch):
+    inputs = dict(splits={},fingerprint=r.base.object_sha({}))
+    monkeypatch.setattr(r.base,'audit_inputs',lambda _:(inputs,{}))
+    monkeypatch.setattr(r,'build_model',lambda *_:pytest.fail('no Clean model needed'))
+    monkeypatch.setattr(np,'load',lambda *_a,**_kw:pytest.fail('TEST arrays opened'))
     cfg = r.config(tmp_path/'home',tmp_path/'output',device='cpu')
-    with pytest.raises(ValueError,match='NOT be retrained'):
-        r.preflight(cfg)
-    assert not r.plan_path(cfg).exists()
+    plan = r.preflight(cfg)
+    assert plan['clean_references'] == dict.fromkeys(r.BACKBONES)
+    assert all(v['status']=='EVALUATION_PENDING_CLEAN' for v in plan['clean_reference_status'].values())
+    assert r.load_plan(cfg)==plan
 
 
 @pytest.mark.parametrize('backbone',r.BACKBONES)
@@ -559,7 +565,7 @@ def test_discovery_is_bounded_metadata_only_and_does_not_use_test_scores(tmp_pat
 
 
 @pytest.mark.parametrize('ambiguous',[False,True])
-def test_preflight_auto_freezes_unique_matching_clean_or_stops_ambiguity(tmp_path,monkeypatch,ambiguous):
+def test_preflight_auto_freezes_unique_clean_or_defers_ambiguous_evaluation(tmp_path,monkeypatch,ambiguous):
     data=Dataset(4)
     cfg=r.config(tmp_path/'home',tmp_path/'output',device='cpu')
     inputs=toy_inputs(data,data)
@@ -574,9 +580,10 @@ def test_preflight_auto_freezes_unique_matching_clean_or_stops_ambiguity(tmp_pat
     monkeypatch.setattr(r.base,'audit_inputs',lambda _:(inputs,{}))
     monkeypatch.setattr(r,'build_model',lambda *_:Tiny())
     if ambiguous:
-        with pytest.raises(ValueError,match='found 2'):
-            r.preflight(cfg)
-        assert not r.plan_path(cfg).exists()
+        plan=r.preflight(cfg)
+        assert plan['clean_references']['hpeli'] is None
+        assert 'found 2' in plan['clean_reference_status']['hpeli']['detail']
+        assert plan['clean_references']['wiflow'] is not None
     else:
         plan=r.preflight(cfg)
         assert set(plan['clean_references'])==set(r.BACKBONES)
@@ -794,3 +801,206 @@ def test_import_inspect_accepts_spaces_without_data_or_writes(tmp_path,monkeypat
     cfg=json.loads(capsys.readouterr().out)
     assert cfg['attacker_reference']==str(tmp_path/'old run with spaces')
     assert not (tmp_path/'out').exists()
+
+
+@pytest.mark.parametrize('invalid_kind',['recipe','weights'])
+def test_incompatible_automatic_clean_is_pending_but_explicit_is_error(tmp_path,monkeypatch,invalid_kind):
+    data=Dataset(4)
+    cfg=r.config(tmp_path/'home',tmp_path/'out',device='cpu')
+    inputs=toy_inputs(data,data)
+    root=historical_clean(tmp_path,'hpeli',cfg,inputs,data,
+        mutate_cfg=(lambda c:c.update(drop_last=False)) if invalid_kind=='recipe' else None)
+    monkeypatch.setattr(r.base,'audit_inputs',lambda _:(inputs,{}))
+    monkeypatch.setattr(r,'build_model',lambda *_:nn.Linear(2,2) if invalid_kind=='weights' else Tiny())
+    plan=r.preflight(cfg)
+    assert plan['clean_references']['hpeli'] is None
+    assert plan['clean_reference_status']['hpeli']['status']=='EVALUATION_PENDING_CLEAN'
+    explicit=r.config(tmp_path/'home',tmp_path/'explicit',device='cpu',clean_references={'hpeli':root})
+    with pytest.raises(ValueError,match='expected ONE'):
+        r.preflight(explicit)
+    assert not r.plan_path(explicit).exists()
+
+
+def test_clean_files_are_not_a_resume_training_dependency(tmp_path,monkeypatch):
+    cfg=r.config(tmp_path/'home',tmp_path/'out',device='cpu')
+    inputs=dict(splits={},fingerprint=r.base.object_sha({}))
+    monkeypatch.setattr(r.base,'audit_inputs',lambda _:(inputs,{}))
+    plan=r.preflight(cfg)
+    plan.pop('plan_sha256')
+    plan['clean_references']['hpeli']=dict(backbone='hpeli',files={'missing.pt':{}})
+    r.write_json(r.plan_path(cfg),r.signed(plan))
+    monkeypatch.setattr(r.clean_ref,'files_match',lambda *_:pytest.fail('Clean blocks training resume'))
+    assert r.load_plan(cfg)['clean_references']['hpeli']['backbone']=='hpeli'
+
+
+@pytest.mark.parametrize('mode',['start','launch'])
+def test_pending_clean_launch_still_trains_all_three_in_order(tmp_path,monkeypatch,capsys,mode):
+    cfg=r.config(tmp_path/'home',tmp_path/'out',device='cpu')
+    plan=dict(cfg=cfg,plan_sha256='f'*64,clean_references=dict.fromkeys(r.BACKBONES))
+    calls=[]
+    monkeypatch.setattr(r,'lock',lambda _:nullcontext())
+    monkeypatch.setattr(r,'preflight',lambda *_:plan)
+    monkeypatch.setattr(r,'load_plan',lambda *_,**__:plan)
+    monkeypatch.setattr(r,'smoke',lambda _:calls.append('smoke'))
+    monkeypatch.setattr(r,'capacity',lambda _:calls.append('capacity'))
+    monkeypatch.setattr(r,'fit_attacker',lambda _:(calls.append('attacker'),None))
+    monkeypatch.setattr(r,'train',lambda _,b,role:calls.append((b,role)))
+    monkeypatch.setattr(r,'require_trained',lambda _:None)
+    monkeypatch.setattr(r,'evaluate',lambda *_:pytest.fail('missing Clean evaluation attempted'))
+    r.main(['--mode',mode,'--data-home',str(tmp_path/'home'),'--outdir',str(tmp_path/'out'),'--device','cpu'])
+    assert calls==(['smoke'] if mode=='start' else [])+['capacity','attacker',
+        ('hpeli','backtime'),('wiflow','backtime'),('metafiplusplus','backtime')]
+    output=capsys.readouterr().out
+    assert 'ALL_THREE_TRAINED_EVALUATION_PARTIAL' in output
+    assert 'ALL_THREE_COMPLETE' not in output
+
+
+def test_start_does_not_repeat_existing_capacity_or_retry_failure(tmp_path,monkeypatch):
+    cfg=r.config(tmp_path/'home',tmp_path/'out',device='cpu')
+    r.write_json(Path(cfg['outdir'])/'capacity.json',{})
+    monkeypatch.setattr(r,'lock',lambda _:nullcontext())
+    monkeypatch.setattr(r,'preflight',lambda *_:dict(cfg=cfg))
+    monkeypatch.setattr(r,'smoke',lambda _:pytest.fail('existing capacity repeated'))
+    monkeypatch.setattr(r,'fit_attacker',lambda _:pytest.fail('invalid capacity bypassed'))
+    calls=[]
+    def capacity(_):
+        calls.append('capacity')
+        raise ValueError('fixture bad capacity')
+    monkeypatch.setattr(r,'capacity',capacity)
+    with pytest.raises(ValueError,match='fixture bad capacity'):
+        r.main(['--mode','start','--data-home',str(tmp_path/'home'),
+                '--outdir',str(tmp_path/'out'),'--device','cpu'])
+    assert calls==['capacity']
+
+
+def test_hpeli_only_clean_imported_attacker_three_victims_and_late_clean(tmp_path,monkeypatch,capsys):
+    """Synthetic G/source fixture, real toy victim loops200; no full-data claim."""
+    train,test=Dataset(64),Dataset(4)
+    cfg=r.config(tmp_path/'home',tmp_path/'out',device='cpu')
+    inputs=toy_inputs(train,test)
+    source=historical_attacker(tmp_path,cfg,inputs)
+    cfg['attacker_reference']=str(source)
+    hpeli=historical_clean(tmp_path,'hpeli',cfg,inputs,test)
+    reference=r.clean_ref.audit(hpeli,'hpeli',cfg,inputs)
+    refs=dict.fromkeys(r.BACKBONES)
+    refs['hpeli']=reference
+    plan=dict(profile=r.PROFILE,cfg=cfg,plan_sha256='f'*64,inputs=inputs,
+        clean_references=refs,attacker_reference=r.attacker_ref.audit(source,cfg,inputs))
+    r.write_json(r.plan_path(cfg),plan)
+    old_files=[r.plan_path(cfg), *[p for root in (source,hpeli) for p in root.rglob('*') if p.is_file()]]
+    old_hashes={str(p):r.base.file_sha(p) for p in old_files}
+    monkeypatch.setattr(r,'capacity',lambda _:dict(device='cpu'))
+    monkeypatch.setattr(r,'build_model',lambda *_:Tiny())
+    monkeypatch.setattr(r,'datasets_for',lambda _:dict(training=train,validation=test))
+    monkeypatch.setattr(a,'fit_stream',lambda *_a,**_kw:pytest.fail('completed attacker refit'))
+    r.fit_attacker(plan)
+    with pytest.raises(ValueError,match='Clean'):
+        r.checkpoint(plan,'wiflow','clean')
+    for b in r.BACKBONES:
+        r.train(plan,b,'backtime')
+        assert r.checkpoint(plan,b,'backtime',final=True)['epoch']==199
+    victim_paths=[r.cell(plan,b,'backtime')/'checkpoint.pt' for b in r.BACKBONES]
+    victim_hashes={str(p):r.base.file_sha(p) for p in victim_paths}
+    with monkeypatch.context() as m:
+        m.setattr(r,'build_model',lambda *_:pytest.fail('final victim rebuilt'))
+        m.setattr(r,'load_attacker',lambda *_:pytest.fail('final victim loads G'))
+        m.setattr(r,'datasets_for',lambda *_:pytest.fail('final victim reloads data'))
+        for b in r.BACKBONES:
+            r.train(plan,b,'backtime')
+    summary=r.evaluate_available(plan)
+    assert summary==dict(training_complete=True,evaluated=['hpeli'],
+                         evaluation_pending_clean=['wiflow','metafiplusplus'])
+    assert not (r.cell(plan,'wiflow','backtime')/'evaluation.json').exists()
+    hpeli_result=r.cell(plan,'hpeli','backtime')/'evaluation.json'
+    hpeli_sha=r.base.file_sha(hpeli_result)
+    late={b:historical_clean(tmp_path,b,cfg,inputs,test) for b in r.BACKBONES[1:]}
+    summary=r.evaluate_available(plan,late)
+    assert summary['evaluated']==list(r.BACKBONES) and not summary['evaluation_pending_clean']
+    assert r.base.file_sha(hpeli_result)==hpeli_sha
+    assert old_hashes=={str(p):r.base.file_sha(p) for p in old_files}
+    assert victim_hashes=={str(p):r.base.file_sha(p) for p in victim_paths}
+    assert not (Path(cfg['outdir'])/'attacker').exists()
+    assert all(not r.cell(plan,b,'clean').exists() for b in r.BACKBONES)
+    before=r.base.file_sha(r.reference_path(plan,'wiflow'))
+    r.register_evaluation_reference(plan,'wiflow',late['wiflow'])
+    assert r.base.file_sha(r.reference_path(plan,'wiflow'))==before
+    with pytest.raises(ValueError,match='already frozen'):
+        r.register_evaluation_reference(plan,'wiflow',hpeli)
+    path=r.reference_path(plan,'wiflow')
+    record=r.read_json(path)
+    record['training_plan_sha256']='0'*64
+    r.write_json(path,r.signed({k:v for k,v in record.items() if k!='plan_sha256'}))
+    with pytest.raises(ValueError,match='Late Clean reference binding'):
+        r.verify_evaluation(plan,'wiflow')
+
+
+def test_late_reference_cannot_open_test_before_all_three_final(tmp_path,monkeypatch):
+    cfg=r.config(tmp_path/'home',tmp_path/'out',device='cpu')
+    plan=dict(cfg=cfg)
+    monkeypatch.setattr(r,'checkpoint',lambda *_a,**_kw:(_ for _ in ()).throw(ValueError('not final199')))
+    monkeypatch.setattr(r.clean_ref,'audit',lambda *_:pytest.fail('late Clean audit before final victims'))
+    monkeypatch.setattr(np,'load',lambda *_a,**_kw:pytest.fail('TEST opened'))
+    with pytest.raises(ValueError,match='not final199'):
+        r.register_evaluation_reference(plan,'wiflow',tmp_path/'source')
+
+
+def test_evaluate_cli_late_reference_does_not_rebind_training_cfg(tmp_path,monkeypatch):
+    cfg=r.config(tmp_path/'home',tmp_path/'out',device='cpu',
+                 clean_references={'hpeli':tmp_path/'old_hpeli'})
+    r.write_json(r.plan_path(cfg),dict(cfg=cfg))
+    loaded=[]
+    monkeypatch.setattr(r,'lock',lambda _:nullcontext())
+    def load(actual,**_):
+        loaded.append(actual)
+        return dict(cfg=actual)
+    monkeypatch.setattr(r,'load_plan',load)
+    called=[]
+    monkeypatch.setattr(r,'evaluate_available',lambda p,refs,**kw:called.append(refs))
+    monkeypatch.setattr(r,'train',lambda *_:pytest.fail('evaluate retrains victim'))
+    monkeypatch.setattr(r,'fit_attacker',lambda *_:pytest.fail('evaluate refits attacker'))
+    r.main(['--mode','evaluate','--data-home',str(tmp_path/'home'),'--outdir',str(tmp_path/'out'),
+            '--device','cpu','--clean-reference','wiflow='+str(tmp_path/'late_wiflow')])
+    assert loaded==[cfg]
+    assert called==[{'wiflow':str(tmp_path/'late_wiflow')}]
+
+
+def test_helper_defaults_reuse_old_attacker_and_new_v4_output():
+    source=(ROOT/'remote_tools/Start-PiWBackTimeThreeBackbones.ps1').read_text(encoding='utf-8')
+    assert "[string]$AttackerRun = 'U:\\backdooranalog\\runs\\piw_backtime_three_backbones_s42_v1'" in source
+    assert 'piw_backtime_three_backbones_train_first_s42_v4' in source
+    assert "Start='start'" in source and "Evaluate='evaluate'" in source
+    assert "$Mode = 'Inspect'" in source
+    assert 'it will NOT fit a new attacker' in source
+
+
+def test_partial_victim_resume_preserves_optimizer_rng_and_final_weights(tmp_path,monkeypatch):
+    data=Dataset(64)
+    cfg=r.config(tmp_path/'home',tmp_path/'full',device='cpu')
+    op=trigger()
+    op._diagnostics['poison_indices']=[1,7,19,24,38,50]
+    doses=np.random.default_rng(42).uniform(.2,1.,64).astype(np.float32)
+    frozen_path=tmp_path/'frozen_trigger.pt'
+    torch.save(op.state_dict(),frozen_path)
+    monkeypatch.setattr(r,'attacker_path',lambda _:frozen_path)
+    monkeypatch.setattr(r,'load_attacker',lambda _:(op,doses))
+    monkeypatch.setattr(r,'capacity',lambda _:dict(device='cpu'))
+    monkeypatch.setattr(r,'build_model',lambda *_:Tiny())
+    monkeypatch.setattr(r,'datasets_for',lambda _:dict(training=data))
+    full=dict(cfg=cfg,plan_sha256='f'*64)
+    r.train(full,'hpeli','backtime')
+    expected=r.checkpoint(full,'hpeli','backtime',final=True)
+    partial=dict(cfg=r.config(tmp_path/'home',tmp_path/'resumed',device='cpu'),plan_sha256='f'*64)
+    save=r.base.atomic_checkpoint
+    def interrupted(path,value):
+        save(path,value)
+        if value['epoch']==73:
+            raise RuntimeError('fixture manual stop after atomic epoch73')
+    with monkeypatch.context() as m:
+        m.setattr(r.base,'atomic_checkpoint',interrupted)
+        with pytest.raises(RuntimeError,match='manual stop'):
+            r.train(partial,'hpeli','backtime')
+    assert r.checkpoint(partial,'hpeli','backtime')['epoch']==73
+    r.train(partial,'hpeli','backtime')
+    actual=r.checkpoint(partial,'hpeli','backtime',final=True)
+    for key in ('model','optimizer','rng','train_loss'):
+        assert core._sha(actual[key])==core._sha(expected[key]),key
