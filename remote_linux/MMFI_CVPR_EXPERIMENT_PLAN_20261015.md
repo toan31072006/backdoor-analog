@@ -2,6 +2,72 @@
 
 ## Material Passport
 
+### Publication authorization 2026-11-10: push PiW BackTime and pull separately
+
+User explicitly requests GitHub push and pull on Van after the local125-test
+gate. Commit/push only the new PiW adapter, serial runner, helper, tests and
+guide plus this plan amendment. Keep the locked HPE-Li -> WiFlow -> MetaFi++
+queue and all scientific recipes unchanged. Remote update is allowed only in
+a separate idle PiW checkout, not the MM-Fi WiFlow checkout or a prepared run.
+Do not overwrite local remote changes, rebase/force-push, rewrite historical
+artifacts, or start training merely because code was pushed/pulled. If SSH
+authentication remains unavailable, report push and remote-pull separately
+and hand off safe clone/pull commands; never report an unverified remote pull.
+
+### Execution order 2026-11-10: PiW HPE-Li -> WiFlow -> MetaFi++
+
+User clarifies that the PiW queue must run HPE-Li first, then WiFlow, then
+MetaFi++, as ONE serial PiW worker alongside their existing MM-Fi WiFlow job.
+This supersedes the earlier proposed HPE-Li-only interpretation, not the
+scientific recipes or datasets. Freeze this exact six-cell training queue in
+the new PiW plan: HPE-Li Clean200/BackTime200, WiFlow Clean200/BackTime200,
+MetaFi++ Clean200/BackTime200, after one fresh PiW attacker100. No simultaneous
+PiW model processes; no MM-Fi job stop/suspend/restart, source edit or checkout
+pull. Use a separate idle code directory and PiW output. CUDA capacity gate
+must pass with the external job still present; the user's low-memory snapshot
+alone is not a capacity guarantee. TEST remains after all six final victims.
+On failure stop the queue, preserve artifacts and do not auto-retry or fall
+through to the next model. Historical Clean reuse is still not implemented.
+Setup/tests/packaging are local; SSH authentication was denied, so neither
+remote capacity nor launch has been established. This is an exploratory
+seed42 extension, not an already completed comparison table.
+Queue gate:125 local tests passed/exit0 (34PiW +91regression), four expected
+CPU pin-memory warnings. Exact ordered dispatch/fail-stop and queue/capacity
+tamper rejection passed. PowerShell parse/Inspect passed with no output writes.
+MM-Fi BackTime source and manuscript hashes unchanged; no remote GPU launch.
+
+### Code preparation 2026-11-10: PiW BackTime on three backbones
+
+User requests setup and careful code checks for HPE-Li, MetaFi++ and WiFlow on
+Person-in-WiFi-3D. Setup only: no remote launch, push/pull, job kill, manuscript
+edit or historical-artifact overwrite. New exploratory one-seed extension, not
+a completed T1/T6 table. New standalone PiW14 amplitude adapter reuses the
+native BackTime streaming loop in a private function namespace; MM-Fi source
+bytes remain unchanged. TRAIN27876/TEST2586, full3x180x20 model input, graph on
+270 amplitude variables only, phase unchanged,12history/8replacement packets.
+One fresh HPE-Li source attacker100/B64/warmup11+alternate89, native Adam/GCN/
+adaptive TRAIN-error selection, eps.2; shared frozen attacker/IDs/pairedU(.2,1)
+for three scratch victims plus three matched scratch Clean controls. Victims
+200/final199, physical32/workers0/FP32/drop_lastTrue/ordinaryMPJPE/fixedLR.
+HPE-Li AdamW.001/wd.01; MetaFi++ corrected PiW AdamW.01/wd.01 (not obsolete
+MM-Fi SGD); WiFlow AdamW1e-4/wd1e-4/accumulation2, correctly flushed tail.
+No checkpoint warm-start, TEST selection, automatic retry, AMP/batch fallback.
+Keep PiW body hip-axis target7->[11,13]/40d, PCKcleanGT(6,4)/.2, six doses;
+TEST after all six final victims. Save fullXYZ/GT/targets/IDs/doses/residuals,
+replay metrics/artifacts before COMPLETE. Full content/source/runtime bindings,
+new disposable CUDA capacity gate, owned output lock and epoch/RNG resume.
+Fresh matched Clean controls deliberately cost three additional200epoch runs;
+historical Clean reuse needs a separately reviewed audit adapter. No assumption
+that the old MM-Fi attacker/checkpoint can be relabeled as PiW. Helpers:
+remote_tools/Start-PiWBackTimeThreeBackbones.ps1 and ATKBackd runner; separate
+U: output. Guide: remote_tools/PIW_BACKTIME_THREE_BACKBONES_VI.md. Local CPU/
+synthetic validation cannot establish real-data/CUDA fit or attack efficacy.
+Local gate:122passed/exit0 (31PiW +91MM-Fi/runner/transfer), four expected CPU
+pin-memory warnings; real model CPU backward, native HPE-Li generatorB1,
+exact attacker resume and full toy100+6x200/replay verified. Helper AST/Inspect
+passed without output writes. Set MKL sequential before Python to avoid local
+Conda SVD runtime conflict; no PA formula change. Van full-data/CUDA pending.
+
 ### Execution setup 2026-11-09: shared BackTime attacker → MetaFi++ / WiFlow
 
 User requests MM-Fi BackTime on MetaFi++ and WiFlow on Van. Current setup
