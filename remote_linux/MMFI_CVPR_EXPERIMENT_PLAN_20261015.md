@@ -2,6 +2,63 @@
 
 ## Material Passport
 
+### Publication request 2026-11-10: update while an existing job is training
+
+User requests the reuse-Clean update but reports training is already in
+progress. Publish only the six reviewed v2 code/test/doc files after the
+150-test gate. Do NOT pull/edit the running checkout, change an existing
+plan/lock, stop/restart a process or launch a second PiW worker. SSH still
+fails authentication; live process/stage/checkpoint state is unverified.
+Request recent terminal output (no remembered paths needed) before proposing
+a transition. v2 has a new plan/profile and does not currently import/resume
+v1 attacker or victim training states. Publishing to GitHub does not change
+an already running v1 queue or cause it to skip Clean. Any migration needs a
+separate verified adapter; never relabel old checkpoints as new-plan states.
+
+### User-requested correction 2026-11-10: reuse PiW Clean, no duplicate training
+
+User explicitly asks to fix the PiW BackTime queue because Clean controls have
+already been trained. This supersedes the six-training-cell v1 queue below:
+one fresh attacker100, then HPE-Li BackTime200 -> WiFlow BackTime200 ->
+MetaFi++ BackTime200, serial, same recipes/target/doses/seed42. ZERO Clean
+training. No automatic fallback to new Clean training on missing/mismatched
+references. No remote launch/push, job intervention or manuscript edits in
+this correction. Historical runs and prepared v1 plans remain read-only;
+use a new v2 output/profile, not a rewritten historical plan.
+
+User does not remember the three source paths. Default to bounded metadata
+discovery in DataHome/runs and output parent, PiW directories one level only;
+FindClean is read-only/no CUDA/tensors/TEST. Freeze the unique matching source
+per backbone, not a TEST-score/latest-name ranking. Missing/ambiguous sources
+are listed and stop; optional explicit run paths resolve ambiguity. Never
+reselect sources on resume. Freeze and
+audit original manifest/input/split/order/model/preprocessing/checkpoint/
+evaluation/NPZ fingerprints, seed42/final199 and matched training recipe.
+Load weights only for inference; never warm-start victim or migrate optimizer/
+RNG. Preserve original training runtime/GPU in provenance. Missing/foreign
+profiles, partial epochs, poisoned/non-Clean checkpoints and mismatched
+recipes stop before attacker/victim training. HPE-Li Clean v1 drop_lastFalse
+does NOT silently match the current drop_lastTrue recipe; use an audited
+matching reference (e.g. v3) or explicitly resolve the protocol mismatch.
+MetaFi++ SGD, pretrained/model changes likewise cannot be relabeled matching.
+
+TEST arrays/re-inference remain after all three new final199 victims. Reuse
+each source Clean for the new BackTime trigger dose grid; replay historical
+clean GT/IDs/metrics, require <=0.05mm max coordinate inference discrepancy,
+save new full predictions and original-reference provenance. Failure never
+retries/retrains automatically. CPU/synthetic tests do not prove CUDA/full
+dataset compatibility or that the three actual remote references all match.
+Actual reference discovery/audit on Van remains pending; SSH authentication
+is denied, and no remote artifact audit is claimed.
+Local v2 gate: **150 passed**, exit0,105.35s (59PiW +91historical BackTime/
+MM-Fi/runner/transfer regressions), four expected CPU pin_memory warnings.
+Includes native attacker100 +three toy victims200 and historical reference
+replay, no-Clean-train dispatch/guard, auto-discovery/ambiguity/read-only/
+deferred-TEST checks and recipe/checkpoint/source rejection. PowerShell AST,
+Inspect with space-containing reference paths and FindClean passed without
+output writes. MM-Fi source blob and manuscript SHA256 unchanged. These are
+local CPU/synthetic gates, not a completed remote checkpoint or CUDA audit.
+
 ### Publication authorization 2026-11-10: push PiW BackTime and pull separately
 
 User explicitly requests GitHub push and pull on Van after the local125-test

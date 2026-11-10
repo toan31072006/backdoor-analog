@@ -56,6 +56,63 @@ def trigger(cfg=None):
     return a.FrozenPiWBackTimeTrigger(cfg,core._GraphGenerator(cfg,features,variables,.5,.2))
 
 
+def historical_clean(tmp_path, backbone, cfg, inputs, test, *, mutate_cfg=None, mutate_blob=None):
+    """Historical layout fixture only, not evidence of full PiW training."""
+    root = tmp_path / ('piw_historical_' + backbone)
+    source = r.base.configuration(tmp_path/'home', root, device='cpu')
+    source['drop_last'] = True
+    if backbone == 'hpeli':
+        profile, layout = 'piw_hpeli_body_axis_s42_lr001_control_v3', 'hpeli_v3'
+        manifest_path, folder = root/'piw_lr_control.resolved.json', root/'hpeli/seed42/clean'
+    else:
+        profile, layout = 'piw3d_two_models_s42_six_baselines_v1', 'multi'
+        source['recipes'] = deepcopy(r.RECIPES)
+        source['test_checkpoint_selection'] = False
+        manifest_path, folder = root/'plan.json', root/'attacks'/backbone/'seed42/clean'
+    source['profile'] = profile
+    if mutate_cfg:
+        mutate_cfg(source)
+    hashes = {n:r.base.file_sha(r.HERE/n) for n in ('data_utils/feeder.py', *r.clean_ref.MODEL_SOURCES[backbone])}
+    manifest = r.signed(dict(profile=profile, cfg=source, inputs=inputs, sources=hashes, runtime={'fixture':True}))
+    r.write_json(manifest_path, manifest)
+    torch.manual_seed(42)
+    model = Tiny()
+    opt = r.optimizer(model, backbone)
+    blob = dict(profile=profile, cfg=source, plan_sha256=manifest['plan_sha256'], epoch=199,
+        model=model.state_dict(), optimizer=opt.state_dict(), rng={}, execution={'device':'historical'})
+    if layout == 'hpeli_v3':
+        blob['role'] = 'clean'
+    else:
+        blob.update(backbone=backbone, method='clean', poison={'n_poison':0,'n_cover':0}, trigger=None)
+    if mutate_blob:
+        mutate_blob(blob)
+    folder.mkdir(parents=True)
+    path = folder/'checkpoint.pt'
+    torch.save(blob,path)
+    truth = test.y[:,0]
+    with torch.no_grad():
+        pred = model(torch.tensor(test.x))[0][:,0].numpy()
+    arrays = root/'predictions.npz' if layout == 'hpeli_v3' else folder/'predictions.npz'
+    np.savez_compressed(arrays, truth=truth, names=[v['name'] for v in test.items],
+                        **{('reference_predictions' if layout=='hpeli_v3' else 'predictions'):pred})
+    result = dict(profile=profile, plan_sha256=manifest['plan_sha256'], clean_metrics=r.base._metrics(pred,truth))
+    if layout == 'hpeli_v3':
+        result.update(status='EXPLORATORY_PIW_LR_CONTROL_ONE_SEED_NOT_FULL_PAPER_TABLE',
+                      artifacts={p.relative_to(root).as_posix():r.base.file_sha(p) for p in (path,arrays)})
+        r.write_json(root/'evaluation.json',result)
+    else:
+        result.update(status='COMPLETE',backbone=backbone,method='clean',seed=42,
+                      checkpoint_sha256=r.base.file_sha(path),predictions_sha256=r.base.file_sha(arrays))
+        r.write_json(folder/'evaluation.json',result)
+    return root
+
+
+def toy_inputs(train, test):
+    splits = {s:dict(retained_count=len(d),ordered_names=[v['name'] for v in d.items])
+              for s,d in (('train_data',train),('test_data',test))}
+    return dict(splits=splits,fingerprint=r.base.object_sha(splits))
+
+
 def test_configuration_has_native_attacker_and_corrected_piw_recipes(tmp_path):
     cfg = r.config(tmp_path/'home',tmp_path/'output',device='cpu')
     assert cfg == json.loads(json.dumps(cfg))
@@ -70,8 +127,9 @@ def test_configuration_has_native_attacker_and_corrected_piw_recipes(tmp_path):
     assert cfg['target']['pck_ref'] == [6,4] and cfg['target']['target_joints'] == [11,13]
     assert cfg['eval_doses'] == [0.,.2,.4,.6,.8,1.]
     assert cfg['backbones'] == ['hpeli','wiflow','metafiplusplus']
-    assert cfg['training_queue'] == [dict(backbone=b,role=role)
-        for b in ('hpeli','wiflow','metafiplusplus') for role in ('clean','backtime')]
+    assert cfg['roles'] == ['backtime']
+    assert cfg['training_queue'] == [dict(backbone=b,role='backtime') for b in r.BACKBONES]
+    assert cfg['clean_references'] == dict.fromkeys(r.BACKBONES)
 
 
 @pytest.mark.parametrize('dose',[0.,.2,.6,1.,torch.tensor([0.,1.])])
@@ -252,10 +310,15 @@ def test_inspect_has_no_dataset_gpu_or_output_writes(tmp_path,capsys,monkeypatch
 
 
 def test_preflight_plan_binding_and_nonempty_output_guards(tmp_path,monkeypatch):
-    cfg = r.config(tmp_path/'home',tmp_path/'output',device='cpu')
+    cfg = r.config(tmp_path/'home',tmp_path/'output',device='cpu',
+                   clean_references={b:tmp_path/b for b in r.BACKBONES})
     inputs = dict(splits={},fingerprint=r.base.object_sha({}))
     monkeypatch.setattr(r,'sources',lambda:dict(fixture='a'*64))
     monkeypatch.setattr(r.base,'audit_inputs',lambda _: (inputs,{}))
+    monkeypatch.setattr(r.clean_ref,'audit',lambda _,b,*__:dict(backbone=b))
+    monkeypatch.setattr(r.clean_ref,'files_match',lambda _:None)
+    monkeypatch.setattr(r.clean_ref,'load',lambda _:dict(model=Tiny().state_dict()))
+    monkeypatch.setattr(r,'build_model',lambda *_:Tiny())
     saved = r.preflight(cfg)
     assert r.load_plan(cfg)==saved
     changed = deepcopy(cfg)
@@ -331,9 +394,7 @@ def test_launch_dispatch_is_serial_hpeli_wiflow_metafi_with_no_extra_jobs(tmp_pa
     r.main(['--mode','launch','--data-home',str(tmp_path/'home'),
             '--outdir',str(tmp_path/'output'),'--device','cpu'])
     assert calls == ['capacity','attacker',
-        ('hpeli','clean'),('hpeli','backtime'),
-        ('wiflow','clean'),('wiflow','backtime'),
-        ('metafiplusplus','clean'),('metafiplusplus','backtime'),
+        ('hpeli','backtime'),('wiflow','backtime'),('metafiplusplus','backtime'),
         ('evaluate','hpeli'),('evaluate','wiflow'),('evaluate','metafiplusplus')]
     assert 'ALL_THREE_COMPLETE' in capsys.readouterr().out
 
@@ -354,30 +415,180 @@ def test_launch_stops_queue_on_failure_without_retry_or_starting_later_model(tmp
     with pytest.raises(RuntimeError,match='fixture failure'):
         r.main(['--mode','launch','--data-home',str(tmp_path/'home'),
                 '--outdir',str(tmp_path/'output'),'--device','cpu'])
-    assert calls == [('hpeli','clean'),('hpeli','backtime')]
+    assert calls == [('hpeli','backtime')]
 
 
 def test_full_cpu_toy_lifecycle_and_tamper(tmp_path,monkeypatch):
-    """Native attacker100 + six toy victims200, NOT real-model full training."""
+    """Attacker100 + three toy victims200 + read-only Clean; not full PiW."""
     train,test = Dataset(64),Dataset(4)
     cfg = r.config(tmp_path/'home',tmp_path/'output',device='cpu')
-    plan = dict(cfg=cfg,plan_sha256='f'*64,inputs=dict(fingerprint='a'*64,splits={
-        'train_data':dict(retained_count=64,ordered_names=[v['name'] for v in train.items]),
-        'test_data':dict(retained_count=4,ordered_names=[v['name'] for v in test.items])}))
+    inputs = toy_inputs(train,test)
+    roots = {b:historical_clean(tmp_path,b,cfg,inputs,test) for b in r.BACKBONES}
+    refs = {b:r.clean_ref.audit(roots[b],b,cfg,inputs) for b in r.BACKBONES}
+    cfg['clean_references'] = {b:str(p) for b,p in roots.items()}
+    plan = dict(cfg=cfg,plan_sha256='f'*64,inputs=inputs,clean_references=refs)
     monkeypatch.setattr(r,'capacity',lambda _:dict(device='cpu'))
     monkeypatch.setattr(r,'build_model',lambda *_:Tiny())
     monkeypatch.setattr(r,'datasets_for',lambda _:dict(training=train,validation=test))
     r.fit_attacker(plan)
     for b in r.BACKBONES:
-        for role in ('clean','backtime'):
-            r.train(plan,b,role)
+        r.train(plan,b,'backtime')
     for b in r.BACKBONES:
         result = r.evaluate(plan,b)
         assert result['status']=='COMPLETE' and len(result['metrics']['dose_rows'])==6
         assert r.verify_evaluation(plan,b)==result
+        assert result['clean_reference']['training_started'] is False
+        assert not r.cell(plan,b,'clean').exists()
+        r.clean_ref.files_match(refs[b])
     path = r.cell(plan,'hpeli','backtime')/'evaluation.json'
     result = r.read_json(path)
     result['metrics']['mainmetrics']['mean_dce_mm'] += 1
     r.write_json(path,result)
     with pytest.raises(ValueError,match='replay'):
         r.verify_evaluation(plan,'hpeli')
+
+
+def test_clean_training_is_rejected_before_any_gpu_or_model_work(monkeypatch):
+    monkeypatch.setattr(r,'capacity',lambda _:pytest.fail('GPU called'))
+    monkeypatch.setattr(r,'build_model',lambda *_:pytest.fail('model built'))
+    with pytest.raises(ValueError,match='Only BackTime'):
+        r.train({},'hpeli','clean')
+
+
+def test_missing_clean_refs_stop_before_data_audit_or_attacker(tmp_path,monkeypatch):
+    monkeypatch.setattr(r.base,'audit_inputs',lambda _:pytest.fail('expensive data audit called'))
+    cfg = r.config(tmp_path/'home',tmp_path/'output',device='cpu')
+    with pytest.raises(ValueError,match='NOT be retrained'):
+        r.preflight(cfg)
+    assert not r.plan_path(cfg).exists()
+
+
+@pytest.mark.parametrize('backbone',r.BACKBONES)
+def test_historical_clean_audit_is_read_only_and_defers_test_arrays(tmp_path,monkeypatch,backbone):
+    data = Dataset(4)
+    cfg = r.config(tmp_path/'home',tmp_path/'out',device='cpu')
+    inputs = toy_inputs(data,data)
+    root = historical_clean(tmp_path,backbone,cfg,inputs,data)
+    before = {str(p):r.base.file_sha(p) for p in root.rglob('*') if p.is_file()}
+    monkeypatch.setattr(np,'load',lambda *_a,**_k:pytest.fail('TEST arrays opened in preflight'))
+    record = r.clean_ref.audit(root,backbone,cfg,inputs)
+    assert record['training_started'] is False
+    assert r.clean_ref.load(record)['epoch'] == 199
+    assert before == {str(p):r.base.file_sha(p) for p in root.rglob('*') if p.is_file()}
+
+
+@pytest.mark.parametrize('field,value',[('drop_last',False),('seed',43),('epochs',50),
+    ('amp',True),('pretrained',True),('lr_scheduler',True),('batch_size',64),('gradient_clip',1.)])
+def test_mismatched_clean_recipe_never_silently_retrains(tmp_path,field,value):
+    data=Dataset(4)
+    cfg=r.config(tmp_path/'home',tmp_path/'out',device='cpu')
+    inputs=toy_inputs(data,data)
+    root=historical_clean(tmp_path,'hpeli',cfg,inputs,data,mutate_cfg=lambda c:c.update({field:value}))
+    with pytest.raises(ValueError,match='recipe mismatch'):
+        r.clean_ref.audit(root,'hpeli',cfg,inputs)
+    assert not Path(cfg['outdir']).exists()
+
+
+@pytest.mark.parametrize('mutation',['partial','a1','optimizer','backbone','poison'])
+def test_wrong_clean_checkpoint_is_rejected(tmp_path,mutation):
+    data=Dataset(4)
+    cfg=r.config(tmp_path/'home',tmp_path/'out',device='cpu')
+    inputs=toy_inputs(data,data)
+    def change(blob):
+        if mutation=='partial': blob['epoch']=198
+        if mutation=='a1': blob['method']='a1'
+        if mutation=='optimizer': blob['optimizer']['param_groups'][0]['lr']=.01
+        if mutation=='backbone': blob['backbone']='metafiplusplus'
+        if mutation=='poison': blob['poison']['n_poison']=1
+    root=historical_clean(tmp_path,'wiflow',cfg,inputs,data,mutate_blob=change)
+    with pytest.raises(ValueError):
+        r.clean_ref.audit(root,'wiflow',cfg,inputs)
+
+
+def test_changed_clean_input_source_or_file_is_rejected(tmp_path):
+    data=Dataset(4)
+    cfg=r.config(tmp_path/'home',tmp_path/'out',device='cpu')
+    inputs=toy_inputs(data,data)
+    root=historical_clean(tmp_path,'hpeli',cfg,inputs,data)
+    changed=deepcopy(inputs)
+    changed['splits']['train_data']['ordered_names'].reverse()
+    with pytest.raises(ValueError,match='fingerprint'):
+        r.clean_ref.audit(root,'hpeli',cfg,changed)
+    record=r.clean_ref.audit(root,'hpeli',cfg,inputs)
+    with Path(record['checkpoint']).open('ab') as f:
+        f.write(b'changed')
+    with pytest.raises(ValueError,match='reference changed'):
+        r.clean_ref.load(record)
+
+
+def test_cli_duplicate_or_unknown_reference_is_rejected(tmp_path):
+    args=['--data-home',str(tmp_path),'--outdir',str(tmp_path/'out')]
+    with pytest.raises(SystemExit):
+        r.main(args+['--clean-reference','unknown=x'])
+    with pytest.raises(SystemExit):
+        r.main(args+['--clean-reference','hpeli=x','--clean-reference','hpeli=y'])
+
+
+def test_discovery_is_bounded_metadata_only_and_does_not_use_test_scores(tmp_path,monkeypatch,capsys):
+    data=Dataset(4)
+    cfg=r.config(tmp_path/'home',tmp_path/'output',device='cpu')
+    inputs=toy_inputs(data,data)
+    root=historical_clean(tmp_path,'hpeli',cfg,inputs,data)
+    def forbidden(*_a,**_kw): pytest.fail('discovery opened tensors/TEST/GPU')
+    monkeypatch.setattr(np,'load',forbidden)
+    monkeypatch.setattr(torch,'load',forbidden)
+    monkeypatch.setattr(r.base,'_setup_execution',forbidden)
+    found=r.clean_ref.discover(cfg)
+    assert found['hpeli']==[str(root)] and not found['wiflow']
+    r.main(['--mode','discover','--data-home',str(tmp_path/'home'),'--outdir',str(tmp_path/'output')])
+    assert json.loads(capsys.readouterr().out)['candidates']==found
+    assert not Path(cfg['outdir']).exists()
+
+
+@pytest.mark.parametrize('ambiguous',[False,True])
+def test_preflight_auto_freezes_unique_matching_clean_or_stops_ambiguity(tmp_path,monkeypatch,ambiguous):
+    data=Dataset(4)
+    cfg=r.config(tmp_path/'home',tmp_path/'output',device='cpu')
+    inputs=toy_inputs(data,data)
+    for b in r.BACKBONES:
+        historical_clean(tmp_path,b,cfg,inputs,data)
+    if ambiguous:
+        duplicate=tmp_path/'piw_duplicate'
+        duplicate.mkdir()
+        # A second independent source, not an automatic choice by metric/name.
+        other=historical_clean(duplicate,'hpeli',cfg,inputs,data)
+        other.rename(tmp_path/'piw_hpeli_other')
+    monkeypatch.setattr(r.base,'audit_inputs',lambda _:(inputs,{}))
+    monkeypatch.setattr(r,'build_model',lambda *_:Tiny())
+    if ambiguous:
+        with pytest.raises(ValueError,match='found 2'):
+            r.preflight(cfg)
+        assert not r.plan_path(cfg).exists()
+    else:
+        plan=r.preflight(cfg)
+        assert set(plan['clean_references'])==set(r.BACKBONES)
+        assert all(plan['clean_references'][b]['backbone']==b for b in r.BACKBONES)
+        assert all(v is None for v in plan['cfg']['clean_references'].values())
+
+
+def test_evaluation_defers_reference_arrays_until_all_new_victims_final(tmp_path,monkeypatch):
+    cfg=r.config(tmp_path/'home',tmp_path/'out',device='cpu')
+    plan=dict(cfg=cfg)
+    monkeypatch.setattr(r,'checkpoint',lambda *_a,**_kw:(_ for _ in ()).throw(ValueError('victim incomplete')))
+    monkeypatch.setattr(np,'load',lambda *_a,**_kw:pytest.fail('TEST/reference arrays opened early'))
+    with pytest.raises(ValueError,match='victim incomplete'):
+        r.evaluate(plan,'hpeli')
+
+
+def test_reference_source_hash_mismatch_is_rejected(tmp_path):
+    data=Dataset(4)
+    cfg=r.config(tmp_path/'home',tmp_path/'out',device='cpu')
+    inputs=toy_inputs(data,data)
+    root=historical_clean(tmp_path,'hpeli',cfg,inputs,data)
+    path=root/'piw_lr_control.resolved.json'
+    m=r.read_json(path)
+    m.pop('plan_sha256')
+    m['sources']['models/hpeli.py']='0'*64
+    r.write_json(path,r.signed(m))
+    with pytest.raises(ValueError,match='source differs'):
+        r.clean_ref.audit(root,'hpeli',cfg,inputs)

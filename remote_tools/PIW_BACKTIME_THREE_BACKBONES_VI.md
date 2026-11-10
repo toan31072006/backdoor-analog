@@ -1,4 +1,4 @@
-# PiW BackTime: HPE-Li → WiFlow → MetaFi++ — setup 2026-11-10
+# PiW BackTime: HPE-Li → WiFlow → MetaFi++ — reuse Clean v2, 2026-11-10
 
 ## Material Passport
 
@@ -6,21 +6,28 @@
 - Phạm vi: code/config/test; người dùng đã yêu cầu push GitHub và pull vào checkout PiW riêng sau test. Không kill job hay sửa manuscript.
 - Trạng thái: exploratory digital CSI/HPE adaptation, một seed; không phải full T1/T6, original-author reproduction hoặc kết quả efficacy.
 - Giữ nguyên scientific source MM-Fi và mọi artifact/checkpoint lịch sử.
+- Sửa theo yêu cầu mới: **không train lại Clean**. Ba Clean nguồn bắt buộc phải được audit; thiếu/lệch thì dừng, không tự train bù. Người dùng đã yêu cầu publish; chưa cập nhật/launch trên máy Vân.
 
 ## Thứ tự chạy đã chốt với người dùng
+
+**Nếu job v1 đang chạy:** không pull/sửa checkout, không đổi `plan.json`, không
+xóa lock và không chạy v2 cùng output. Bản v2 chưa có adapter chuyển trạng thái
+attacker/victim v1 đang train sang v2. Push GitHub không đổi queue đã chạy trong
+process v1. Cần xem log/checkpoint hiện tại trước khi quyết định chuyển; không
+giả checkpoint v1 thành checkpoint v2 hoặc tự dừng job để áp bản sửa.
 
 **Một process PiW duy nhất**, chạy tuần tự HPE-Li → WiFlow → MetaFi++,
 song song với **job WiFlow/MM-Fi đã có**. Không phải ba PiW jobs cùng lúc.
 Sau khi fit attacker PiW100, queue cố định trong `plan.json` là:
 
-1. HPE-Li Clean200 → HPE-Li BackTime200.
-2. WiFlow Clean200 → WiFlow BackTime200.
-3. MetaFi++ Clean200 → MetaFi++ BackTime200.
+1. HPE-Li BackTime200, dùng Clean HPE-Li đã có.
+2. WiFlow BackTime200, dùng Clean WiFlow đã có.
+3. MetaFi++ BackTime200, dùng Clean MetaFi++ đã có.
 
 Mỗi victim khởi tạo riêng từ scratch. Clean và attacker không phải model
 BackTime victim. HPE-Li-only không phải scope hiện hành. Khi một cell lỗi,
 runner dừng; không retry hoặc chuyển qua model tiếp theo. Evaluation vẫn
-đợi cả sáu final199, không dùng kết quả TEST để thay đổi các cell còn lại.
+đợi cả ba victim mới đạt final199, không dùng kết quả TEST để thay đổi các cell còn lại.
 Không stop/suspend/restart/pull vào checkout của WiFlow/MM-Fi. GPU chia sẻ
 có thể chậm hơn; ảnh nvidia-smi ít VRAM chưa chứng minh đủ capacity.
 
@@ -55,7 +62,7 @@ Target giữ nguyên PiW body-hip-axis v2: pivot7 -> [11,13], axis normalize(GT5
 poison identities/doses freeze sau adaptive selection. Không dùng lại uniform
 IDs của WiFiDoor rồi gọi native adaptive BackTime.
 
-Ba **Clean controls mới** + ba **BackTime victims mới**, tất cả scratch,
+Ba **Clean controls lịch sử, read-only** + ba **BackTime victims mới từ scratch**,
 200epochs/final199, B32, workers0, FP32, fixedLR, drop_lastTrue, ordinary all-joint
 MPJPE, no pretrained/TEST checkpoint selection. Không có gradient clip mới.
 
@@ -68,14 +75,33 @@ MPJPE, no pretrained/TEST checkpoint selection. Không có gradient clip mới.
 AdamW betas(.9,.999), eps1e-8. MetaFi++ dùng recipe PiW đã sửa ở
 `piw_metafi_clean_vastenv_3090.py`, KHÔNG dùng SGD của MM-Fi hoặc recipe cũ trong
 `run_piw_two_models_attacks.py`. WiFlow flush accumulation tail với đúng số
-mẫu của effective group cuối. Sáu victim train tuần tự trên một owned GPU
+mẫu của effective group cuối. Ba victim mới train tuần tự trên một owned GPU
 worker; không tự thay đổi capacity hoặc can thiệp các job ngoài.
 
-Matched Clean được train lại ở output mới để tránh ghép checkpoint khác recipe,
-backend hoặc provenance. Nếu muốn reuse Clean lịch sử để tiết kiệm compute,
-cần thêm adapter audit/replay được duyệt riêng; hiện KHÔNG tự import.
+Clean không được train, fine-tune, sửa file hay truyền optimizer/RNG/weights sang
+victim. Chỉ load weights để inference. Mặc định tự dò **metadata**, sâu một cấp
+trong `DataHome/runs` và thư mục cha của output (mặc định U:/backdooranalog/runs),
+chỉ các thư mục PiW; không quét toàn ổ đĩa, không đọc weights/TEST khi FindClean.
+Preflight chỉ dùng nguồn duy nhất khớp; nhiều nguồn cùng khớp thì liệt kê và dừng.
+Không chọn theo điểm TEST, tên mới nhất hoặc epoch tốt nhất. Có thể chỉ rõ
+**thư mục run nguồn** (không chỉ một file `.pt`) để giải quyết nhập nhằng.
+Preflight kiểm manifest checksum,
+full input/split/order fingerprints, seed42/final199, optimizer/LR/batch/accumulation,
+drop_last/AMP, source của model và preprocessing, checkpoint/evaluation/NPZ hashes.
+Original runtime/GPU được giữ trong provenance; không giả thành training mới.
 
-TEST chỉ mở sau khi cả sáu victim đạt final199. Sáu dose0,.2,.4,.6,.8,1;
+Sau khi cả ba victim xong, chạy lại Clean + trigger BackTime mới ở sáu dose.
+Replay GT/IDs và clean metrics nguồn, đối chiếu clean prediction mới với cache
+nguồn (tối đa 0.05 mm mỗi tọa độ). Sai khác vượt ngưỡng cần kiểm tra backend/source,
+không tự train lại để vượt gate. TEST arrays nguồn không mở ở preflight.
+
+Layouts được hỗ trợ: HPE-Li `piw_lr_control.resolved.json` (v3), HPE-Li
+`piw_hpeli_clean.resolved.json` và các PiW two-backbone `plan.json` với cell
+`attacks/<backbone>/seed42/clean`. Có layout không có nghĩa recipe khớp:
+HPE-Li Clean v1 dùng drop_lastFalse, bị từ chối với victim hiện dùng True;
+MetaFi++ SGD hoặc model/pretrained khác cũng bị từ chối. Không tự đổi victim recipe.
+
+TEST chỉ mở sau khi cả ba victim mới đạt final199. Sáu dose0,.2,.4,.6,.8,1;
 T-error/PCK endpoint1; Target-PCK .2*cleanGT distance(6,4); DCE mean5 positive
 doses, clean MPJPE/PA all14, same-victim no-trigger controls, matched Clean+trigger,
 triggered-GT errors, nontarget drift. Save full XYZ/GT/targets/IDs/doses/displacement
@@ -116,10 +142,20 @@ người vận hành chạy clone/pull trực tiếp trong terminal của máy V
 $repo = 'C:\Users\Van\PiWBackTimeThreeBackbones'
 $python = 'C:\Users\Van\backdooranalog\envs\dose-backdoor\python.exe'
 Set-Location $repo
+.\remote_tools\Start-PiWBackTimeThreeBackbones.ps1 -Mode FindClean -PythonExe $python
 .\remote_tools\Start-PiWBackTimeThreeBackbones.ps1 -Mode Inspect -PythonExe $python
 .\remote_tools\Start-PiWBackTimeThreeBackbones.ps1 -Mode CheckOnly -PythonExe $python
 .\remote_tools\Start-PiWBackTimeThreeBackbones.ps1 -Mode Prepare -PythonExe $python
 ```
+
+Không cần nhớ đường dẫn Clean để bắt đầu: FindClean chỉ liệt kê metadata,
+CheckOnly mới audit đầy đủ và freeze nguồn. Nếu có nhiều nguồn khớp, dùng
+`-CleanHPELi RUN_DIR`, `-CleanWiFlow RUN_DIR`, `-CleanMetaFi RUN_DIR` theo danh sách
+đã tìm được; giữ cùng options khi Prepare/Launch/Verify.
+Python tương đương: lặp `--clean-reference hpeli=RUN_DIR`,
+`--clean-reference wiflow=RUN_DIR`, `--clean-reference metafiplusplus=RUN_DIR`.
+Dùng **output v2 mới**, không sửa/ghi đè plan v1 đã Prepare. Nguồn đã freeze
+không được tự chọn lại khi xuất hiện run mới hoặc resume.
 
 `Inspect` không đọc dataset/CUDA hoặc ghi output. `CheckOnly` full-data CPU audit,
 khóa source/runtime/input/recipe vào plan. `Prepare` thêm disposable GPU smokes:
@@ -128,7 +164,7 @@ Không save smoke weights thành checkpoint train. Prepare không phải Launch.
 Chạy Prepare trong lúc WiFlow/MM-Fi vẫn chạy để thử cùng điều kiện chia sẻ GPU.
 Nếu fail/OOM, không Launch, không tự giảm batch hay dừng job MM-Fi để vượt gate.
 
-Sau khi xem gate và chủ động quyết định chạy **100 attacker + 6x200 victim epochs**:
+Sau khi xem gate và chủ động quyết định chạy **100 attacker + 3x200 BackTime epochs**:
 
 ```powershell
 .\remote_tools\Start-PiWBackTimeThreeBackbones.ps1 -Mode Launch -PythonExe $python
@@ -143,10 +179,13 @@ vượt guard: kiểm tra PID/output trước rồi hỏi người vận hành. 
 shrink batch, AMP fallback hoặc đổi recipe sau Prepare. Nếu Prepare fail/OOM,
 giữ log, không tiếp tục Launch.
 
-Output mặc định `U:\backdooranalog\runs\piw_backtime_three_backbones_s42_v1`:
+Output mặc định `U:\backdooranalog\runs\piw_backtime_three_backbones_reuse_clean_s42_v2`:
 `plan.json`, `capacity.json`, `attacker/fit_checkpoint.pt`, `attacker/trigger.pt`,
-`attacker/provenance.json`; `victims/<backbone>/{clean,backtime}/checkpoint.pt`,
+`attacker/provenance.json`; `victims/<backbone>/backtime/checkpoint.pt`,
 và mỗi BackTime cell có `predictions.npz`/`evaluation.json`.
+Không tạo `victims/<backbone>/clean`. `plan.json` chứa original reference paths,
+hashes, source profile/plan/runtime/execution. Evaluation chứa audit/replay nguồn;
+không đổi provenance của Clean thành provenance của victim mới.
 
 ## Verification boundaries
 
@@ -156,7 +195,7 @@ trên checkout mới trước Launch. Không có kết quả TEST mới hoặc s
 được tạo bởi việc setup này. Các recipe/target từng được xem TEST ở giai đoạn
 phát triển; không gọi đây là blind evaluation đầu tiên.
 
-Local gate 2026-11-10 sau khi khóa queue: **125 tests passed**, exit0 (34 PiW +91 BackTime
+Gate v1 lịch sử 2026-11-10 trước sửa reuse: **125 tests passed**, exit0 (34 PiW +91 BackTime
 MM-Fi/runner/transfer regressions), 4 warnings pin_memory do CPU không có
 accelerator. Gồm actual model CPU forward/backward của cả ba backbone (B2),
 actual HPE-Li generator backward B1/native train-mode, phase/history/sparse
@@ -169,8 +208,17 @@ bằng MKL_THREADING_LAYER=SEQUENTIAL trước khi mở Python; không đổi me
 dùng công thức PA thay thế để vượt test. Scientific BackTime MM-Fi hash không
 đổi so với HEAD; không chạy hay sửa các job MM-Fi trên Vân.
 
-Hai test dispatch kiểm tra exact HPE-Li/Clean → HPE-Li/BackTime → WiFlow/Clean
+Hai test dispatch v1 trước đây kiểm tra exact HPE-Li/Clean → HPE-Li/BackTime → WiFlow/Clean
 → WiFlow/BackTime → MetaFi++/Clean → MetaFi++/BackTime và fail-stop không retry/
 mở TEST/chạy model tiếp. Capacity receipt từ chối đổi thứ tự, config binding
 từ chối đảo queue. Đây là kiểm tra điều phối local, không phải launch thật.
 SSH BatchMode tới máy Vân bị từ chối xác thực; chưa chạy Prepare/Launch từ đây.
+
+Gate v2 reuse kiểm tra queue chỉ ba BackTime, hard rejection của mọi lệnh train
+Clean, missing-reference fail trước data/attacker, read-only source hashes,
+recipe/partial/poison/wrong-model rejection, deferred TEST arrays và native
+attacker100 + ba toy victims200 với saved-metric/reference replay. Xem kết quả
+test mới trong amendment của experiment plan; không suy CPU toy thành full PiW/CUDA.
+Gate v2: **150 passed**, exit0,105.35s (59PiW +91regression), bốn CPU pin_memory
+warnings như dự kiến. PowerShell AST/Inspect/FindClean pass, bao gồm forwarding
+paths có dấu cách, không ghi output. Gate này không phải audit artifact/CUDA thật trên Vân.

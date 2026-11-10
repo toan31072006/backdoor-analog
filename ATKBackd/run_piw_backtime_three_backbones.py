@@ -1,7 +1,7 @@
 """Setup-only by default: PiW HPE-Li BackTime -> three independent victims.
 
-New serial experiment: HPE-Li -> WiFlow -> MetaFi++, each Clean then BackTime.
-Matched scratch Clean controls, no historical imports; no MM-Fi job management.
+New serial experiment: HPE-Li -> WiFlow -> MetaFi++, BackTime victims only.
+Reuse audited historical Clean controls read-only; no MM-Fi job management.
 Prepare audits data and runs disposable capacity smokes; Launch is separate.
 """
 from __future__ import annotations
@@ -23,9 +23,10 @@ import uuid
 os.environ.setdefault('MKL_THREADING_LAYER', 'SEQUENTIAL')
 import numpy as np
 import run_piw_hpeli_clean as base
+import piw_backtime_clean_reference as clean_ref
 
 HERE = Path(__file__).resolve().parent
-PROFILE = 'piw_backtime_hpeli_shared_three_backbones_s42_v1'
+PROFILE = 'piw_backtime_hpeli_shared_three_backbones_reuse_clean_s42_v2'
 BACKBONES = ('hpeli', 'wiflow', 'metafiplusplus')
 GRID = [0., .2, .4, .6, .8, 1.]
 RECIPES = {
@@ -36,17 +37,21 @@ RECIPES = {
 }
 
 
-def config(data_home, outdir, dataset=None, device='cuda:0'):
+def config(data_home, outdir, dataset=None, device='cuda:0', clean_references=None):
     from piw_v2_adapter import target_contract
     from attack.backtime_piw import configuration
     cfg = base.configuration(data_home, outdir, device, dataset)
-    cfg.update(profile=PROFILE, backbones=list(BACKBONES), roles=['clean', 'backtime'],
-        training_queue=[dict(backbone=b, role=role) for b in BACKBONES for role in ('clean', 'backtime')],
+    refs = clean_references or {}
+    if set(refs) - set(BACKBONES):
+        raise ValueError('Unknown Clean reference backbone')
+    cfg.update(profile=PROFILE, backbones=list(BACKBONES), roles=['backtime'],
+        training_queue=[dict(backbone=b, role='backtime') for b in BACKBONES],
+        clean_references={b: str(Path(refs[b]).resolve()) if refs.get(b) else None for b in BACKBONES},
         drop_last=True, target=target_contract(), eval_doses=GRID, rho=.1,
         recipes=deepcopy(RECIPES), attacker=asdict(configuration()),
         execution_policy='one serial PiW worker: HPE-Li -> WiFlow -> MetaFi++; may coexist with the existing MM-Fi WiFlow job after capacity gate; no automatic retry/kill/fallback',
         attacker_policy='fresh HPE-Li TRAIN surrogate; shared frozen attacker and adaptive IDs/doses for three scratch victims',
-        control_policy='three new matched scratch Clean references; no historical checkpoint imports',
+        control_policy='read-only audited historical Clean references; auto-discover metadata in DataHome/runs and output parent when unspecified; freeze unique matching source without TEST-score selection; never train Clean; missing/mismatched/ambiguous reference is an error',
         interpretation='exploratory PiW14 digital-amplitude BackTime adaptation, seed42, not exact forecasting reproduction or complete paper table')
     return json.loads(json.dumps(cfg, allow_nan=False))
 
@@ -110,12 +115,36 @@ def preflight(cfg):
         raise ValueError('Nonempty unbound output; preserve it and choose a new directory')
     if any(root.rglob('*.pt')):
         raise ValueError('Unbound checkpoints found; choose a new output')
+    found = clean_ref.discover(cfg)
+    candidates = {b: [cfg['clean_references'][b]] if cfg['clean_references'][b] else found[b] for b in BACKBONES}
+    missing = [b for b in BACKBONES if not candidates[b]]
+    if missing:
+        raise ValueError('No historical Clean found for ' + ', '.join(missing)
+                         + '; use mode discover or --clean-reference BACKBONE=RUN_DIR'
+                         + '; Clean will NOT be retrained automatically')
     inputs, datasets = base.audit_inputs(cfg)
     for dataset in datasets.values():
         for row in dataset.items:
             target_pose(dataset.load_pose(row['kpt']), 1.)
+    references = {}
+    for b in BACKBONES:
+        valid, errors = [], []
+        for folder in candidates[b]:
+            try:
+                valid.append(clean_ref.audit(folder, b, cfg, inputs))
+            except (ValueError, OSError, KeyError) as exc:
+                errors.append(f'{folder}: {exc}')
+        if len(valid) != 1:
+            raise ValueError(f'{b}: expected ONE matching historical Clean, found {len(valid)}. '
+                             f'Valid: {[v["manifest"] for v in valid]}. Rejected: {errors}. '
+                             'Specify --clean-reference to disambiguate; no Clean retraining.')
+        references[b] = valid[0]
+    for b, reference in references.items():
+        model = build_model(b, 'cpu')
+        model.load_state_dict(clean_ref.load(reference)['model'], strict=True)
+        del model
     record = signed(dict(profile=PROFILE, cfg=cfg, sources=sources(),
-                         runtime=runtime(), inputs=inputs))
+                         runtime=runtime(), inputs=inputs, clean_references=references))
     write_json(plan_path(cfg), record)
     return record
 
@@ -123,13 +152,19 @@ def preflight(cfg):
 def load_plan(cfg, full_hash=False):
     saved = read_json(plan_path(cfg))
     unsigned = {k: v for k, v in saved.items() if k != 'plan_sha256'}
-    canonical = config(cfg['data_home'], cfg['outdir'], cfg['dataset_root'], cfg['device'])
+    canonical = config(cfg['data_home'], cfg['outdir'], cfg['dataset_root'], cfg['device'], cfg['clean_references'])
     if (saved.get('plan_sha256') != base.object_sha(unsigned) or cfg != canonical
             or saved.get('cfg') != cfg or saved.get('sources') != sources()
             or saved.get('runtime') != runtime()
             or saved.get('profile') != PROFILE
             or saved.get('inputs', {}).get('fingerprint') != base.object_sha(saved['inputs']['splits'])):
         raise ValueError('Plan/config/source/runtime/input binding changed')
+    if set(saved.get('clean_references', {})) != set(BACKBONES):
+        raise ValueError('Missing historical Clean reference audit; no training fallback')
+    for b, record in saved['clean_references'].items():
+        if record.get('backbone') != b:
+            raise ValueError('Historical Clean reference backbone changed')
+        clean_ref.files_match(record)
     for split, entry in saved['inputs']['splits'].items():
         path = Path(cfg['dataset_root']) / split / (split + '_list.txt')
         if base.file_sha(path) != entry['official_list_sha256']:
@@ -376,6 +411,10 @@ def cell(plan, backbone, role):
 def checkpoint(plan, backbone, role, final=False):
     import torch
     from attack.backtime_mmfi import _sha
+    if role == 'clean':
+        if backbone not in BACKBONES:
+            raise ValueError('Unknown Clean backbone')
+        return clean_ref.load(plan['clean_references'][backbone])
     blob = torch.load(cell(plan, backbone, role)/'checkpoint.pt', map_location='cpu', weights_only=False)
     value = dict(blob)
     claimed = value.pop('sha256', None)
@@ -416,6 +455,8 @@ def train_epoch(model, opt, loader, backbone, device, trigger=None):
 
 
 def train(plan, backbone, role):
+    if backbone not in BACKBONES or role != 'backtime':
+        raise ValueError('Only BackTime victims may train; Clean is a read-only historical reference')
     from torch.utils.data import DataLoader
     from attack.backtime_mmfi import _sha
     cfg = plan['cfg']
@@ -425,8 +466,7 @@ def train(plan, backbone, role):
     model = build_model(backbone, cfg['device'])
     opt = optimizer(model, backbone)
     data = datasets_for(plan)['training']
-    if role == 'backtime':
-        data = Pairs(data, trigger.training_indices, doses)
+    data = Pairs(data, trigger.training_indices, doses)
     folder = cell(plan, backbone, role)
     folder.mkdir(parents=True, exist_ok=True)
     path, start = folder/'checkpoint.pt', 0
@@ -485,10 +525,15 @@ def evaluate(plan, backbone):
         blob = checkpoint(plan,backbone,role,final=True)
         model = build_model(backbone,cfg['device'])
         model.load_state_dict(blob['model'],strict=True)
+        from attack.backtime_mmfi import _sha
+        before = _sha(model.state_dict())
         grids[role] = infer_grid(model,data,trigger,cfg['device'])
+        if _sha(model.state_dict()) != before:
+            raise ValueError('Evaluation changed model/BN state')
         del model
         if cfg['device'].startswith('cuda:'):
             torch.cuda.empty_cache()
+    reference_audit = clean_ref.replay(plan['clean_references'][backbone], truth, names.tolist(), grids['clean'][:,0])
     metrics = measure_predictions(truth, grids['backtime'][:,0], grids['backtime'], grids['clean'][:,0], grids['clean'])
     targets = np.stack([target_pose(truth,d) for d in GRID],axis=1)
     residual = (grids['backtime'][:,:, [11,13]]-grids['backtime'][:,0:1,[11,13]])-(targets[:,:,[11,13]]-truth[:,None,[11,13]])
@@ -496,10 +541,10 @@ def evaluate(plan, backbone):
         predictions=grids['backtime'],reference_predictions=grids['clean'],targets=targets,
         displacement_residuals=residual)
     result = dict(profile=PROFILE, status='COMPLETE', plan_sha256=plan['plan_sha256'],backbone=backbone,
-                  metrics=metrics, artifacts={
+                  metrics=metrics, clean_reference=reference_audit, artifacts={
                       'predictions.npz':base.file_sha(folder/'predictions.npz'),
                       'checkpoint.pt':base.file_sha(folder/'checkpoint.pt'),
-                      'clean_checkpoint.pt':base.file_sha(cell(plan,backbone,'clean')/'checkpoint.pt'),
+                      'clean_checkpoint.pt':base.file_sha(plan['clean_references'][backbone]['checkpoint']),
                       'trigger.pt':base.file_sha(attacker_path(plan))})
     write_json(folder/'evaluation.json',result)
     return verify_evaluation(plan,backbone)
@@ -511,7 +556,7 @@ def verify_evaluation(plan, backbone):
     folder = cell(plan,backbone,'backtime')
     result = read_json(folder/'evaluation.json')
     paths = {'predictions.npz':folder/'predictions.npz', 'checkpoint.pt':folder/'checkpoint.pt',
-             'clean_checkpoint.pt':cell(plan,backbone,'clean')/'checkpoint.pt','trigger.pt':attacker_path(plan)}
+             'clean_checkpoint.pt':Path(plan['clean_references'][backbone]['checkpoint']),'trigger.pt':attacker_path(plan)}
     if (result.get('profile') != PROFILE or result.get('status') != 'COMPLETE'
             or result.get('backbone') != backbone or result.get('plan_sha256') != plan['plan_sha256']
             or result.get('artifacts') != {k:base.file_sha(p) for k,p in paths.items()}):
@@ -530,21 +575,35 @@ def verify_evaluation(plan, backbone):
         if not np.array_equal(residual,z['displacement_residuals']):
             raise ValueError('Saved displacement residuals changed')
         metrics = measure_predictions(truth,z['predictions'][:,0],z['predictions'],z['reference_predictions'][:,0],z['reference_predictions'])
+        reference_audit = clean_ref.replay(plan['clean_references'][backbone], truth, z['names'].tolist(), z['reference_predictions'][:,0])
     replay_equal(result['metrics'],metrics)
+    replay_equal(result['clean_reference'], reference_audit)
     return result
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode',choices=['inspect','check','prepare','launch','status','verify'],default='inspect')
+    parser.add_argument('--mode',choices=['inspect','discover','check','prepare','launch','status','verify'],default='inspect')
     parser.add_argument('--data-home',required=True)
     parser.add_argument('--dataset')
     parser.add_argument('--outdir',required=True)
     parser.add_argument('--device',default='cuda:0')
+    parser.add_argument('--clean-reference',action='append',default=[],metavar='BACKBONE=RUN_DIR',
+                        help='Optional explicit historical Clean run directory; otherwise bounded metadata discovery, no Clean retraining')
     args = parser.parse_args(argv)
-    cfg = config(args.data_home,args.outdir,args.dataset,args.device)
+    references = {}
+    for value in args.clean_reference:
+        b, sep, path = value.partition('=')
+        if not sep or not path or b not in BACKBONES or b in references:
+            parser.error('Use one --clean-reference BACKBONE=RUN_DIR per known backbone')
+        references[b] = path
+    cfg = config(args.data_home,args.outdir,args.dataset,args.device,references)
     if args.mode == 'inspect':
         print(json.dumps(cfg,indent=2))
+        return
+    if args.mode == 'discover':
+        print(json.dumps(dict(candidates=clean_ref.discover(cfg),
+            note='Metadata candidates only, not validated references. CheckOnly audits recipes/inputs/weights. No training or writes.'),indent=2))
         return
     if args.mode == 'status':
         root = Path(cfg['outdir'])
