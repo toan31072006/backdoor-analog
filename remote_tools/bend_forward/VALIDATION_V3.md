@@ -48,6 +48,28 @@ must fail rather than be interpreted as an idle GPU.
 
 ## Gates
 
+### Follow-up correction: actual CIM Name projection
+
+The user's first published v3 GpuCheck still refused known desktop PIDs before
+any training or output creation. Reproduction on Windows identified a missing
+`Name` in `process_snapshot()`'s actual CIM `Select-Object` projection. The
+classifier requires this field; earlier mocked snapshots already supplied it,
+and the earlier live guard check had no GPU process records, hiding the defect.
+
+- Add only `Name` to the read-only projection. No guard policy, model, payload,
+  data or training recipe changes.
+- Two regression tests (projection-contract and real Windows CIM) failed on
+  the old code and pass after the fix. Actual local CIM now includes `Name`
+  on 324/324 process rows; no known local desktop row lacked creation time.
+- Focused post-fix gate: **147 passed, 6 deselected**, exit0, **28.25s**, on
+  `test_bend_gpu_guard.py` and `test_bend_forward.py`. Heavy CPU optimizer,
+  B32-update and full tiny-geometry tests were not rerun for this metadata-only
+  change. Root: `D:\bend_name_fix_b81bd83dcf2c4d2ab0a1c6fd60784326`.
+- The 320-test gate below predates this correction, not a new full-suite gate.
+  Actual Van GPU classification and training remain unverified locally.
+
+### Original v3 validation, before Name correction
+
 - **320 passed**, exit0, **181.97s**, final gate on:
   `test_bend_gpu_guard.py`, `test_bend_forward.py`,
   `test_mmfi_action_targets.py`, `test_piw_action_targets.py`,

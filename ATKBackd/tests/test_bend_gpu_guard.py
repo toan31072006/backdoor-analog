@@ -109,6 +109,27 @@ def mock_gpu(monkeypatch, rows, ids, records, driver='WDDM'):
         SimpleNamespace(stdout=xml(records, driver) if '-x' in cmd else '\n'.join(map(str, ids))))
 
 
+def test_process_snapshot_keeps_name_for_desktop_classification(monkeypatch):
+    original = process(42, 'Code.exe', r'C:\Program Files\Microsoft VS Code\Code.exe')
+    def powershell(cmd, **kwargs):
+        # Model actual Select-Object projection, NOT a prefilled Name mock.
+        selected = cmd[-1].split('Select-Object ', 1)[1].split('|', 1)[0]
+        fields = [field.strip() for field in selected.split(',')]
+        return SimpleNamespace(stdout=json.dumps({k: original[k] for k in fields}))
+    monkeypatch.setattr(runner.subprocess, 'run', powershell)
+    row = runner.process_snapshot()[0]
+    assert row['Name'] == 'Code.exe'
+    assert desktop_exemption(42, row, dict(type='C+G', name='Code.exe'), 'WDDM') is not None
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Actual Windows CIM field contract')
+def test_live_windows_snapshot_includes_current_python_name():
+    rows = runner.process_snapshot()
+    own = next(row for row in rows if row['ProcessId'] == os.getpid())
+    assert own['Name'].lower().startswith('python')
+    assert own['ExecutablePath'] and own['CreationDate']
+
+
 def test_guard_accepts_known_desktop_and_kernel_not_as_training_peers(monkeypatch):
     rows = [process(10000+i, name, path) for i, (name,path) in enumerate(DESKTOPS)]
     records = [(row['ProcessId'], 'C+G', row['ExecutablePath']) for row in rows]

@@ -2,6 +2,17 @@
 
 ## Material Passport
 
+### Operational correction 2026-11-12: include CIM Name in Bend snapshot
+
+User's v3 GpuCheck still rejected all desktop PIDs BEFORE any output/training.
+Exact code cause reproduced locally: Select-Object omitted Name, although the
+classifier requires it; prior mocked snapshots prefilled Name and hid this bug.
+Add Name to the read-only CIM projection, with both projection-contract and
+actual Windows CIM regression tests. No guard relaxation, payload/recipe/model
+change, new training stage or Clean/BackTime retraining. Failed GpuCheck creates
+no v3 plan/output, so a NEW checkout may still use the untouched fresh v3 roots;
+never edit a source-hashed plan or bypass existing-output refusal.
+
 ### User-directed launch 2026-11-12: Bend first training, WDDM guard repair
 
 User confirms BackTime has finished and Bend has NOT trained; now requests the

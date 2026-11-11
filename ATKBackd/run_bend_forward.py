@@ -208,7 +208,7 @@ def geometry(args):
 
 def process_snapshot():
     """Read-only Windows process evidence; never kill/suspend or interpolate input."""
-    script = ('Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,'
+    script = ('Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,'
               'CreationDate,ExecutablePath,CommandLine | ConvertTo-Json -Compress')
     result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
         check=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30)
