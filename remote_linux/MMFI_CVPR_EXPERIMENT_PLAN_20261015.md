@@ -2,6 +2,36 @@
 
 ## Material Passport
 
+### User-approved correction 2026-11-11: PiW forward Bend v2, preserve v1
+
+User inspected the fixed TRAIN previews and requested correcting PiW to true
+forward flexion. The three downloaded PiW TRAIN examples replay v1 exactly;
+their knee-side diagnostic and same-frame +40/-40 comparison support -40d
+about the UNCHANGED native left-minus-right hip axis. This is a fixed
+dataset-level sign calibration, not a per-pose knee heuristic or a claim about
+the dataset's coordinate-system handedness. No TEST-based target selection.
+
+- PiW payload version `bend_forward_piw_v2`: signed rotation -40d degrees;
+  declared forward is minus cross(lateral, torso-up). Both hips/legs stay
+  fixed and all native bones retain their lengths. MM-Fi payload spec and
+  rotations remain `bend_forward_mmfi_v1`, +40d degrees.
+- Keep display body-up independent of the forward sign: orthogonalize clean
+  torso-up against the hip axis, never derive up from a sign-flipped forward.
+  Validate actual 3D rotation, not merely a mirrored PNG. Three fixed TRAIN
+  examples diagnose direction, not all-pose anatomy/contact/physical validity.
+- New runner profile v2, separate checkout and NEW output directories
+  `runs/mmfi_bend_forward_s42_v2` / `runs/piw_bend_forward_s42_v2`.
+  Refuse v1 output roots; retain explicit archived PiW v1 replay only. Never
+  rewrite/migrate v1 plans, geometry, checkpoints or the running WiFlow checkout.
+- Recipes, native A1 trigger/prior/poison pairing, seed42, full split, doses,
+  metrics, no-Clean policy and exploratory/not-complete-T7 status from setup remain
+  unchanged. Re-run BOTH real TRAIN geometry audits from the frozen v2 checkout
+  and obtain visual approval BEFORE Prepare/Launch. No training authorized by
+  this correction alone; preserve other jobs and all historical artifacts.
+- Local synthetic/CPU and three-example replay checks will be recorded in
+  `remote_tools/bend_forward/VALIDATION_V2.md`. Raw TRAIN pose files/images
+  remain local and must not be uploaded with the code commit.
+
 ### User-approved setup 2026-11-11: TRUE forward Bend, both datasets, seed42
 
 User confirmed A1/WiFiDoor HPE-Li on BOTH MM-Fi/P1S1 and PiW one-person,

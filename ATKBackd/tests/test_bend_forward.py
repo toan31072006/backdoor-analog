@@ -8,7 +8,7 @@ import sys
 import numpy as np
 import pytest
 
-from attack.bend_forward import axes, specification, target_pose
+from attack.bend_forward import axes, display_basis, specification, target_pose
 from attack.payload import MMFI_EDGES
 from attack.piw_action_targets import EDGES
 import run_bend_forward as runner
@@ -65,7 +65,8 @@ def test_exact_40_degree_schedule_monotonic_and_se3_equivariance(dataset):
         offset = result[upper] - origin
         offset -= np.dot(offset, axis)*axis
         angle = np.arctan2(np.dot(np.cross(initial, offset), axis), np.dot(initial, offset))
-        np.testing.assert_allclose(np.rad2deg(angle), 40*dose, atol=1e-10, rtol=0)
+        expected_sign = 1 if dataset == 'mmfi' else -1  # independent of display axes/spec fields
+        np.testing.assert_allclose(np.rad2deg(angle), expected_sign*40*dose, atol=1e-10, rtol=0)
         movement = np.linalg.norm(result[spec['target_joints']]-original[spec['target_joints']], axis=-1)
         assert np.all(movement >= previous-1e-12)
         previous = movement
@@ -115,11 +116,13 @@ def test_plan_native_recipe_new_target_and_no_clean(tmp_path, monkeypatch, datas
     monkeypatch.setattr(piw, 'trigger_record', lambda *a, **k: {'pattern': 'native', **k})
     monkeypatch.setattr(runner, 'source_hashes', lambda: {'test': 'source'})
     args = SimpleNamespace(dataset=dataset, data_home=str(tmp_path/'data'),
-        outdir=str(tmp_path/'runs'/f'{dataset}_bend_forward_s42_v1'), dataset_root=None)
+        outdir=str(tmp_path/'runs'/f'{dataset}_bend_forward_s42_v2'), dataset_root=None)
     plan = runner.build_plan(args)
     cfg = plan['cells'][0]['cfg']
     spec = cfg['action_payload'] if dataset == 'mmfi' else cfg['payload']
     assert spec == specification(dataset)
+    assert plan['profile'] == f'{dataset}_hpeli_a1_bend_forward_s42_v2'
+    assert plan['contract']['signed_angle_deg'] == (40 if dataset == 'mmfi' else -40)
     assert len(plan['cells']) == 1 and plan['contract']['clean_training'] is False
     assert plan['contract']['clean_weight_import'] is False
     assert plan['contract']['doses'] == [0, .2, .4, .6, .8, 1]
@@ -211,6 +214,7 @@ def test_helper_serial_order_and_no_process_mutation():
     assert 'Start-Process' not in source and 'Stop-Process' not in source
     assert 'ApproveGeometry' in source and 'if ($LASTEXITCODE -ne 0)' in source
     assert 'U:\\backdooranalog' in source
+    assert '[ValidateRange(2,9999)][int]$RunVersion = 2' in source
 
 
 def test_check_only_never_imports_cuda_or_writes_output(tmp_path, capsys):
@@ -249,7 +253,7 @@ def test_bend_profile_exact_optimizer_rng_resume(tmp_path, dataset):
         folder = tmp_path/name; folder.mkdir()
         runner.write(folder/'inputs.json', {'synthetic': True})
         runner.write(folder/'prepared.json', {'execution': context})
-        plan = dict(outdir=str(folder), profile=f'{dataset}_hpeli_a1_bend_forward_s42_v1', plan_sha256='BEND_TEST_ONLY')
+        plan = dict(outdir=str(folder), profile=f'{dataset}_hpeli_a1_bend_forward_s42_v2', plan_sha256='BEND_TEST_ONLY')
         if dataset == 'mmfi': module.seed_all()
         else: module.seed_all('cpu')
         model = Tiny()
@@ -276,6 +280,8 @@ def test_bend_profile_exact_optimizer_rng_resume(tmp_path, dataset):
         assert saved['epoch'] == epochs-1 and saved['profile'] == plan['profile']
         with pytest.raises(ValueError, match='Foreign'):
             module.checkpoint(path, cfg, dict(plan, profile='old_leg_rotation'))
+        with pytest.raises(ValueError, match='Foreign'):
+            module.checkpoint(path, cfg, dict(plan, profile=f'{dataset}_hpeli_a1_bend_forward_s42_v1'))
         results.append(copy.deepcopy(model.state_dict()))
     for key in results[0]:
         torch.testing.assert_close(results[0][key], results[1][key], rtol=0, atol=0)
@@ -398,7 +404,7 @@ def test_recycled_peer_identity_refused_before_training(tmp_path, monkeypatch):
 
 
 def test_main_geometry_writes_plan_before_own_logs_not_unrelated_output(tmp_path, monkeypatch):
-    root = tmp_path/'runs/mmfi_bend_forward_s42_v1'
+    root = tmp_path/'runs/mmfi_bend_forward_s42_v2'
     plan = dict(outdir=str(root), profile='SYNTHETIC_ONLY', plan_sha256='test')
     monkeypatch.setattr(runner, 'build_plan', lambda a: plan)
     def stage(args):
@@ -407,3 +413,104 @@ def test_main_geometry_writes_plan_before_own_logs_not_unrelated_output(tmp_path
     monkeypatch.setattr(runner, 'run_stage', stage)
     runner.main(['--dataset', 'mmfi', '--mode', 'geometry', '--data-home', str(tmp_path/'home'),
         '--outdir', str(root)])
+
+
+def test_mmfi_spec_and_actual_rotation_unchanged_from_published_v1():
+    expected = dict(version='bend_forward_mmfi_v1', dataset='mmfi',
+        kind='rigid_upper_body_hip_axis', pivots=[0], target_joints=list(range(7, 17)),
+        hip_axis=[4, 1], origin=[0], theta_max_deg=40.,
+        forward_convention='cross(left_hip-right_hip, pelvis_to_thorax)',
+        note='Pelvis and both legs fixed; new trunk-flexion payload.')
+    assert specification('mmfi') == expected
+    source = pose('mmfi'); source[4] += [.02, .01, .03]
+    axis = source[4]-source[1]; axis /= np.linalg.norm(axis)
+    for dose in [0., .2, .4, .6, .8, 1.]:
+        angle = np.deg2rad(40*dose)
+        reference = source.copy()
+        for j in range(7, 17):
+            v = source[j]-source[0]
+            reference[j] = source[0] + (np.cos(angle)*v + np.sin(angle)*np.cross(axis, v)
+                + (1-np.cos(angle))*np.dot(axis, v)*axis)
+        np.testing.assert_allclose(target_pose(source, dose, expected), reference, atol=2e-15, rtol=0)
+
+
+def test_piw_v2_actual_flexion_is_toward_independently_declared_knee_side():
+    # Synthetic coordinates: superior +z, anterior -y, actual left-minus-right hip axis -x.
+    # Knees bend toward -y. Do NOT obtain anterior from the operator's forward vector.
+    source = pose('piw')
+    source[[9, 11], 1] = -.12
+    source[[12, 13], 1] = 0.
+    anterior = np.array([0., -1., 0.])
+    old = specification('piw', version='bend_forward_piw_v1')
+    current = specification('piw')
+    assert current['version'] == 'bend_forward_piw_v2'
+    for dose in [.2, .4, .6, .8, 1.]:
+        result = target_pose(source, dose, current)
+        prior = target_pose(source, dose, old)
+        assert (result[0]-source[0]) @ anterior > 0
+        assert (prior[0]-source[0]) @ anterior < 0
+        # Independent Cartesian expectation for rotating neck about -x by -40d.
+        angle = np.deg2rad(40*dose)
+        np.testing.assert_allclose(result[0], [0, -.6*np.sin(angle), 1+.6*np.cos(angle)],
+            atol=1e-12, rtol=0)
+        np.testing.assert_array_equal(result[[5, 7, 9, 11, 12, 13]], source[[5, 7, 9, 11, 12, 13]])
+
+
+def test_explicit_legacy_spec_replay_and_no_implicit_migration():
+    current = specification('piw')
+    old = specification('piw', version='bend_forward_piw_v1')
+    assert old['version'] == 'bend_forward_piw_v1' and 'rotation_sign' not in old
+    source = pose('piw')
+    result = target_pose(source, 1., old)
+    np.testing.assert_allclose(result[0], [0, .6*np.sin(np.deg2rad(40)),
+        1+.6*np.cos(np.deg2rad(40))], atol=1e-12, rtol=0)
+    assert not np.allclose(result, target_pose(source, 1., current))
+    old['note'] = 'mutated copy'
+    assert specification('piw', version='bend_forward_piw_v1')['note'] != old['note']
+    for dataset, version in [('mmfi', 'bend_forward_piw_v1'), ('piw', 'v999')]:
+        with pytest.raises(ValueError, match='Unknown frozen'):
+            specification(dataset, version=version)
+
+
+def test_preview_forward_sign_never_flips_body_up_even_with_tilted_hips():
+    source = pose('piw'); source[5] += [.01, .05, .08]
+    old = specification('piw', version='bend_forward_piw_v1')
+    current = specification('piw')
+    origin, old_basis = display_basis(source, old)
+    origin2, new_basis = display_basis(source, current)
+    np.testing.assert_array_equal(origin, origin2)
+    np.testing.assert_array_equal(old_basis[:, 1], new_basis[:, 1])
+    np.testing.assert_array_equal(old_basis[:, 0], -new_basis[:, 0])
+    np.testing.assert_allclose(new_basis.T @ new_basis, np.eye(2), atol=1e-12, rtol=0)
+    raw_up = .5*(source[2]+source[3])-origin
+    assert raw_up @ new_basis[:, 1] > 0
+    assert target_pose(source, 1., current)[0] @ new_basis[:, 1] != source[0] @ new_basis[:, 1]
+    q, _ = np.linalg.qr(np.random.default_rng(84).normal(size=(3, 3)))
+    q[:, 0] *= np.linalg.det(q)
+    shift = np.array([2., -3., .7])
+    transformed_origin, transformed_basis = display_basis(source @ q.T + shift, current)
+    np.testing.assert_allclose(transformed_origin, origin @ q.T+shift, atol=1e-12, rtol=0)
+    np.testing.assert_allclose(transformed_basis, q @ new_basis, atol=1e-12, rtol=0)
+
+
+@pytest.mark.parametrize('dataset', ['mmfi', 'piw'])
+@pytest.mark.parametrize('version', [0, 1])
+def test_v1_output_root_rejected_before_any_write(tmp_path, dataset, version):
+    root = tmp_path/'runs'/f'{dataset}_bend_forward_s42_v{version}'
+    with pytest.raises(ValueError, match='preserve v1'):
+        runner.main(['--dataset', dataset, '--mode', 'geometry', '--data-home', str(tmp_path/'home'),
+            '--outdir', str(root)])
+    assert not root.parent.exists()
+
+
+def test_archived_plan_untouched_and_refused_not_migrated(tmp_path):
+    root = tmp_path/'runs/piw_bend_forward_s42_v1'; root.mkdir(parents=True)
+    frozen = dict(profile='piw_hpeli_a1_bend_forward_s42_v1',
+        payload=specification('piw', version='bend_forward_piw_v1'))
+    runner.write(root/runner.PLAN_NAME, frozen)
+    before = (root/runner.PLAN_NAME).read_bytes()
+    with pytest.raises(ValueError, match='preserve v1'):
+        runner.load_plan(SimpleNamespace(dataset='piw', data_home=str(tmp_path/'home'),
+            outdir=str(root), dataset_root=None))
+    assert (root/runner.PLAN_NAME).read_bytes() == before
+    assert sorted(p.name for p in root.iterdir()) == [runner.PLAN_NAME]

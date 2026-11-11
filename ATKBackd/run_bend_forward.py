@@ -54,18 +54,19 @@ def build_plan(args):
     from attack.bend_forward import specification
     from run_mmfi_a1_motion_priors_4090 import action_record, trigger_record
     home, root = Path(args.data_home).resolve(), Path(args.outdir).resolve()
-    if (not re.fullmatch(rf'{args.dataset}_bend_forward_s42_v[0-9]+', root.name)
+    root_match = re.fullmatch(rf'{args.dataset}_bend_forward_s42_v([0-9]+)', root.name)
+    if (not root_match or int(root_match.group(1)) < 2
             or root.parent.name.lower() != 'runs' or root.is_relative_to(HERE)
             or home.is_relative_to(root) or root.is_relative_to(home / 'datasets')
             or (root.exists() and not (root / PLAN_NAME).exists()
                 and any(p.name != 'run.lock' for p in root.iterdir()))):
-        raise ValueError('Use NEW runs/<mmfi|piw>_bend_forward_s42_v1; preserve old outputs/source/data')
+        raise ValueError('Use NEW runs/<mmfi|piw>_bend_forward_s42_v2 (or higher); preserve v1/source/data')
     if os.environ.get('CUDA_VISIBLE_DEVICES') not in (None, ''):
         raise ValueError('Physical cuda:0 only, no remapping')
     prior = home / 'actions/data_bend.npy'
     spec = specification(args.dataset)
     runner = module_for(args.dataset)
-    profile = f'{args.dataset}_hpeli_a1_bend_forward_s42_v1'
+    profile = f'{args.dataset}_hpeli_a1_bend_forward_s42_v2'
     if args.dataset == 'mmfi':
         from run_a1_three_tables import _configuration
         from train_backdoor import _resolve_training_config, _validate_training_contract
@@ -92,7 +93,9 @@ def build_plan(args):
         contract=dict(status='EXPLORATORY_NEW_TARGET_NOT_COMPLETE_T7', seed=42,
             counts=runner.COUNTS, doses=GRID, rho=.1, eps=.185,
             training_doses='fixed paired U(.2,1); native A1 selection/operator unchanged',
-            payload=spec, physical_batch=32, epochs=50 if args.dataset == 'mmfi' else 200,
+            payload=spec, signed_angle_deg=spec.get('rotation_sign', 1.) * spec['theta_max_deg'],
+            correction='PiW actual angle reversed; MM-Fi payload unchanged; fresh v2 plans only',
+            physical_batch=32, epochs=50 if args.dataset == 'mmfi' else 200,
             final_epoch=49 if args.dataset == 'mmfi' else 199,
             recipe='SGD .001/momentum.9/wd0/workers4' if args.dataset == 'mmfi'
                 else 'AdamW .001/wd.01/betas(.9,.999)/eps1e-8/workers0/drop_lastTrue',
@@ -101,8 +104,8 @@ def build_plan(args):
             clean_training=False, clean_weight_import=False,
             clean_control='NOT_SUPPLIED; reuse only after separate provenance audit, never auto-train',
             fixed_test_indices=runner.FIXED_TEST,
-            limitations=['Forward handedness must be inspected on TRAIN before approval.',
-                '40d-degree incremental rigid trunk rotation, not conversion of every pose to an action class.',
+            limitations=['Fixed dataset forward convention must be inspected on TRAIN before approval.',
+                'Signed 40d-degree incremental rigid trunk rotation, not conversion of every pose to an action class.',
                 'Bone preservation does not prove anatomy, foot contact, balance or action recognition.',
                 'No new baselines, Clean or clean-model+trigger control; not full T7.',
                 'One seed; no uncertainty/significance or physical RF feasibility claim.']))
@@ -123,7 +126,7 @@ def preview_figure(path, truth, targets, spec):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    from attack.bend_forward import axes
+    from attack.bend_forward import display_basis
     from attack.payload import MMFI_EDGES
     from attack.piw_action_targets import EDGES
     if path.exists() or path.with_suffix('.pdf').exists():
@@ -131,15 +134,14 @@ def preview_figure(path, truth, targets, spec):
     edges = MMFI_EDGES if spec['dataset'] == 'mmfi' else EDGES
     projected = []
     for original, generated in zip(truth, targets.transpose(1, 0, 2, 3)):
-        origin, lateral, _, forward = axes(original, spec)
-        up = np.cross(forward, lateral)
-        basis = np.stack([forward, up], axis=1)
+        origin, basis = display_basis(original, spec)
         projected.append(((original-origin) @ basis, (generated-origin) @ basis))
     values = np.concatenate([p.reshape(-1, 2) for pair in projected for p in pair])
     low, high = values.min(0), values.max(0)
     margin = max(.1, .08*float(np.ptp(values, axis=0).max()))
     fig, axs = plt.subplots(3, 3, figsize=(9, 9), squeeze=False)
-    fig.suptitle(f'{spec["dataset"].upper()} - FORWARD TRUNK BEND / TRAIN TARGET GEOMETRY ONLY\n'
+    angle = spec.get('rotation_sign', 1.) * spec['theta_max_deg']
+    fig.suptitle(f'{spec["version"]} / signed angle {angle:+g}d deg / TRAIN TARGET GEOMETRY ONLY\n'
         'Grey = true pose; orange = target. Right = declared forward; no model prediction.', fontsize=10)
     for row, (original, generated) in enumerate(projected):
         for col, dose in enumerate((0., .5, 1.)):

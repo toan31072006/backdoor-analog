@@ -1,5 +1,20 @@
 # Bend cúi thân về trước — HPE-Li, seed 42, hai dataset
 
+## Bản sửa v2 — chiều cúi PiW
+
+PiW v1 xoay ngược chiều cúi trong ba ví dụ TRAIN đã xem. v2 sửa **góc xoay 3D
+thật sang `-40*d` độ** quanh cùng trục hông `y5-y7`; không chỉ lật hình.
+MM-Fi giữ nguyên payload v1 và `+40*d`. Chiều trước PiW được khai báo là
+`-cross(leftHip-rightHip, up)`, cố định theo dataset, không đoán dấu từ từng
+đầu gối. Đây là hiệu chỉnh từ TRAIN, không phải kết luận về handedness hay
+chứng minh giải phẫu cho mọi pose. Đối chiếu cũ và giới hạn xem
+`VALIDATION_V2.md`; `VALIDATION.md` là hồ sơ kiểm thử v1 lịch sử.
+
+**Giữ nguyên checkout/output v1**, không sửa plan cũ. Clone checkout v2 riêng;
+helper mặc định `RunVersion=2`, từ chối output v1. Cần xuất lại và duyệt CẢ HAI
+hình TRAIN v2 trước Prepare/Launch vì source hash đã đổi, kể cả MM-Fi có cùng
+payload toán học. Không tự chạy training sau Geometry.
+
 Đây là **A1/WiFiDoor**, không phải BackTime. Trigger vẫn dùng motion prior
 `actions/data_bend.npy` lịch sử; nhãn đầu ra MỚI là cúi thân, không phải xoay chân.
 Không đổi tên, ghi đè hay dùng trọng số của các run leg-rotation trước đây.
@@ -9,11 +24,13 @@ Không đổi tên, ghi đè hay dùng trọng số của các run leg-rotation 
 | MM-Fi/P1S1 | Gốc chậu 0 cố định; xoay 7–16 quanh trục qua chậu, hướng `y4-y1` (hông trái trừ phải) | SGD .001, momentum .9, wd 0, batch 32, workers 4, 50 epoch/final49 |
 | PiW one-person | Xoay [0,1,2,3,4,6,8,10] quanh đường nối hai hông 5–7; hông/chân không đổi | AdamW .001, wd .01, batch 32, workers 0, drop_last=True, 200 epoch/final199 |
 
-Góc cộng thêm là `40*d` độ, không ép mọi tư thế thành một action class. Hai xương
+Góc có dấu là MM-Fi `+40*d`, PiW `-40*d` độ, không ép mọi tư thế thành một action class. Hai xương
 vai–hông PiW được giữ độ dài vì CẢ HAI hông nằm trên trục xoay. Không thêm khớp
-ảo vào label. Chiều trước là quy ước `cross(leftHip-rightHip, up)`; cần xem hình
+ảo vào label. Chiều trước là quy ước theo dataset ở trên; cần xem hình
 TRAIN thực trước khi duyệt. Hình chiếu cạnh dùng cùng body frame của pose sạch
-cho cả ba dose; bên phải hình là chiều trước đã khai báo, body-up không phải
+cho cả ba dose; bên phải hình là chiều trước đã khai báo. Body-up lấy từ torso
+sạch chiếu vuông góc trục hông, ĐỘC LẬP với dấu forward nên không bị lật khi
+đổi chiều trước; body-up không phải
 ước lượng trọng lực. Bảo toàn xương không chứng minh tính giải phẫu,
 thăng bằng, tiếp xúc chân hay nhận dạng action.
 
@@ -31,9 +48,19 @@ Clone bản code mới vào `U:\backdooranalog\code\...`, **không pull vào che
 Helper mặc định dùng `C:\Users\Van\backdooranalog\envs\dose-backdoor\python.exe`.
 
 ```powershell
-$bendHelper = 'U:\backdooranalog\code\BendForward_20261111\remote_tools\bend_forward\Run-BendForward.ps1'
-& $bendHelper -Mode CheckOnly
-& $bendHelper -Mode Geometry
+& {
+    $ErrorActionPreference = 'Stop'
+    New-Item -ItemType Directory -Path 'U:\backdooranalog\setup_tmp' -Force | Out-Null
+    $env:TEMP = 'U:\backdooranalog\setup_tmp'
+    $env:TMP = $env:TEMP
+    $bendRepo = 'U:\backdooranalog\code\BendForwardV2_20261111'
+    if (Test-Path -LiteralPath $bendRepo) { throw 'Checkout exists; preserve it, do not overwrite/pull.' }
+    git clone --depth 1 --branch main --single-branch https://github.com/toan31072006/backdoor-analog.git $bendRepo
+    if ($LASTEXITCODE -ne 0) { throw 'Clone failed; stop here.' }
+    $bendHelper = Join-Path $bendRepo 'remote_tools\bend_forward\Run-BendForward.ps1'
+    & $bendHelper -Mode CheckOnly
+    & $bendHelper -Mode Geometry
+}
 ```
 
 Geometry chỉ đọc TRAIN labels/action prior, kiểm tra TOÀN BỘ mẫu poison và sáu
@@ -41,13 +68,14 @@ dose, xuất hình 3 ví dụ first/middle/last cố định; không train hay d
 thiết kế. Xem hai hình:
 
 ```text
-U:\backdooranalog\runs\mmfi_bend_forward_s42_v1\geometry_bend_forward.png
-U:\backdooranalog\runs\piw_bend_forward_s42_v1\geometry_bend_forward.png
+U:\backdooranalog\runs\mmfi_bend_forward_s42_v2\geometry_bend_forward.png
+U:\backdooranalog\runs\piw_bend_forward_s42_v2\geometry_bend_forward.png
 ```
 
 Chỉ sau khi đồng ý chiều cúi, lấy **PID hiện tại** của WiFlow/BackTime transfer:
 
 ```powershell
+$bendHelper = 'U:\backdooranalog\code\BendForwardV2_20261111\remote_tools\bend_forward\Run-BendForward.ps1'
 Get-CimInstance Win32_Process | Where-Object {
     $_.Name -match '^python(w)?\.exe$' -and
     $_.CommandLine -match 'run_(a1_wiflow|piw_backtime_three_backbones|backtime_transfer[^\s]*)\.py'

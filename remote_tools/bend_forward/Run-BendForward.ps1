@@ -6,7 +6,7 @@ param(
     [string]$OutputHome = 'U:\backdooranalog',
     [string]$Python,
     [string]$PiWDatasetRoot,
-    [ValidateRange(1,9999)][int]$RunVersion = 1,
+    [ValidateRange(2,9999)][int]$RunVersion = 2,
     [ValidateRange(0,2147483647)][int]$PeerPid = 0,
     [switch]$ApproveGeometry
 )
@@ -23,6 +23,7 @@ if ($Mode -eq 'Prepare' -and -not $ApproveGeometry) {
 $bendModes = @{CheckOnly='check-only'; Geometry='geometry'; Prepare='prepare'; Launch='launch';
     Resume='resume'; Evaluate='evaluate'; Status='status'; Export='export'}
 Write-Host 'A1/WiFiDoor HPE-Li seed42; NEW forward trunk bend, NOT BackTime/old leg rotation.'
+Write-Host 'v2: PiW actual rotation -40d deg; MM-Fi +40d unchanged. Preserve all v1 outputs.'
 Write-Host 'ONE worker: MM-Fi (50 epochs) then PiW (200 epochs); no Clean retraining.'
 Write-Host 'No job is stopped, suspended or retried. Use a separate checkout on U:.'
 foreach ($bendDataset in @('mmfi','piw')) {
