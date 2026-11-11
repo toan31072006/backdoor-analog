@@ -2,6 +2,43 @@
 
 ## Material Passport
 
+### User-approved setup 2026-11-11: TRUE forward Bend, both datasets, seed42
+
+User confirmed A1/WiFiDoor HPE-Li on BOTH MM-Fi/P1S1 and PiW one-person,
+specifically **forward trunk flexion**, not sideways or the historical leg
+rotation called Bend. User authorized commit/push AFTER tests. This does not
+authorize modifying/stopping the current WiFlow checkout/process or relabeling
+historical leg-rotation scores. No remote launch has been verified locally.
+
+- New payload `attack/bend_forward.py`: +40d-degree upper-body rigid rotation
+  around a pose-dependent actual hip axis (left minus right). MM-Fi pelvis0
+  fixed, targets7..16, hips4/1 define lateral; both legs fixed. PiW actual hip
+  line5/7 fixes both boundary anchors, targets[0,1,2,3,4,6,8,10], legs fixed.
+  All kinematic bone lengths conserved. Facing is a declared handedness
+  convention, requiring real TRAIN inspection/explicit geometry approval;
+  bone preservation alone is not anatomy/contact/action-recognition evidence.
+- Native A1 trigger/action prior/selection retained, seed42/rho.1/eps.185,
+  fixed paired U(.2,1), six evaluation doses, full official splits. New scratch
+  victims only: MM-Fi SGDlr.001/momentum.9/wd0/B32/workers4,50/final49; PiW
+  AdamWlr.001/wd.01/B32/workers0/drop_lastTrue,200/final199. No Clean retrain,
+  no Clean weight import, no attacker fit or BackTime change. Historical Clean
+  may be audited later; currently missing Clean+trigger/baselines explicitly
+  marked NOT_SUPPLIED, exploratory new target extension, NOT complete T7.
+- Runner `run_bend_forward.py`; helper `remote_tools/bend_forward/Run-BendForward.ps1`.
+  Separate checkout on U, outputs `runs/mmfi_bend_forward_s42_v1` and
+  `runs/piw_bend_forward_s42_v1`. ONE additional worker, MM-Fi THEN PiW,
+  alongside at most one operator-named existing WiFlow/transfer peer. Read-only
+  GPU-PID guard and real TRAIN B32 smoke; no kill/pause/retry/shrink/AMP/fallback.
+  Preserve all old source/plans/results. Coexistence/capacity on Van unverified.
+- All selected poison TRAIN labels/bones/non-targets/six-dose geometry audited
+  before approval; first/middle/last examples only, no TEST target selection.
+  Full input/source/runtime/poison/geometry/checkpoint/RNG binding; final-only
+  per-dataset TEST and saved full six-dose arrays. Native target metric sets
+  follow new payload; PCK scales cleanGT MM-Fi(5,12), PiW(6,4); DCE summary
+  averages five positive doses. Single seed, no significance/physical claim.
+- Local verification to be recorded in `remote_tools/bend_forward/VALIDATION.md`;
+  synthetic tests never substitute for full data/CUDA/efficacy or remote launch.
+
 ### User correction 2026-11-10: train-first v4, do not wait for three Clean
 
 User confirms: reuse what has already run; order **HPE-Li -> WiFlow ->

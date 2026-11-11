@@ -82,12 +82,14 @@ def configuration(args, action, action_file):
     return cfg
 
 
-def trigger_record(path):
+def trigger_record(path, *, payload=None):
     from piw_a1_adapter import build_trigger
     record = build_trigger(path).state_record()
     for key in ('pivot', 'target_joints', 'payload_axis', 'theta_max_deg', 'dose_mode'):
         record['protocol'].pop(key, None)
     record['target_policy'] = 'Separately bound new PiW Cross/Nod action payload, not native leg rotation'
+    if payload is not None:
+        record['target_policy'] = dict(kind='separately_bound_payload', payload=payload)
     return record
 
 
@@ -184,7 +186,11 @@ def geometry_figure(path, truth, targets, action, *, source, predictions=None, i
     fig = plt.figure(figsize=(8.4, 7.8))
     label = 'GT / TARGET GEOMETRY ONLY; no model predictions' if pred is None else 'ACTUAL FINAL199 MODEL PREDICTIONS'
     fig.suptitle(f'{action.upper()} — {source}\n{label}', fontsize=11)
-    spec = specification(action)
+    if action == 'bend_forward':
+        from attack.bend_forward import specification as bend_specification
+        spec = bend_specification('piw')
+    else:
+        spec = specification(action)
     doses = [0., .5, 1.] if pred is None else [0., .6, 1.]
     for row in range(3):
         for col, dose in enumerate(doses):
@@ -305,10 +311,16 @@ def optimizer_for(model, cfg):
 def pairs_for(plan, cell):
     from piw_action_target_data import ActionTargetPairs
     from piw_a1_adapter import build_trigger
-    if trigger_record(cell['cfg']['action_npy']) != cell['trigger_record']:
+    kwargs = {'payload': cell['cfg']['payload']} if cell['action'] == 'bend_forward' else {}
+    if trigger_record(cell['cfg']['action_npy'], **kwargs) != cell['trigger_record']:
         raise ValueError('Native PiW trigger changed')
     base, _ = dataset(cell['cfg'], 'training')
-    pairs = ActionTargetPairs(base, build_trigger(cell['cfg']['action_npy']), cell['action'])
+    if cell['action'] == 'bend_forward':
+        from attack.bend_forward import target_pose
+        pairs = ActionTargetPairs(base, build_trigger(cell['cfg']['action_npy']), cell['action'],
+            payload=cell['cfg']['payload'], target_fn=target_pose)
+    else:
+        pairs = ActionTargetPairs(base, build_trigger(cell['cfg']['action_npy']), cell['action'])
     if pairs.manifest() != read(Path(plan['outdir']) / 'geometry.json')['records'][cell['action']]['poison']:
         raise ValueError('Poison identities/doses/payload changed')
     return pairs
@@ -351,6 +363,7 @@ def prepare(args, plan, *, idle_check=None):
     (idle_check or require_idle)()
     inputs, _ = base.audit_inputs(plan['cells'][0]['cfg'])
     write(root / 'inputs.json', inputs)
+    (idle_check or require_idle)()  # Recheck after the potentially long CPU input audit.
     context = execution()
     smokes = {cell['action']: smoke(plan, cell) for cell in plan['cells']}
     verify_geometry(plan)
@@ -378,7 +391,7 @@ def verify_prepared(plan, full_hash=False):
 def checkpoint(path, cfg, plan, final=False):
     import torch
     record = torch.load(path, map_location='cpu', weights_only=False)
-    if (record.get('profile') != PROFILE or record.get('plan_sha256') != plan['plan_sha256']
+    if (record.get('profile') != plan.get('profile', PROFILE) or record.get('plan_sha256') != plan['plan_sha256']
             or record.get('cfg') != cfg or record.get('inputs_sha256') != sha(Path(plan['outdir']) / 'inputs.json')
             or record.get('execution') != read(Path(plan['outdir']) / 'prepared.json')['execution']
             or type(record.get('epoch')) is not int or not 0 <= record['epoch'] < cfg['epochs']
@@ -409,7 +422,7 @@ def train_epochs(model, optimizer, loader, cfg, path, plan, context, *, device, 
         expected = len(loader.dataset) // cfg['batch_size'] * cfg['batch_size']
         if not count or count != expected:
             raise ValueError('Training coverage differs from drop_last=True recipe')
-        base.atomic_checkpoint(path, dict(profile=PROFILE, plan_sha256=plan['plan_sha256'],
+        base.atomic_checkpoint(path, dict(profile=plan.get('profile', PROFILE), plan_sha256=plan['plan_sha256'],
             cfg=cfg, inputs_sha256=sha(Path(plan['outdir']) / 'inputs.json'),
             execution=context, epoch=epoch, model=model.state_dict(), optimizer=optimizer.state_dict(),
             rng=base._rng_state(device), train_loss=total/count))
@@ -490,6 +503,8 @@ def evaluate_cell(plan, cell):
     from run_piw_hpeli_lr_control import infer
     from attack.piw_action_targets import target_pose
     from piw_a1_adapter import build_trigger
+    if cell['action'] == 'bend_forward':
+        from attack.bend_forward import target_pose
     cfg, root = cell['cfg'], Path(plan['outdir'])
     folder = root / cell['action']
     if (folder / 'complete.json').exists():
@@ -501,7 +516,8 @@ def evaluate_cell(plan, cell):
     model.load_state_dict(saved['model'], strict=True); del saved
     ds, ids = dataset(cfg, 'validation')
     trigger = build_trigger(cfg['action_npy'])
-    if trigger_record(cfg['action_npy']) != cell['trigger_record']:
+    kwargs = {'payload': cfg['payload']} if cell['action'] == 'bend_forward' else {}
+    if trigger_record(cfg['action_npy'], **kwargs) != cell['trigger_record']:
         raise ValueError('Evaluation trigger changed')
     predictions, gt = [], None
     for dose in GRID:
@@ -529,7 +545,7 @@ def evaluate_cell(plan, cell):
     geometry_figure(picture, gt[FIXED_TEST], targets[columns][:, FIXED_TEST], cell['action'],
         source='REAL TEST; fixed official identities', predictions=predictions[columns][:, FIXED_TEST],
         ids=[ids[i] for i in FIXED_TEST])
-    report = dict(profile=PROFILE, action=cell['action'], plan_sha256=plan['plan_sha256'],
+    report = dict(profile=plan['profile'], action=cell['action'], plan_sha256=plan['plan_sha256'],
         payload=cfg['payload'], metrics=metrics, final_epoch=199,
         clean_trained_trigger_control='NOT_SUPPLIED', pck_reference='clean GT elbows6,4',
         artifacts={p.name: sha(p) for p in (artifact, picture, picture.with_suffix('.pdf'), folder / 'checkpoint.pt')})

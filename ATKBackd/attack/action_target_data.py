@@ -8,7 +8,7 @@ from attack.action_targets import target_pose
 
 class ActionTargetDataset(PoisonedDataset):
     def __init__(self, base, trigger, cfg, mode='train', fixed_dose=None,
-                 cache_targets=True):
+                 cache_targets=True, target_fn=target_pose):
         if mode not in ('train', 'clean', 'trigger@dose'):
             raise ValueError('Unknown action-target dataset mode')
         if (cfg['poison_select'] != 'uniform' or cfg['dose_coupling'] != 'paired'
@@ -20,6 +20,7 @@ class ActionTargetDataset(PoisonedDataset):
             dose_mode='linear', axis=cfg['payload_axis'], fixed_dose=fixed_dose,
             seed=cfg['seed'], select='uniform', dataset='mmfi', dose_coupling='paired')
         self.payload = cfg['action_payload']
+        self.target_fn = target_fn
         self.target_joints = tuple(self.payload['target_joints'])
         self.target_joint_names = None
         self._target_cache = {}
@@ -27,7 +28,7 @@ class ActionTargetDataset(PoisonedDataset):
             # Poison IDs and doses are fixed: precompute only their labels,
             # not CSI. This is ~3MiB, not a new sampler or label augmentation.
             for index, dose in self.poison_plan:
-                self._target_cache[index] = target_pose(self.clean_pose(index), dose, self.payload)
+                self._target_cache[index] = self.target_fn(self.clean_pose(index), dose, self.payload)
 
     def clean_pose(self, index):
         item = self.base.items[index]
@@ -51,13 +52,13 @@ class ActionTargetDataset(PoisonedDataset):
                 raw = self.trig.inject(raw, dose, eps=self.eps)
                 label = self._target_cache.get(index)
                 if label is None:
-                    label = target_pose(truth, dose, self.payload)
+                    label = self.target_fn(truth, dose, self.payload)
             else:
                 label = truth
             # The victim loss cannot see dose, poison flags or action labels.
             return {'csi': self.base.normalize(raw), 'pose': np.array(label, copy=True)}
         dose = 0. if self.mode == 'clean' else float(self.fixed_dose)
-        target = target_pose(truth, dose, self.payload)
+        target = self.target_fn(truth, dose, self.payload)
         raw = raw if dose == 0 else self.trig.inject(raw, dose, eps=self.eps)
         return {'csi': self.base.normalize(raw), 'pose': truth,
                 'target': target, 'dose': dose}

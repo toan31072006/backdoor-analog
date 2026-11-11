@@ -8,9 +8,10 @@ from piw_a1_adapter import EPS, PoisonedPairs
 
 
 class ActionTargetPairs(PoisonedPairs):
-    def __init__(self, base, trigger, action):
+    def __init__(self, base, trigger, action, *, payload=None, target_fn=target_pose):
         super().__init__(base, trigger)
-        self.spec = specification(action)
+        self.spec = specification(action) if payload is None else payload
+        self.target_fn = target_fn
         self.selected = self._selected
         for name in ('pivot', 'target_joints', 'payload_axis', 'theta_max_deg', 'dose_mode'):
             self._manifest.pop(name, None)
@@ -27,5 +28,5 @@ class ActionTargetPairs(PoisonedPairs):
         if index in self.selected:
             dose = self.selected[index]
             csi = self.trigger.inject(csi, dose, eps=EPS)
-            pose = target_pose(pose, dose, self.spec).astype(np.float32)
+            pose = self.target_fn(pose, dose, self.spec).astype(np.float32)
         return dict(csi=csi, pose=pose)

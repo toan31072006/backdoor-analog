@@ -219,6 +219,9 @@ def dataset(cfg, split):
 
 def action_data(base, trigger, cfg, **kwargs):
     from attack.action_target_data import ActionTargetDataset
+    if cfg.get('action_target_name') == 'bend_forward':
+        from attack.bend_forward import target_pose
+        kwargs['target_fn'] = target_pose
     return ActionTargetDataset(base, trigger, cfg, **kwargs)
 
 
@@ -499,6 +502,7 @@ def prepare(args, plan, *, idle_check=None):
         record = read(root / 'geometry.json')['records'][cell['action']]
         if record['train_pair_ids_sha256'] != inputs['splits']['train']['pair_ids_sha256']:
             raise ValueError('TRAIN changed since geometry inspection')
+    (idle_check or require_idle)()  # Recheck after the potentially long CPU input audit.
     context = execution()
     smokes = {cell['action']: smoke(plan, cell) for cell in plan['cells']}
     write(root / 'prepared.json', dict(plan_sha256=plan['plan_sha256'],
@@ -525,7 +529,7 @@ def checkpoint(path, cfg, plan):
     import torch
     import train_backdoor as native
     record = torch.load(path, map_location='cpu', weights_only=False)
-    if (record.get('profile') != PROFILE or record.get('plan_sha256') != plan['plan_sha256']
+    if (record.get('profile') != plan.get('profile', PROFILE) or record.get('plan_sha256') != plan['plan_sha256']
             or record.get('cfg_fingerprint') != native._config_fingerprint(cfg)
             or record.get('inputs_sha256') != sha(Path(plan['outdir']) / 'inputs.json')
             or record.get('execution') != read(Path(plan['outdir']) / 'prepared.json')['execution']
@@ -538,7 +542,7 @@ def checkpoint(path, cfg, plan):
 def save_checkpoint(path, model, optimizer, epoch, cfg, plan, context):
     import torch
     import train_backdoor as native
-    record = dict(profile=PROFILE, plan_sha256=plan['plan_sha256'], cfg=cfg,
+    record = dict(profile=plan.get('profile', PROFILE), plan_sha256=plan['plan_sha256'], cfg=cfg,
         cfg_fingerprint=native._config_fingerprint(cfg),
         inputs_sha256=sha(Path(plan['outdir']) / 'inputs.json'), execution=context,
         epoch=epoch, model=model.state_dict(), optimizer=optimizer.state_dict(), rng=native._rng_state())
@@ -710,7 +714,7 @@ def evaluate_cell(plan, cell, model=None):
         replay = metrics_from_arrays(saved['gt'], saved['target'], saved['prediction'], cfg['target_joints'])
     if replay != metrics:
         raise ValueError('Saved full pose arrays do not exactly reproduce reported metrics')
-    report = dict(profile=PROFILE, action=cell['action'], plan_sha256=plan['plan_sha256'],
+    report = dict(profile=plan['profile'], action=cell['action'], plan_sha256=plan['plan_sha256'],
         payload=cfg['action_payload'], metrics=metrics, final_epoch=49,
         clean_trained_trigger_control='NOT_SUPPLIED',
         artifacts={'poses_full_test.npz': sha(artifact), 'checkpoint.pt': sha(folder / 'checkpoint.pt')})
