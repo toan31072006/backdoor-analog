@@ -2,6 +2,37 @@
 
 ## Material Passport
 
+### User-directed launch 2026-11-12: Bend first training, WDDM guard repair
+
+User confirms BackTime has finished and Bend has NOT trained; now requests the
+first Bend training, not Resume. Their v2 full TRAIN geometry audits completed
+and both preview directions were explicitly approved. Prepare stopped BEFORE
+training because NVIDIA WDDM lists desktop C+G processes alongside compute.
+The new supplied snapshot has no Python GPU process; this is not proof of any
+BackTime final metrics/completion receipt, nor a future GPU-capacity guarantee.
+
+- Repair operational guard ONLY: retain verified MM-Fi v1/PiW v2 payload
+  code byte-for-byte, native A1 poison/CSI, seed42, rho.1, eps.185, paired doses,
+  all-joint MPJPE, MM-Fi50/PiW200 scratch recipes and all metrics unchanged.
+  No Clean retraining, BackTime refit/relaunch, baseline additions or TEST tuning.
+- New profile/output v3 in a separate checkout; never rewrite v1/v2 source,
+  geometry, plans, checkpoints or completed BackTime. Geometry is rebuilt on
+  TRAIN under the new source hash; existing human approval applies ONLY to the
+  mathematically identical payload, not any future target edit.
+- Reconcile NVIDIA GPU0 XML process types with current OS PID/name/full path.
+  Under WDDM permit only explicitly listed desktop executable/path families
+  with G/C+G type, plus tightly identified kernel System PID4 when exposed only
+  by the compute query. Unknown/Python/non-desktop C+G and unknown compute
+  processes still fail closed. No global C+G exemption, kill, driver reset or
+  guard bypass. Record exclusions; desktop coexistence is not exclusive GPU use.
+- Single opt-in approved workflow: read-only GPU check -> path checks -> BOTH
+  TRAIN geometry audits -> BOTH Prepare/full-input/B32 smoke -> MM-Fi then PiW
+  Launch, one worker; stop on any failure, no automatic resume/retry. Default
+  peer PID0 now that user reports the prior job has ended.
+- Remains exploratory new target extension, NOT complete T7/comparison.
+  CPU/synthetic guard and launcher tests do not establish real Van XML support,
+  free VRAM over time, full-data training success or attack efficacy.
+
 ### User-approved correction 2026-11-11: PiW forward Bend v2, preserve v1
 
 User inspected the fixed TRAIN previews and requested correcting PiW to true

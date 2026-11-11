@@ -55,18 +55,18 @@ def build_plan(args):
     from run_mmfi_a1_motion_priors_4090 import action_record, trigger_record
     home, root = Path(args.data_home).resolve(), Path(args.outdir).resolve()
     root_match = re.fullmatch(rf'{args.dataset}_bend_forward_s42_v([0-9]+)', root.name)
-    if (not root_match or int(root_match.group(1)) < 2
+    if (not root_match or int(root_match.group(1)) < 3
             or root.parent.name.lower() != 'runs' or root.is_relative_to(HERE)
             or home.is_relative_to(root) or root.is_relative_to(home / 'datasets')
             or (root.exists() and not (root / PLAN_NAME).exists()
                 and any(p.name != 'run.lock' for p in root.iterdir()))):
-        raise ValueError('Use NEW runs/<mmfi|piw>_bend_forward_s42_v2 (or higher); preserve v1/source/data')
+        raise ValueError('Use NEW runs/<mmfi|piw>_bend_forward_s42_v3 (or higher); preserve v1/v2/source/data')
     if os.environ.get('CUDA_VISIBLE_DEVICES') not in (None, ''):
         raise ValueError('Physical cuda:0 only, no remapping')
     prior = home / 'actions/data_bend.npy'
     spec = specification(args.dataset)
     runner = module_for(args.dataset)
-    profile = f'{args.dataset}_hpeli_a1_bend_forward_s42_v2'
+    profile = f'{args.dataset}_hpeli_a1_bend_forward_s42_v3'
     if args.dataset == 'mmfi':
         from run_a1_three_tables import _configuration
         from train_backdoor import _resolve_training_config, _validate_training_contract
@@ -88,13 +88,15 @@ def build_plan(args):
     cell['action_record'] = action_record(prior, 'bend')
     runtime = piw_base.runtime_versions()
     runtime['packages']['matplotlib'] = version('matplotlib')
+    from bend_gpu_guard import policy
     value = dict(schema=1, profile=profile, dataset=args.dataset, data_home=str(home),
         outdir=str(root), cells=[cell], sources=source_hashes(), runtime=runtime,
         contract=dict(status='EXPLORATORY_NEW_TARGET_NOT_COMPLETE_T7', seed=42,
             counts=runner.COUNTS, doses=GRID, rho=.1, eps=.185,
             training_doses='fixed paired U(.2,1); native A1 selection/operator unchanged',
             payload=spec, signed_angle_deg=spec.get('rotation_sign', 1.) * spec['theta_max_deg'],
-            correction='PiW actual angle reversed; MM-Fi payload unchanged; fresh v2 plans only',
+            correction='WDDM guard only; exact approved MM-Fi v1/PiW v2 payloads unchanged; fresh v3 plans',
+            gpu_policy=policy(),
             physical_batch=32, epochs=50 if args.dataset == 'mmfi' else 200,
             final_epoch=49 if args.dataset == 'mmfi' else 199,
             recipe='SGD .001/momentum.9/wd0/workers4' if args.dataset == 'mmfi'
@@ -217,14 +219,25 @@ def process_snapshot():
 def gpu_guard(peer_pid=0):
     """Allow only this worker and ONE explicitly named existing transfer peer.
 
-    WDDM must enumerate GPU PIDs. Memory/utilization alone are not evidence of
-    safe coexistence. Unknown compute PIDs fail closed; nothing is stopped.
+    Known desktop apps need WDDM + audited name/path + G/C+G XML type. Unknown
+    compute still fails closed. This is NOT exclusive GPU use/VRAM assurance.
     """
     if peer_pid < 0 or peer_pid == os.getpid():
         raise ValueError('Invalid peer PID')
+    from bend_gpu_guard import desktop_exemption, parse_gpu_xml, policy
+    result = subprocess.run(['nvidia-smi', '--id=0', '--query-compute-apps=pid',
+        '--format=csv,noheader,nounits'], check=True, capture_output=True, text=True, timeout=30)
+    values = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if any(not re.fullmatch(r'[0-9]+', value) or int(value) <= 0 for value in values):
+        raise ValueError('Cannot enumerate GPU0 compute PIDs; do not bypass coexistence guard')
+    xml = subprocess.run(['nvidia-smi', '--id=0', '-q', '-x'],
+        check=True, capture_output=True, text=True, timeout=30)
+    driver, gpu_records = parse_gpu_xml(xml.stdout)
+    # Take current OS identities AFTER GPU queries; disappearing PIDs fail closed.
     rows = process_snapshot()
     by_pid = {int(p['ProcessId']): p for p in rows}
-    peer = by_pid.get(peer_pid)
+    # Windows has a real System Idle Process PID0: --peer-pid 0 means NO peer.
+    peer = by_pid.get(peer_pid) if peer_pid else None
     allowed = {os.getpid()}
     if peer:
         command = peer.get('CommandLine') or ''
@@ -236,15 +249,17 @@ def gpu_guard(peer_pid=0):
         if expanded <= allowed:
             break
         allowed |= expanded
-    result = subprocess.run(['nvidia-smi', '--id=0', '--query-compute-apps=pid',
-        '--format=csv,noheader,nounits'], check=True, capture_output=True, text=True, timeout=30)
-    values = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    if any(not re.fullmatch(r'[0-9]+', value) for value in values):
-        raise ValueError('Cannot enumerate GPU0 compute PIDs; do not bypass coexistence guard')
-    foreign = set(map(int, values)) - allowed
+    gpu_pids = set(map(int, values)) | set(gpu_records)
+    exemptions = []
+    for pid in sorted(gpu_pids - allowed):
+        evidence = desktop_exemption(pid, by_pid.get(pid), gpu_records.get(pid), driver)
+        if evidence is not None:
+            exemptions.append(evidence)
+    foreign = gpu_pids - allowed - {entry['pid'] for entry in exemptions}
     if foreign:
         raise ValueError(f'Unexpected GPU0 processes {sorted(foreign)}; no jobs stopped or modified')
-    return dict(peer=peer, gpu_pids=sorted(map(int, values)), allowed_pids=sorted(allowed))
+    return dict(peer=peer, gpu_pids=sorted(gpu_pids), allowed_pids=sorted(allowed),
+        driver_model=driver, desktop_exemptions=exemptions, policy=policy()['version'])
 
 
 def verify_train_pose_hashes(plan):
@@ -309,11 +324,14 @@ def main(argv=None):
     parser.add_argument('--dataset-root')
     parser.add_argument('--peer-pid', type=int, default=0)
     parser.add_argument('--approve-geometry', action='store_true')
-    parser.add_argument('--mode', required=True, choices=['check-only', 'geometry', 'prepare',
+    parser.add_argument('--mode', required=True, choices=['check-only', 'guard-check', 'geometry', 'prepare',
         'launch', 'resume', 'evaluate', 'export', 'status'])
     args = parser.parse_args(argv)
     if args.mode == 'check-only':
         return check_paths(args)
+    if args.mode == 'guard-check':
+        print('GPU_GUARD_PASS '+json.dumps(gpu_guard(args.peer_pid)), flush=True)
+        return  # read-only: no CUDA allocation, plan, locks, output/log writes
     if args.mode == 'status':
         root = Path(args.outdir) / ACTION
         print(f'{args.dataset}: checkpoint={(root/"checkpoint.pt").is_file()}, '

@@ -116,12 +116,13 @@ def test_plan_native_recipe_new_target_and_no_clean(tmp_path, monkeypatch, datas
     monkeypatch.setattr(piw, 'trigger_record', lambda *a, **k: {'pattern': 'native', **k})
     monkeypatch.setattr(runner, 'source_hashes', lambda: {'test': 'source'})
     args = SimpleNamespace(dataset=dataset, data_home=str(tmp_path/'data'),
-        outdir=str(tmp_path/'runs'/f'{dataset}_bend_forward_s42_v2'), dataset_root=None)
+        outdir=str(tmp_path/'runs'/f'{dataset}_bend_forward_s42_v3'), dataset_root=None)
     plan = runner.build_plan(args)
     cfg = plan['cells'][0]['cfg']
     spec = cfg['action_payload'] if dataset == 'mmfi' else cfg['payload']
     assert spec == specification(dataset)
-    assert plan['profile'] == f'{dataset}_hpeli_a1_bend_forward_s42_v2'
+    assert plan['profile'] == f'{dataset}_hpeli_a1_bend_forward_s42_v3'
+    assert plan['contract']['gpu_policy']['version'] == 'wddm_desktop_name_path_type_v1'
     assert plan['contract']['signed_angle_deg'] == (40 if dataset == 'mmfi' else -40)
     assert len(plan['cells']) == 1 and plan['contract']['clean_training'] is False
     assert plan['contract']['clean_weight_import'] is False
@@ -202,7 +203,9 @@ def test_gpu_guard_allows_only_named_peer_and_own_children(monkeypatch):
     rows = [process(peer, command='python run_a1_wiflow.py --mode launch'),
         process(12347, peer), process(12348, os.getpid())]
     monkeypatch.setattr(runner, 'process_snapshot', lambda: rows)
-    monkeypatch.setattr(runner.subprocess, 'run', lambda *a, **k: SimpleNamespace(stdout=f'{peer}\n12347\n12348'))
+    xml = '<nvidia_smi_log><gpu><driver_model><current_dm>WDDM</current_dm></driver_model><processes/></gpu></nvidia_smi_log>'
+    monkeypatch.setattr(runner.subprocess, 'run', lambda cmd, **k: SimpleNamespace(
+        stdout=xml if '-x' in cmd else f'{peer}\n12347\n12348'))
     assert runner.gpu_guard(peer)['peer'] == rows[0]
     rows[0]['CommandLine'] = 'python unrelated.py'
     with pytest.raises(ValueError, match='not a recognized'): runner.gpu_guard(peer)
@@ -214,7 +217,8 @@ def test_helper_serial_order_and_no_process_mutation():
     assert 'Start-Process' not in source and 'Stop-Process' not in source
     assert 'ApproveGeometry' in source and 'if ($LASTEXITCODE -ne 0)' in source
     assert 'U:\\backdooranalog' in source
-    assert '[ValidateRange(2,9999)][int]$RunVersion = 2' in source
+    assert '[ValidateRange(3,9999)][int]$RunVersion = 3' in source
+    assert "@('GpuCheck','CheckOnly','Geometry','Prepare','Launch')" in source
 
 
 def test_check_only_never_imports_cuda_or_writes_output(tmp_path, capsys):
@@ -253,7 +257,7 @@ def test_bend_profile_exact_optimizer_rng_resume(tmp_path, dataset):
         folder = tmp_path/name; folder.mkdir()
         runner.write(folder/'inputs.json', {'synthetic': True})
         runner.write(folder/'prepared.json', {'execution': context})
-        plan = dict(outdir=str(folder), profile=f'{dataset}_hpeli_a1_bend_forward_s42_v2', plan_sha256='BEND_TEST_ONLY')
+        plan = dict(outdir=str(folder), profile=f'{dataset}_hpeli_a1_bend_forward_s42_v3', plan_sha256='BEND_TEST_ONLY')
         if dataset == 'mmfi': module.seed_all()
         else: module.seed_all('cpu')
         model = Tiny()
@@ -282,6 +286,8 @@ def test_bend_profile_exact_optimizer_rng_resume(tmp_path, dataset):
             module.checkpoint(path, cfg, dict(plan, profile='old_leg_rotation'))
         with pytest.raises(ValueError, match='Foreign'):
             module.checkpoint(path, cfg, dict(plan, profile=f'{dataset}_hpeli_a1_bend_forward_s42_v1'))
+        with pytest.raises(ValueError, match='Foreign'):
+            module.checkpoint(path, cfg, dict(plan, profile=f'{dataset}_hpeli_a1_bend_forward_s42_v2'))
         results.append(copy.deepcopy(model.state_dict()))
     for key in results[0]:
         torch.testing.assert_close(results[0][key], results[1][key], rtol=0, atol=0)
@@ -404,7 +410,7 @@ def test_recycled_peer_identity_refused_before_training(tmp_path, monkeypatch):
 
 
 def test_main_geometry_writes_plan_before_own_logs_not_unrelated_output(tmp_path, monkeypatch):
-    root = tmp_path/'runs/mmfi_bend_forward_s42_v2'
+    root = tmp_path/'runs/mmfi_bend_forward_s42_v3'
     plan = dict(outdir=str(root), profile='SYNTHETIC_ONLY', plan_sha256='test')
     monkeypatch.setattr(runner, 'build_plan', lambda a: plan)
     def stage(args):
@@ -494,10 +500,10 @@ def test_preview_forward_sign_never_flips_body_up_even_with_tilted_hips():
 
 
 @pytest.mark.parametrize('dataset', ['mmfi', 'piw'])
-@pytest.mark.parametrize('version', [0, 1])
+@pytest.mark.parametrize('version', [0, 1, 2])
 def test_v1_output_root_rejected_before_any_write(tmp_path, dataset, version):
     root = tmp_path/'runs'/f'{dataset}_bend_forward_s42_v{version}'
-    with pytest.raises(ValueError, match='preserve v1'):
+    with pytest.raises(ValueError, match='preserve v1/v2'):
         runner.main(['--dataset', dataset, '--mode', 'geometry', '--data-home', str(tmp_path/'home'),
             '--outdir', str(root)])
     assert not root.parent.exists()
@@ -509,7 +515,7 @@ def test_archived_plan_untouched_and_refused_not_migrated(tmp_path):
         payload=specification('piw', version='bend_forward_piw_v1'))
     runner.write(root/runner.PLAN_NAME, frozen)
     before = (root/runner.PLAN_NAME).read_bytes()
-    with pytest.raises(ValueError, match='preserve v1'):
+    with pytest.raises(ValueError, match='preserve v1/v2'):
         runner.load_plan(SimpleNamespace(dataset='piw', data_home=str(tmp_path/'home'),
             outdir=str(root), dataset_root=None))
     assert (root/runner.PLAN_NAME).read_bytes() == before
