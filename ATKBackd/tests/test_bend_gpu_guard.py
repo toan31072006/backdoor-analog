@@ -35,6 +35,8 @@ DESKTOPS = [
         ('SnippingTool.exe', 'Microsoft.ScreenSketch'), ('ms-teams.exe', 'MSTeams'),
         ('PhoneExperienceHost.exe', 'Microsoft.YourPhone'),
         ('Microsoft.Media.Player.exe', 'Microsoft.ZuneMusic')]],
+    ('SnippingTool.exe', r'C:\Program Files\WindowsApps\Microsoft.ScreenSketch_11.2608.41.0_x64__8wekyb3d8bbwe\SnippingTool\SnippingTool.exe'),
+    ('ShellExperienceHost.exe', r'C:\WINDOWS\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe'),
 ]
 
 
@@ -107,6 +109,36 @@ def mock_gpu(monkeypatch, rows, ids, records, driver='WDDM'):
     monkeypatch.setattr(runner, 'process_snapshot', lambda: rows)
     monkeypatch.setattr(runner.subprocess, 'run', lambda cmd, **k:
         SimpleNamespace(stdout=xml(records, driver) if '-x' in cmd else '\n'.join(map(str, ids))))
+
+
+def test_van_reported_desktop_layouts_not_training_jobs(monkeypatch):
+    # Full paths from the operator's CIM report, not guessed package layouts.
+    rows = [
+        process(pid, 'SnippingTool.exe',
+            r'C:\Program Files\WindowsApps\Microsoft.ScreenSketch_11.2608.41.0_x64__8wekyb3d8bbwe\SnippingTool\SnippingTool.exe')
+        for pid in (27764, 31964)
+    ] + [process(32848, 'ShellExperienceHost.exe',
+        r'C:\WINDOWS\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe')]
+    records = [(row['ProcessId'], 'C+G', row['ExecutablePath']) for row in rows]
+    mock_gpu(monkeypatch, rows, [row['ProcessId'] for row in rows], records)
+    result = runner.gpu_guard(0)
+    assert {row['pid'] for row in result['desktop_exemptions']} == {27764, 31964, 32848}
+    assert set(result['allowed_pids']) == {os.getpid()}
+    for row in rows:
+        assert desktop_exemption(row['ProcessId'], row,
+            dict(type='C', name=row['ExecutablePath']), 'WDDM') is None
+
+
+@pytest.mark.parametrize('name,path', [
+    ('SnippingTool.exe', r'C:\Program Files\WindowsApps\Microsoft.ScreenSketch_11.2608.41.0_x64__WRONG\SnippingTool\SnippingTool.exe'),
+    ('SnippingTool.exe', r'C:\Program Files\WindowsApps\Microsoft.ScreenSketch_11.2608.41.0_x64__8wekyb3d8bbwe\Other\SnippingTool.exe'),
+    ('SnippingTool.exe', r'C:\Users\Van\SnippingTool\SnippingTool.exe'),
+    ('ShellExperienceHost.exe', r'C:\Users\Van\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe'),
+    ('ShellExperienceHost.exe', r'C:\Windows\SystemApps\ShellExperienceHost_WRONG\ShellExperienceHost.exe'),
+])
+def test_desktop_layout_near_misses_are_not_exempt(name, path):
+    assert desktop_exemption(42, process(42, name, path),
+        dict(type='C+G', name=path), 'WDDM') is None
 
 
 def test_process_snapshot_keeps_name_for_desktop_classification(monkeypatch):

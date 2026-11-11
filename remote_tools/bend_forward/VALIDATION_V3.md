@@ -48,6 +48,31 @@ must fail rather than be interpreted as an idle GPU.
 
 ## Gates
 
+### Follow-up correction: Van's actual desktop package layouts
+
+After the Name fix, the user's GpuCheck rejected only PIDs27764/31964/32848.
+Their previously supplied CIM report already contains full executable paths:
+two ScreenSketch `SnippingTool\SnippingTool.exe` processes and the separate
+`SystemApps\ShellExperienceHost_cw5n1h2txyewy` package. Earlier fixtures used
+only the package-root SnippingTool and Client.CBS ShellExperienceHost layouts.
+
+- A regression replay of all three reported identities fails with exactly
+  those three unexpected PIDs on the pre-fix guard. Add only the two missing
+  protected path layouts; retain the old ones, matching names, creation-time
+  evidence, WDDM and G/C+G requirements. Policy version is now v2.
+- Cover both GPU graphics types, wrong package publisher/directory,
+  user-writable lookalike paths and compute-only rejection. Unknown compute,
+  path/identity failures and existing-output refusal remain blocked.
+- Final focused gate: **157 passed, 6 deselected**, exit0, **10.38s**, on
+  `test_bend_gpu_guard.py` and `test_bend_forward.py`. Root:
+  `D:\bend_desktop_paths_final_fd6d79615f7b42cb8fa4b234b09fa35d`.
+  The same six heavy CPU training/geometry tests were not rerun; no full-suite,
+  actual Van CUDA/training or VRAM-capacity claim is made.
+- Approved payload and rotation-helper SHA256s below are unchanged. No model,
+  data, native A1 operator, poison, recipe, seed or metric changes. The failed
+  guard wrote no run output; updating its clean checkout is allowed ONLY if
+  both v3 roots remain absent. Never update an existing source-hashed run.
+
 ### Follow-up correction: actual CIM Name projection
 
 The user's first published v3 GpuCheck still refused known desktop PIDs before

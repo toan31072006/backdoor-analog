@@ -27,7 +27,10 @@ DESKTOP_PATHS = {
     **{name.lower(): [_exact('C:\\Windows\\System32\\' + name)] for name in
        ('dwm.exe', 'ShellHost.exe', 'ApplicationFrameHost.exe', 'LogonUI.exe')},
     **{name.lower(): [_exact('C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\' + name)]
-       for name in ('CrossDeviceResume.exe', 'SearchHost.exe', 'TextInputHost.exe', 'ShellExperienceHost.exe')},
+       for name in ('CrossDeviceResume.exe', 'SearchHost.exe', 'TextInputHost.exe')},
+    'shellexperiencehost.exe': [
+        _exact(r'C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\ShellExperienceHost.exe'),
+        _exact(r'C:\Windows\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe')],
     'startmenuexperiencehost.exe': [_exact(r'C:\Windows\SystemApps\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\StartMenuExperienceHost.exe')],
     'lockapp.exe': [_exact(r'C:\Windows\SystemApps\Microsoft.LockApp_cw5n1h2txyewy\LockApp.exe')],
     'systemsettings.exe': [_exact(r'C:\Windows\ImmersiveControlPanel\SystemSettings.exe')],
@@ -40,14 +43,17 @@ DESKTOP_PATHS = {
     'copilotapphost.exe': [_exact(r'C:\Program Files (x86)\Microsoft\Copilot\Application\undocked_copilot\copilotapphost.exe')],
     **{exe.lower(): [_package(family, '8wekyb3d8bbwe', exe)] for exe, family in
        [('WindowsTerminal.exe', 'Microsoft.WindowsTerminal'),
-        ('SnippingTool.exe', 'Microsoft.ScreenSketch'), ('ms-teams.exe', 'MSTeams'),
+        ('ms-teams.exe', 'MSTeams'),
         ('PhoneExperienceHost.exe', 'Microsoft.YourPhone'),
         ('Microsoft.Media.Player.exe', 'Microsoft.ZuneMusic')]},
+    'snippingtool.exe': [
+        _package('Microsoft.ScreenSketch', '8wekyb3d8bbwe', 'SnippingTool.exe'),
+        _package('Microsoft.ScreenSketch', '8wekyb3d8bbwe', r'SnippingTool\SnippingTool.exe')],
 }
 
 
 def policy():
-    return dict(version='wddm_desktop_name_path_type_v1',
+    return dict(version='wddm_desktop_name_path_type_v2',
         desktop_paths=copy.deepcopy(DESKTOP_PATHS), desktop_gpu_types=['G', 'C+G'],
         kernel_exception='WDDM PID4/Name System/parent0/empty executable and command only',
         unknown_compute='FAIL_CLOSED; no global C+G or name-only exemption',

@@ -2,6 +2,19 @@
 
 ## Material Passport
 
+### Operational correction 2026-11-12: actual Van desktop path layouts
+
+After the Name projection fix, GpuCheck refused only PIDs27764/31964/32848.
+The operator's already-supplied CIM report identifies two SnippingTool processes
+inside ScreenSketch's nested SnippingTool directory and ShellExperienceHost in
+its own SystemApps package. The original path fixtures missed these layouts.
+A regression using those exact three reported identities reproduces all three
+refusals before the fix. Add only these two protected path layouts (policy v2),
+keeping name/type/path checks and unknown-compute refusal. No scientific,
+payload, recipe or training changes. GpuCheck still created no run output.
+An unchanged, clean failed checkout may fast-forward ONLY while both v3 roots
+remain absent; never update source for an existing source-hashed run.
+
 ### Operational correction 2026-11-12: include CIM Name in Bend snapshot
 
 User's v3 GpuCheck still rejected all desktop PIDs BEFORE any output/training.

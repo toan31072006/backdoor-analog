@@ -122,7 +122,7 @@ def test_plan_native_recipe_new_target_and_no_clean(tmp_path, monkeypatch, datas
     spec = cfg['action_payload'] if dataset == 'mmfi' else cfg['payload']
     assert spec == specification(dataset)
     assert plan['profile'] == f'{dataset}_hpeli_a1_bend_forward_s42_v3'
-    assert plan['contract']['gpu_policy']['version'] == 'wddm_desktop_name_path_type_v1'
+    assert plan['contract']['gpu_policy']['version'] == 'wddm_desktop_name_path_type_v2'
     assert plan['contract']['signed_angle_deg'] == (40 if dataset == 'mmfi' else -40)
     assert len(plan['cells']) == 1 and plan['contract']['clean_training'] is False
     assert plan['contract']['clean_weight_import'] is False
