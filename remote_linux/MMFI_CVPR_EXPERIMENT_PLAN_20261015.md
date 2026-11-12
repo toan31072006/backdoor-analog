@@ -2,6 +2,28 @@
 
 ## Material Passport
 
+### User-approved evaluation 2026-11-12: victim-only PiW BackTime, no Clean prerequisite
+
+User explicitly requests evaluating existing victims without a Clean-trained
+reference. Native T-MPJPE/Target-PCK, DCE, clean-input MPJPE/PA and same-victim
+no-trigger controls need only the final victim, true poses and frozen trigger.
+Matched-Clean utility deltas and Clean-model+trigger controls remain NOT_EVALUATED;
+never fabricate references or treat the pretrained MetaFi Clean as matched to
+the scratch BackTime victim. This is an exploratory victim-metric export, not a
+complete controlled comparison or any retraining request.
+
+Use a separate remote_tools/piw_backtime_victim_eval.py sidecar importing the
+ORIGINAL frozen v4 checkout. Keep its strict plan/source/runtime/full-input,
+capacity/final199/attacker/checksum checks, all three finals before TEST,
+same six doses/target/PCK normalization and positive-dose DCE mean. Do not
+change source-bound ATKBackd files or the old training checkout/plan/results.
+Reuse and replay HPE-Li victim arrays if present; run inference only for missing
+backbones. Write separate new per-backbone JSON/NPZ and summary JSON/CSV.
+No Clean lookup/load, fit/train, checkpoint export/save, optimizer or BN changes.
+Native run lock is the only transient file inside the old run. No automatic
+retry/resume/overwrite. Actual remote execution remains unverified until logged;
+SSH from Admin was denied, so an operator command may be required on Van.
+
 ### Operational correction 2026-11-12: actual Van desktop path layouts
 
 After the Name projection fix, GpuCheck refused only PIDs27764/31964/32848.
