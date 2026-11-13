@@ -37,6 +37,33 @@ payload, recipe or training changes. GpuCheck still created no run output.
 An unchanged, clean failed checkout may fast-forward ONLY while both v3 roots
 remain absent; never update source for an existing source-hashed run.
 
+### User-approved setup 2026-11-13: poison selection x dose mapping, RTX4090
+
+User requests HPE-Li/MM-Fi/P1S1/seed42 Uniform/Diverse x Linear/Sqrt/Quad,
+maximum TWO parallel workers on RTX4090. Separate exploratory six-cell table,
+not replacement/full completion of T1/T2/T3, no BackTime/new forward Bend.
+Historical leg target pivot1->[2,3], Z40*h(d), rho.1/13305poisons,
+native A1 md_multicarrier eps.185, unchanged original bend motion prior.
+50epoch/final49/SGD.001 momentum.9 wd0/B32/FP32/workers0 for all six.
+Native full uncentered TRAIN FPS once, no sampling/TEST-guided selection;
+one shared vector of native-uniform RNG42 doses U(.2,1), rank-paired to
+both selection sets, IDs fixed within selection across mappings. Each victim
+independent scratch and same initialization/shuffle RNG, no Clean training.
+Historical Uniform-Linear cannot be imported without audit: new helper
+requires explicit -FreshLinear to authorize six fresh matched victims.
+No automatic old-row retrain/relabel/reuse, no historical source/result edits.
+Prepare CPU full-content input hash +FPS; separate two-real-B32-graph CUDA
+capacity smoke (discarded), then explicit Launch/Resume, maximum2worker queue.
+Atomic epoch checkpoint/RNG, input/source/runtime/poison binding, failures
+stop pending scheduling and drain active peers without kill/retry/fallback.
+Full six-dose XYZ saved; T/PCK@1, DCEmean-positive, nDCEmean-positive ratio
+of dataset means, CleanMPJPE/PA, NT-drift@1, no-trigger controls. Independent
+clean-model+trigger control NOT_SUPPLIED, one seed no significance/SD claim.
+Runner remote_tools/run_selection_mapping_4090.py; helper
+Start-SelectionMapping4090.ps1; guide SELECTION_MAPPING_4090_VI.md.
+Only local synthetic/CPU validation authorized/performed here; no remote
+full-MMFi/CUDA4090 efficacy, no GitHub push authorization in this request.
+
 ### Operational correction 2026-11-12: include CIM Name in Bend snapshot
 
 User's v3 GpuCheck still rejected all desktop PIDs BEFORE any output/training.
